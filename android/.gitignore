@@ -1,0 +1,35 @@
+# --- Gradle / Kotlin build output ---
+.gradle/
+build/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Local machine config ---
+local.properties
+
+# --- IDEs (code style is shared via .editorconfig instead) ---
+.idea/
+*.iml
+.vscode/
+.fleet/
+
+# --- Build artifacts ---
+*.apk
+*.aab
+output-metadata.json
+
+# --- Signing secrets (never commit) ---
+*.jks
+*.keystore
+keystore.properties
+
+# --- Temp files, logs, crash dumps ---
+*.tmp
+*.temp
+*.swp
+*~
+*.log
+hs_err_pid*
+replay_pid*
