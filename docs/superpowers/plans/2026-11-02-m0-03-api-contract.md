@@ -896,8 +896,9 @@ interface LedgerApi {
     suspend fun restoreEntry(id: EntryId, token: EditToken): LedgerResult<Unit>
 
     /**
-     * Reverts any entity to the business fields of [version]. If today's rules reject it: `RestoreConflict`
-     * listing each violated rule, nothing written (spec §5.3).
+     * Reverts any entity to the business fields of [version]. Merges, the me flag and which person or group
+     * a handle or membership belongs to stay as they are now (use `merge`/`unmerge` for those). If today's
+     * rules reject it: `RestoreConflict` listing each violated rule, nothing written (spec §5.3).
      */
     suspend fun revertTo(entity: EntityRef, version: Int, token: EditToken): LedgerResult<Unit>
 
