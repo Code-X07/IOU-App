@@ -131,7 +131,10 @@ class LedgerViewsTest {
         val detail = views(ledger.state).person(a2)!!
 
         detail.person.id shouldBe a
-        detail.aliases.map { it.displayName } shouldBe listOf("A2")
+        val alias = detail.aliases.single()
+        alias.person.displayName shouldBe "A2"
+        alias.mergedInto.id shouldBe a
+        alias.token.version shouldBe ledger.state.people.getValue(a2).meta.version
         detail.handles.single().id shouldBe iban
         detail.handles.single().owner.displayName shouldBe "A2"
         detail.handles.single().isDefault shouldBe true
@@ -192,6 +195,7 @@ Expected: compilation fails, `Unresolved reference 'LedgerViews'`.
 package io.github.codex07.iou.ledger.views
 
 import io.github.codex07.iou.api.ActivityFilter
+import io.github.codex07.iou.api.AliasView
 import io.github.codex07.iou.api.EditToken
 import io.github.codex07.iou.api.GroupDetail
 import io.github.codex07.iou.api.GroupNetView
@@ -339,7 +343,10 @@ class LedgerViews(
             archived = person.archivedAt != null,
             deleted = person.isDeleted,
             token = token(person),
-            aliases = (resolver.recordsOf(canonical) - canonical).sortedBy { it.value }.map(::rawRef),
+            aliases = (resolver.recordsOf(canonical) - canonical).sortedBy { it.value }.map { aliasId ->
+                val alias = state.people.getValue(aliasId)
+                AliasView(rawRef(aliasId), rawRef(alias.mergedIntoId!!), token(alias))
+            },
             balances = amounts(balances.net(canonical)),
             inGroups = inGroups,
             handles = resolver.handlesOf(canonical).map { handleView(it, canonical) },
@@ -1791,24 +1798,23 @@ abstract class PeopleApiContract : ApiContract() {
         val alexS = newPerson("Alex S.")
         transfer(me, alex, eur(1_000))
         transfer(me, alexS, eur(500))
-        // After the merge, observePerson(alexS) shows Alex, so the alias's token is read now; the merge
-        // writes one revision, so unmerge uses the next version.
-        val aliasToken = apis.people.observePerson(alexS).first()!!.token
 
         apis.people.previewMerge(alexS, alex).orFail().combinedBalances shouldBe listOf(eur(1_500))
-        apis.people.merge(alexS, alex, aliasToken).orFail()
-        apis.people.observePerson(alex).first()!!.balances shouldBe listOf(eur(1_500))
+        apis.people.merge(alexS, alex, apis.people.observePerson(alexS).first()!!.token).orFail()
+        val merged = apis.people.observePerson(alex).first()!!
+        merged.balances shouldBe listOf(eur(1_500))
         apis.people.observePerson(alexS).first()!!.person.id shouldBe alex
 
-        apis.people.unmerge(alexS, aliasToken.copy(version = aliasToken.version + 1)).orFail()
+        val alias = merged.aliases.single()
+        alias.person.id shouldBe alexS
+        alias.mergedInto.id shouldBe alex
+        apis.people.unmerge(alias.person.id, alias.token).orFail()
         apis.people.observePerson(alex).first()!!.balances shouldBe listOf(eur(1_000))
         apis.people.observePerson(alexS).first()!!.balances shouldBe listOf(eur(500))
         apis.people.balanceSummaryText(alexS).orFail() shouldBe "Alex S. owes you 5.00 EUR"
     }
 }
 ```
-
-Exposing each alias's own `EditToken` in `PersonDetail.aliases` is a candidate `api` change for when the UI builds unmerge; propose it then through the contract-change process.
 
 `test/.../api/contract/LedgerApiContract.kt`:
 

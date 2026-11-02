@@ -27,6 +27,7 @@
 - **Import previews are immutable values.** `applyChoices(preview, choices)` returns the preview with forced cascade outcomes recomputed (spec §7.4 "changing the owner's choice updates the owned rows at once"); `commitImport` takes the preview and the choices.
 - **Archiving** is `set…Archived(id, archived, token)`; the UI warns from the balances it already shows (spec §5.2). Unarchiving is allowed.
 - **`observePerson(id)` with an alias ID** returns the canonical person's detail (`person.id` is the canonical ID).
+- **Each alias carries its own `EditToken`** (`PersonDetail.aliases: List<AliasView>`), because unmerge writes the alias's row, not the canonical person's (ADR-0009).
 
 ## File map
 
@@ -368,8 +369,8 @@ data class PersonDetail(
     val archived: Boolean,
     val deleted: Boolean,
     val token: EditToken,
-    /** Records merged into this person (directly or through other aliases). */
-    val aliases: List<PersonRef>,
+    /** Records merged into this person (directly or through other aliases), each with its own token. */
+    val aliases: List<AliasView>,
     /** `net(me, X)` per currency, non-group only. */
     val balances: List<Money>,
     /** Per group, the current settle-plan transfers between me and this person: suggestions only. */
@@ -379,6 +380,17 @@ data class PersonDetail(
     val activity: List<ActivityItem>,
     /** Revisions of the person record, newest first. */
     val history: List<RevisionView>,
+)
+
+/**
+ * A person record merged into the person shown. [mergedInto] is the record it points at directly (the
+ * shown person, or another alias in a nested merge). [token] is the alias row's own token: pass it to
+ * `PeopleApi.unmerge(person.id, token)` (ADR-0009).
+ */
+data class AliasView(
+    val person: PersonRef,
+    val mergedInto: PersonRef,
+    val token: EditToken,
 )
 
 data class GroupSuggestion(val group: GroupRef, val items: List<PlanItem>)
@@ -782,7 +794,10 @@ interface PeopleApi {
     /** Merges [source] into [target]; [sourceToken] is the source's token (the only row written, spec §5.6). */
     suspend fun merge(source: PersonId, target: PersonId, sourceToken: EditToken): LedgerResult<Unit>
 
-    /** Splits [person] (with its own aliases) off again. Errors: `InvalidMerge(NOT_MERGED)`, rule errors. */
+    /**
+     * Splits [person] (with its own aliases) off again. [token] is the alias's own, from
+     * `PersonDetail.aliases`. Errors: `InvalidMerge(NOT_MERGED)`, rule errors.
+     */
     suspend fun unmerge(person: PersonId, token: EditToken): LedgerResult<Unit>
 
     /** Plain text of my balance with this person, for sharing (e.g. "Alex owes you 30.00 EUR"). */
@@ -1090,6 +1105,11 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 - If the save returns `RateRequired(from, to)`, a conversion is needed. Get a rate with `FxApi.quote(date, from, to)`. If that also returns `RateRequired`, ask the user to type a rate (`FxApi.userRate`) or the amount actually charged (`FxChoice.BankActual(charged)`). Put the choice in `draft.fx` and save again.
 - In a CONVERT group the effect is in the group currency. Outside CONVERT groups, set `TransferDraft.settlesCurrency` to settle a debt in one currency with money in another.
 - `FxSnapshotMismatch` on an edit means the kept rate no longer fits (different currency pair, or a bank-actual charge after the paid amount changed). Ask for a new rate.
+
+## Merging duplicates
+
+- `previewMerge(source, target)` shows the result; `merge(source, target, sourceToken)` takes the source's token from its `PersonDetail` before the merge.
+- After a merge the source shows up in the target's `PersonDetail.aliases`, each `AliasView` with its own token. Unmerge with `unmerge(alias.person.id, alias.token)`.
 
 ## Settle up
 
