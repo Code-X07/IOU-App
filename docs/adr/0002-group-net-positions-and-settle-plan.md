@@ -10,7 +10,7 @@ Groups track everyone's spending, not only mine. An earlier draft kept pairwise 
 
 ## Decision
 
-Inside a group, each member's balance is their net position toward the group (nets sum to 0). `SettlePlanner` suggests transfers by greedily matching the largest creditor with the largest debtor (at most n−1 per currency; computed on demand, never stored). Removing a member requires a zero net. Outside groups, balances are pairwise, and every entry involves exactly me and one other person; anything with three or more people needs a group. Me is in every group.
+Inside a group, each member's balance is their net position toward the group (nets sum to 0). `SettlePlanner` suggests transfers by greedily matching the largest creditor with the largest debtor (at most n−1 debtor–creditor pairs per currency, a pair above the amount cap split into capped transfers; computed on demand, never stored). Removing a member requires a zero net. Outside groups, balances are pairwise, and every entry involves exactly me and one other person; anything with three or more people needs a group. Me is in every group.
 
 ## Alternatives Considered
 
@@ -27,7 +27,7 @@ Inside a group, each member's balance is their net position toward the group (ne
 ## Consequences
 
 ### Positive
-- Debt simplification comes for free; groups settle in at most n−1 transfers.
+- Debt simplification comes for free; groups settle in at most n−1 transfers (unless a net exceeds the per-transfer amount cap).
 - Clear rules for removal and for ad-hoc entries (`NeedsGroup`).
 
 ### Negative

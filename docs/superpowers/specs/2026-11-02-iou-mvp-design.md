@@ -267,6 +267,8 @@ The DAO exposes insert and query only. A full JSON restore is the only operation
 - **State invariants [S]** describe every committed state. They are checked against the **complete state a write would produce**, on every write path: create, update, delete, restore, archive, member add/remove, merge, unmerge, revert to version (§5.3), import (§7.4) and undo import (§5.4).
 - **Edit rules [E]** guard changes made through the `api`. They apply only to the entities a write creates or changes, plus the operation's own preconditions, never to untouched historical entries. They run on create, update, delete, restore, archive, member add/remove, merge, unmerge and revert. **Import and undo import are checked against the state invariants only:** they reproduce or remove whole records rather than edit them, so an exported group with removed members and their historical entries imports as is.
 
+**State invariants constrain non-deleted rows only.** A soft-deleted row is outside them until it is restored, and the restore is checked like any other write: the restored row must satisfy the invariants again. So restoring an entry whose person or group is deleted fails with `DeletedReference` until that person or group is restored first.
+
 `LedgerWriter` (and the fake) runs the validator on every write path. A write that violates any applicable rule is rejected in full with a typed `LedgerError` (§8).
 
 **Scope of entries**
@@ -275,8 +277,8 @@ The DAO exposes insert and query only. A full JSON restore is the only operation
 
 **Group membership**
 
-2. [S] **Me is a member of every group.** [E] Me is added automatically when a group is created and cannot be removed. → `CannotModifyMe`
-3. [S] **Members only.** Every person a group entry references (payer, share rows, transfer parties; soft-deleted entries included, since they can be restored) is a member of that group, active or removed. → `NotGroupMember`
+2. [S] **Me is a member of every non-deleted group.** [E] Me is added automatically when a group is created and cannot be removed. → `CannotModifyMe`
+3. [S] **Members only.** Every person a non-deleted group entry references (payer, share rows, transfer parties) has a non-deleted membership in that group, active or removed. → `NotGroupMember`
 4. [S] **Removed members have a zero net.** A canonical person who is not an active member of a group has a group net of 0 there in every currency. So removing a member with a non-zero net fails, and so does any import or unmerge that would leave a removed member with one. → `MemberHasBalance`
 5. [E] **Removed members freeze their entries.** Any create, update, delete or restore of a group entry that references a removed member is rejected. Their existing entries stay as they are and keep counting (their net is 0 by rule 4). Re-adding the member (clearing `removedAt`, recorded as a revision) unlocks those entries. → `MemberRemoved`
 
@@ -289,8 +291,8 @@ The DAO exposes insert and query only. A full JSON restore is the only operation
 **People**
 
 9. [S] Exactly one person has `isMe`; it is never deleted or merged. [E] **Me** cannot be deleted, archived, merged, or used as a merge target. → `CannotModifyMe`
-10. [S] No entry (soft-deleted ones included), membership or payment handle references a deleted person, and no entry or membership references a deleted group. [E] So people and groups can be deleted only when unreferenced; otherwise archive them. → `StillReferenced`
-11. [S] Every `mergedIntoId` chain ends, without cycles, at a non-deleted canonical person. [E] **Merge** (§5.6): source and target must be distinct, non-deleted, non-me, and both canonical (neither merged into anyone). → `InvalidMerge`
+10. [S] No non-deleted entry, membership or payment handle references a deleted person, and no non-deleted entry or membership references a deleted group. → `DeletedReference`. [E] Through the `api`, people and groups can be deleted only when nothing references them, soft-deleted entries included (those could be restored); otherwise archive them. → `StillReferenced`. Import undo is not bound by this edit rule: it deletes the entries it created first, then the people and groups (§5.4).
+11. [S] Every non-deleted person's `mergedIntoId` chain ends, without cycles, at a non-deleted canonical person. [E] **Merge** (§5.6): source and target must be distinct, non-deleted, non-me, and both canonical (neither merged into anyone). → `InvalidMerge`
 12. [E] **Unmerge:** the person must be merged into someone. The resulting state must satisfy the state invariants (e.g. rule 4 for a removed membership of the split-off person). → the violated rule's error
 13. [E] **Distinct transfer parties:** a created or updated transfer has different canonical sender and receiver. A transfer that became a self-transfer through a merge stays valid and has no effect (§4.1). → `SelfTransfer`
 
@@ -376,19 +378,20 @@ Rate lookup `rateFor(occurredOn, from, to)`:
 
 1. Take the members with non-zero `groupNet`.
 2. Greedy: repeatedly match the largest creditor with the largest debtor (ties go to the lowest person UUID) and emit a transfer of `min(credit, |debt|)` from debtor to creditor.
-3. The result settles the group in at most n−1 transfers per currency.
+3. The result settles the group with at most n−1 debtor–creditor pairs per currency.
+4. **Amount cap:** a pair whose amount exceeds `MAX_MINOR` (possible, since nets can sum many capped entries) is emitted as several transfers of at most `MAX_MINOR` each, in the same direction. When every net is within `MAX_MINOR`, this never happens and the plan has at most n−1 transfers.
 
 - From a plan item the UI gets a pre-filled `REPAYMENT` draft tagged with the group. The amount is editable (partial settlement), and the paid currency is editable (cross-currency settlement through an FxSnapshot; in CONVERT groups the effect stays in the group currency, rule 8).
 - Plan items that don't involve me can be recorded too: I am the group's bookkeeper until sync exists.
 
-**Person settle-up** (outside groups): a pre-filled untagged `REPAYMENT` draft for `net(me, X)` per non-zero currency, in the direction that reduces the debt. Cross-currency is allowed through an FxSnapshot: the transfer moves currency A, and its effect is in the debt's currency B.
+**Person settle-up** (outside groups): a pre-filled untagged `REPAYMENT` draft for `net(me, X)` per non-zero currency, in the direction that reduces the debt (split into several drafts of at most `MAX_MINOR` if the balance is larger). Cross-currency is allowed through an FxSnapshot: the transfer moves currency A, and its effect is in the debt's currency B.
 
 ### 4.7 Invariants (property-tested)
 
 - `Σ shares == effectTotalMinor` for every expense.
 - `net(A, B, c) == −net(B, A, c)` for non-group pairs.
 - Group member nets sum to 0 per group and currency.
-- Recording every transfer of a settle plan brings all nets of that group and currency to 0; a plan has at most n−1 transfers.
+- Recording every transfer of a settle plan brings all nets of that group and currency to 0, and every plan transfer is a valid amount (0 < amount ≤ `MAX_MINOR`). A plan has at most n−1 debtor–creditor pairs, and at most n−1 transfers when every net is within `MAX_MINOR`.
 - Merge followed by unmerge of the same person, with no other writes in between, restores identical balances, memberships and canonical IDs, also when either person already had aliases of its own.
 - Replaying `EntryRevision` (latest snapshot per entity) reproduces the current entity tables exactly.
 
@@ -582,7 +585,7 @@ All failures come back as typed `LedgerError`s that the UI can display. No parti
 | Area | Errors | Behaviour |
 |---|---|---|
 | Money / validation | `InvalidAmount`, `TooManyDecimals`, `AmountTooLarge`, `UnknownCurrency`, `InvalidRate`, `ConvertedToZero`, `InvalidIban`, split errors (§4.4) | Returned as results; save is not possible |
-| Integrity (§3.4) | `NeedsGroup`, `NotGroupMember`, `MemberHasBalance`, `MemberRemoved`, `GroupSettingsLocked`, `CannotModifyMe`, `StillReferenced`, `InvalidMerge`, `SelfTransfer` | Transaction rolled back; error carries the data for a suggested action (create group, settle, re-add member, archive) |
+| Integrity (§3.4) | `NeedsGroup`, `NotGroupMember`, `MemberHasBalance`, `MemberRemoved`, `GroupSettingsLocked`, `CannotModifyMe`, `StillReferenced`, `DeletedReference`, `InvalidMerge`, `SelfTransfer` | Transaction rolled back; error carries the data for a suggested action (create group, settle, re-add member, archive) |
 | Concurrency | `StaleVersion` | Nothing written; reload |
 | Revert to version | `RestoreConflict(violations)` | Nothing written; list of violated rules; "Open as draft" |
 | FX | Network failure, unsupported currency | Fallback chain §4.5; worst case the user enters a rate manually. Never blocks entry |
@@ -671,7 +674,7 @@ Signed APKs on GitHub Releases (§2.4); friends install by sideloading, optional
 3. A 1000 SEK expense in a CONVERT EUR group stores an FxSnapshot and EUR effect amounts whose shares sum exactly to the converted total; the same expense in a KEEP group produces SEK nets.
 4. "A paid 60.00 EUR for A, B and me (equal)" gives nets A +40.00, B −20.00, me −20.00. The plan is "B pays A 20.00, I pay A 20.00". My overview shows I owe 20.00 in that group, and A's person detail lists my suggested 20.00 under "In groups".
 5. Recording all plan transfers (group-tagged) brings every net in the group to 0. An untagged repayment to A changes only my non-group balance with A.
-6. For random groups, a settle plan has at most n−1 transfers per currency and settles all nets (property test).
+6. For random groups, a settle plan settles all nets, every transfer amount is valid, and it has at most n−1 debtor–creditor pairs per currency (at most n−1 transfers when all nets are within `MAX_MINOR`), including groups whose nets exceed `MAX_MINOR` (property test).
 7. In a group where A owes B 10.00 and C owes A 10.00 through the flows, A's net is 0, so removing A succeeds. Afterwards, editing, deleting or restoring any group entry involving A is rejected with `MemberRemoved` until A is re-added. Removing a member with a non-zero net is rejected with `MemberHasBalance`.
 8. Removing me from a group is rejected with `CannotModifyMe`; a newly created group contains me.
 9. Adding a group expense whose payer or participant is not an active member is rejected with `NotGroupMember`.
@@ -679,7 +682,7 @@ Signed APKs on GitHub Releases (§2.4); friends install by sideloading, optional
 11. Reverting an expense to a version that includes a since-removed member returns `RestoreConflict` naming that rule and writes nothing; "Open as draft" pre-fills the old values.
 12. Archiving a group in which my net is −15.00 is allowed after a warning. The group still counts in "I owe" and stays in the overview as "archived, unsettled" until settled.
 13. Deleting an expense removes its effect from all nets immediately.
-14. An import file with one invalid row shows that row and the reason in the preview and commits nothing until it is fixed or skipped. Undoing an import in which no row was changed afterwards removes exactly the rows it created, reverts the rows it updated (including their deleted state), and restores the previous balances. If an imported row was changed after the import, undo skips it (and any row that still depends on it), lists each skipped row with its reason, and undoes the rest.
+14. An import file with one invalid row shows that row and the reason in the preview and commits nothing until it is fixed or skipped. Undoing an import in which no row was changed afterwards removes exactly the rows it created, reverts the rows it updated (including their deleted state), and restores the previous balances; this includes an import that created a person together with transfers involving them. If an imported row was changed after the import, undo skips it (and any row that still depends on it), lists each skipped row with its reason, and undoes the rest.
 15. XLSX report and normalized workbooks open in Excel and LibreOffice with correct numbers and dates.
 16. A full export of a ledger containing a group with a removed member and that member's historical expenses imports into an empty install without errors and reproduces every net.
 17. Merging two people who both belong to a group, each with a default IBAN and with a group transfer between them, succeeds: the transfer has no effect, the canonical person has one default IBAN (§3.2), and unmerging restores both people's nets.
