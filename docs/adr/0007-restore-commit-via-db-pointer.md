@@ -12,6 +12,10 @@ A JSON backup restore replaces the whole ledger and must survive process death a
 
 Database files get generation names (`iou-<uuid>.db`). A pointer file `db-state.json` names the `current` and `previous` databases and is only ever replaced by one atomic rename, which is the single commit point of a restore or an undo. On start, recovery deletes every database file the pointer does not name. A marker file records the target of an in-flight operation only to choose the message shown after a crash.
 
+The pointer also holds the ledger generation that edit tokens and draft bases are checked against, and every pointer commit writes a fresh one.
+
+*Amended 2026-11-02 after an external review:* the generation used to be stored inside each database and assigned when it was built. An undo swaps back to an existing database without rebuilding it, so it brought back the old generation and revived tokens that the restore had invalidated. Keeping the generation in the pointer ties it to the commit itself.
+
 ## Alternatives Considered
 
 ### Alternative 1: Keep the rename swap and add journal phases
