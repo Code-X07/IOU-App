@@ -1173,7 +1173,7 @@ Expected: the push triggers `CI` only (no tag yet), and `gh workflow list` shows
 
 **Interfaces:**
 - Consumes: `release.yml` (Task 6).
-- Produces: repository secrets `RELEASE_KEYSTORE_BASE64`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`; a proven tag-to-release pipeline. The real `v0.0.1` tag is pushed at the end of Part 6.
+- Produces: repository secrets `RELEASE_KEYSTORE_BASE64`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`; a proven tag-to-release pipeline. The real `v0.0.1` tag is pushed at the end of Part 7.
 
 Steps 1–2 involve passwords: **the project owner runs them by hand**. An agent executing this plan stops here and asks the owner.
 
