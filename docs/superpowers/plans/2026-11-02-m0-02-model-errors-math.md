@@ -1435,10 +1435,12 @@ object SplitResolver {
     fun largestRemainder(total: Long, weights: List<Pair<PersonId, Long>>): List<Long> {
         val totalBig = BigInteger.valueOf(total)
         val weightSum = weights.fold(BigInteger.ZERO) { acc, (_, weight) -> acc + BigInteger.valueOf(weight) }
+        require(weights.all { it.second >= 0L }) { "Weights must not be negative" }
         require(weightSum.signum() > 0) { "Weights must not all be zero" }
 
         val parts = weights.map { (_, weight) -> totalBig.multiply(BigInteger.valueOf(weight)).divideAndRemainder(weightSum) }
-        val result = parts.map { it[0].longValueExact() }.toMutableList()
+        // Each floor is at most |total|, so it fits a Long. Not longValueExact(): BigInteger's needs API 31 (minSdk is 30).
+        val result = parts.map { it[0].toLong() }.toMutableList()
         var leftover = total - result.sum()
 
         val byRemainder = weights.indices.sortedWith(

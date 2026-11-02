@@ -28,6 +28,7 @@
 - **Archiving** is `set…Archived(id, archived, token)`; the UI warns from the balances it already shows (spec §5.2). Unarchiving is allowed.
 - **`observePerson(id)` with an alias ID** returns the canonical person's detail (`person.id` is the canonical ID).
 - **Each alias carries its own `EditToken`** (`PersonDetail.aliases: List<AliasView>`), because unmerge writes the alias's row, not the canonical person's (ADR-0009).
+- **History is reached through the detail that owns it.** Spec §1 requires every change to be viewable, and some rows have no detail screen of their own: an alias (observing it redirects to the canonical person), payment handles and memberships. So `PersonDetail.history` also holds the revisions of the person's aliases and handles, and `GroupDetail.history` those of the group's memberships, deleted rows included. Each `RevisionView` names its row (`entity`, `subject`), so the UI can label it and pick the matching token for a revert.
 
 ## File map
 
@@ -378,7 +379,11 @@ data class PersonDetail(
     val handles: List<PaymentHandleView>,
     /** Entries involving this person, newest first. */
     val activity: List<ActivityItem>,
-    /** Revisions of the person record, newest first. */
+    /**
+     * Newest first: revisions of this person's record, of every record merged into it (each alias's
+     * "Merged into" revision included) and of every payment handle those records own, deleted ones
+     * included. [RevisionView.entity] says which row each revision belongs to.
+     */
     val history: List<RevisionView>,
 )
 
@@ -415,7 +420,10 @@ data class MergePreview(
     val target: PersonRef,
     val combinedBalances: List<Money>,
     val combinedGroupNets: List<GroupNetView>,
-    /** Entries between the two that stop having an effect. */
+    /**
+     * Live entries that move a balance now and none after the merge, e.g. a transfer between the two.
+     * Involving both isn't enough: an expense a third person paid for both still counts after the merge.
+     */
     val neutralizedEntries: List<ActivityItem>,
     /** The defaults per type that will apply after the merge. */
     val defaultHandles: List<PaymentHandleView>,
@@ -449,6 +457,7 @@ data class GroupDetail(
     val settlePlan: List<PlanItem>,
     val activity: List<ActivityItem>,
     val flows: List<FlowView>,
+    /** Newest first: revisions of the group and of every membership row in it, deleted ones included. */
     val history: List<RevisionView>,
 )
 
@@ -540,7 +549,10 @@ data class FxSnapshotView(
     val charged: Money?,
 )
 
+/** One revision of [entity]; [subject] names that row for display ("Alex", "IBAN · Main", "Alex in Trip"). */
 data class RevisionView(
+    val entity: EntityRef,
+    val subject: String,
     val version: Int,
     val action: RevisionAction,
     val at: Instant,
@@ -962,13 +974,19 @@ interface ImportExportApi {
     /** Parses and validates; writes nothing. Errors: `CorruptFile`, `LimitsExceeded`, `SchemaTooNew`. */
     suspend fun parseImport(source: DocumentRef): LedgerResult<ImportPreview>
 
-    /** Answers `ImportIdentity.NeedsConfirmation`: accept → the full preview; decline → `ForeignLedger`. */
+    /**
+     * Answers `ImportIdentity.NeedsConfirmation`: accept → the full preview, built against the current ledger;
+     * decline → `ForeignLedger`. A preview from an earlier generation → `LedgerReplaced`, whatever the answer.
+     */
     suspend fun confirmIdentity(preview: ImportPreview, accept: Boolean): LedgerResult<ImportPreview>
 
     /** The preview with forced owner/owned outcomes recomputed for [choices]. Pure. */
     fun applyChoices(preview: ImportPreview, choices: ImportChoices): ImportPreview
 
-    /** Rebuilds a stale preview against the current ledger, keeping still-valid choices. */
+    /**
+     * Rebuilds a stale preview against the current ledger: conflicts, diffs and counts are recomputed, and rows
+     * that are new or whose diff changed get `changedSinceLastPreview`. Earlier generation → `LedgerReplaced`.
+     */
     suspend fun refreshPreview(preview: ImportPreview): LedgerResult<ImportPreview>
 
     /** Errors: `LedgerReplaced`, `ImportPreviewStale` (any write since the preview), invalid rows not skipped. */
@@ -1110,6 +1128,10 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 
 - `previewMerge(source, target)` shows the result; `merge(source, target, sourceToken)` takes the source's token from its `PersonDetail` before the merge.
 - After a merge the source shows up in the target's `PersonDetail.aliases`, each `AliasView` with its own token. Unmerge with `unmerge(alias.person.id, alias.token)`.
+
+## History
+
+Every change is recorded and must be viewable (spec §1, §5.3). `EntryDetail.history` covers the entry. `PersonDetail.history` covers the person, every alias merged into them (the merge itself is the alias's revision) and their payment handles; `GroupDetail.history` covers the group and its memberships. Deleted rows are included. Each `RevisionView` says which row it belongs to (`entity`, `subject`); show the subject when it isn't the screen's own row. To revert, call `revertTo(revision.entity, revision.version, token)` with that row's token (`PersonDetail.token`, `AliasView.token`, `PaymentHandleView.token`, `GroupDetail.token`, `EntryDetail.token`).
 
 ## Settle up
 

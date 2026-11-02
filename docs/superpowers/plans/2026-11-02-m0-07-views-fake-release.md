@@ -23,7 +23,7 @@
 ## Decisions this part makes
 
 - **Simulated restore** in the fake restores a backup of the *current* data under a fresh generation (so `LedgerReplaced` behaves exactly as spec AC M1-15 describes); undo swaps back, again with a fresh generation. Backups remember their passphrase in memory, so a wrong passphrase returns `WrongPassphraseOrDamagedFile`.
-- **Simulated import:** a file name containing `foreign` needs identity confirmation; `corrupt` → `CorruptFile`; `invalid` adds one invalid row; anything else gives a canned preview (two new rows, one conflict on the first live transfer, five duplicates). Commit checks generation, `ledgerSeq`, identity and invalid rows like the real thing, records an `ImportBatch`, and doesn't change ledger data.
+- **Simulated import:** a file name containing `foreign` needs identity confirmation; `corrupt` → `CorruptFile`; `invalid` adds one invalid row; anything else gives a canned preview (two new rows, one conflict on the first live transfer's note, five duplicates). The canned preview is always built from the current ledger, so `confirmIdentity` and `refreshPreview` rebuild it (after checking the preview's generation, `LedgerReplaced` otherwise) and refresh flags rows whose diff changed. Commit checks generation, `ledgerSeq`, identity and invalid rows like the real thing, records an `ImportBatch`, and doesn't change ledger data.
 - **Fake FX rates** are a fixed table against EUR (`FakeRates`); unknown currencies → `RateRequired`.
 - **Before setup**, ledger-data flows emit nothing and writes other than setup return `NotFound("me")`.
 - **The placeholder `MainActivity`** injects `LedgerApi` and shows the number of overview rows, which proves the Hilt wiring end to end. The friend replaces it.
@@ -166,12 +166,17 @@ class LedgerViewsTest {
         val ledger = TestLedger().apply { me() }
         val alex = ledger.person("Alex")
         val alexS = ledger.person("AlexS")
+        val c = ledger.person("C")
+        val trip = ledger.group("Trip", members = listOf(ME, alex, alexS, c))
         ledger.transfer(ME, alex, eur(1_000))
         ledger.transfer(ME, alexS, eur(500))
+        // C pays 20.00 for the two Alex records: after the merge Alex owes C 20.00, so it isn't neutralized.
+        ledger.expense(c, eur(2_000), mapOf(alex to 1_000L, alexS to 1_000L), group = trip)
         val views = views(ledger.state)
 
         val preview = (views.mergePreview(alexS, alex) as LedgerResult.Ok).value
         preview.combinedBalances shouldBe listOf(eur(1_500))
+        preview.neutralizedEntries shouldBe emptyList()
         preview.target.displayName shouldBe "Alex"
         views.person(alexS)!!.balances shouldBe listOf(eur(500))
         views.mergePreview(alex, alex) shouldBe LedgerResult.Err(LedgerError.InvalidMerge(MergeProblem.SAME_PERSON))
@@ -197,6 +202,7 @@ package io.github.codex07.iou.ledger.views
 import io.github.codex07.iou.api.ActivityFilter
 import io.github.codex07.iou.api.AliasView
 import io.github.codex07.iou.api.EditToken
+import io.github.codex07.iou.api.EntityRef
 import io.github.codex07.iou.api.GroupDetail
 import io.github.codex07.iou.api.GroupNetView
 import io.github.codex07.iou.api.GroupRef
@@ -253,8 +259,9 @@ class LedgerViews(
     val balances: Balances by lazy { LedgerEngine.compute(state) }
     internal val meId: PersonId by lazy { resolver.canonical(state.me.id) }
 
+    /** Diffs name the record a snapshot references, not the person it resolves to today. */
     internal val names = object : DiffNames {
-        override fun person(id: PersonId) = personRef(id).displayName
+        override fun person(id: PersonId) = rawRef(id).displayName
         override fun group(id: GroupId) = groupRef(id).name
     }
 
@@ -351,8 +358,15 @@ class LedgerViews(
             inGroups = inGroups,
             handles = resolver.handlesOf(canonical).map { handleView(it, canonical) },
             activity = activity(ActivityFilter(personId = canonical)),
-            history = history(EntityType.PERSON, canonical.value),
+            history = history(personHistoryRefs(canonical)),
         )
+    }
+
+    /** The person's records (aliases included) and every handle they own, deleted ones too (`PersonDetail.history`). */
+    private fun personHistoryRefs(canonical: PersonId): List<EntityRef> {
+        val records = resolver.recordsOf(canonical)
+        return records.map { EntityRef(EntityType.PERSON, it.value) } +
+            state.handles.values.filter { it.personId in records }.map { EntityRef(EntityType.PAYMENT_HANDLE, it.id.value) }
     }
 
     fun handleView(handle: PaymentHandle, canonical: PersonId) = PaymentHandleView(
@@ -373,7 +387,6 @@ class LedgerViews(
         val ctx = WriteContext(state, generation, Instant.EPOCH, IdGenerator.Random)
         val plan = PeopleOps.merge(ctx, source, target, token(from)).bind().plan
         val after = LedgerViews(state.applying(plan.changes), revisions, generation, homeCurrency, rateToHome)
-        val pair = setOf(source, target)
         MergePreview(
             source = rawRef(source),
             target = rawRef(target),
@@ -382,8 +395,11 @@ class LedgerViews(
                 val nets = after.balances.groupNet(group.id, target)
                 if (nets.isEmpty()) null else GroupNetView(groupRef(group.id), after.amounts(nets))
             },
+            // Involving both people isn't enough (C pays, split between them, still counts): the entry must
+            // move a balance today and none after the merge.
             neutralizedEntries = state.entries
-                .filter { !it.isDeleted && it.personIds.map(resolver::canonical).toSet().containsAll(pair) }
+                .filter { !it.isDeleted }
+                .filter { LedgerEngine.entryEffects(it, resolver).isNotEmpty() && LedgerEngine.entryEffects(it, after.resolver).isEmpty() }
                 .map { activityItem(it) },
             defaultHandles = HandleType.entries.mapNotNull { type ->
                 after.resolver.defaultHandle(target, type)?.let { after.handleView(it, target) }
@@ -429,7 +445,10 @@ class LedgerViews(
             settlePlan = groupPlan(id),
             activity = activity(ActivityFilter(groupId = id)),
             flows = flows,
-            history = history(EntityType.GROUP, id.value),
+            history = history(
+                listOf(EntityRef(EntityType.GROUP, id.value)) +
+                    state.members.values.filter { it.groupId == id }.map { EntityRef(EntityType.GROUP_MEMBER, it.id.value) },
+            ),
         )
     }
 
@@ -446,15 +465,15 @@ package io.github.codex07.iou.ledger.views
 
 import io.github.codex07.iou.api.ActivityFilter
 import io.github.codex07.iou.api.ActivityItem
+import io.github.codex07.iou.api.EntityRef
 import io.github.codex07.iou.api.RevisionView
-import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.Entry
 
 fun LedgerViews.activity(filter: ActivityFilter): List<ActivityItem> = emptyList()
 
 fun LedgerViews.activityItem(entry: Entry): ActivityItem = TODO("Task 2")
 
-fun LedgerViews.history(type: EntityType, id: String): List<RevisionView> = emptyList()
+fun LedgerViews.history(refs: Collection<EntityRef>): List<RevisionView> = emptyList()
 ```
 
 (The `TODO` lives for one task only; Task 2 Step 3 replaces this file.)
@@ -465,7 +484,7 @@ fun LedgerViews.history(type: EntityType, id: String): List<RevisionView> = empt
 ./gradlew :app:testFakeDebugUnitTest --tests "io.github.codex07.iou.ledger.views.LedgerViewsTest"
 ```
 
-Expected: `BUILD SUCCESSFUL`, 4 tests pass (the merge preview finds no neutralized entries in its example, so the stub isn't called).
+Expected: `BUILD SUCCESSFUL`, 4 tests pass (the merge preview's example has no neutralized entry, so the `activityItem` stub isn't called).
 
 - [ ] **Step 5: Commit**
 
@@ -485,7 +504,7 @@ git commit -m "Add LedgerViews for the overview, people, groups and merge previe
 
 **Interfaces:**
 - Consumes: Task 1, `EntryOps.splitInputsOf`, `EntryOps.previewShares` (Part 6), `RevisionDiff` (Part 4).
-- Produces (extension functions on `LedgerViews`): `activity(filter)`, `activityItem(entry)`, `entry(id): EntryDetail?`, `shareViews(expense)`, `history(type, id)`, `draftFromVersion(id, version): LedgerResult<EntryDraft>`, `splitPreview(draft, editing, now): LedgerResult<SplitPreview>`, `settleUpFromPlan(item, today): LedgerResult<SettleUpDraft>`, `settleUpWithPerson(id, basis, today): LedgerResult<List<SettleUpDraft>>`, `balanceSummaryText(id): LedgerResult<String>`; plus top-level `fxView(snapshot)`.
+- Produces (extension functions on `LedgerViews`): `activity(filter)`, `activityItem(entry)`, `entry(id): EntryDetail?`, `shareViews(expense)`, `history(type, id)`, `history(refs)` (several rows merged newest first, each diffed against its own previous version), `subject(ref)`, `draftFromVersion(id, version): LedgerResult<EntryDraft>`, `splitPreview(draft, editing, now): LedgerResult<SplitPreview>`, `settleUpFromPlan(item, today): LedgerResult<SettleUpDraft>`, `settleUpWithPerson(id, basis, today): LedgerResult<List<SettleUpDraft>>`, `balanceSummaryText(id): LedgerResult<String>`; plus top-level `fxView(snapshot)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -495,17 +514,21 @@ git commit -m "Add LedgerViews for the overview, people, groups and merge previe
 package io.github.codex07.iou.ledger.views
 
 import io.github.codex07.iou.api.ActivityFilter
+import io.github.codex07.iou.api.EntityRef
 import io.github.codex07.iou.api.EntryKind
 import io.github.codex07.iou.api.ExpenseDraft
 import io.github.codex07.iou.api.FxChoice
 import io.github.codex07.iou.api.FxQuote
+import io.github.codex07.iou.api.HandleDraft
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.SaveMode
 import io.github.codex07.iou.api.TransferDraft
+import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.FieldChange
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSource
+import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.LedgerGeneration
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.SplitInput
@@ -513,6 +536,7 @@ import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.ledger.ops.EntryOps
 import io.github.codex07.iou.ledger.ops.OpsHarness
+import io.github.codex07.iou.ledger.ops.PeopleOps
 import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.ME
@@ -581,6 +605,38 @@ class EntryViewsTest {
             FieldChange("effect", "40.00 EUR", "45.00 EUR"),
         )
         h.views().draftFromVersion(id, 1).ok().let { (it as TransferDraft).amount } shouldBe eur(4_000)
+    }
+
+    @Test
+    fun `a merge preview lists entries between the two records as neutralized`() {
+        val ledger = TestLedger().apply { me() }
+        val alex = ledger.person("Alex")
+        val alexS = ledger.person("AlexS")
+        val trip = ledger.group("Trip", members = listOf(ME, alex, alexS))
+        val between = ledger.transfer(alex, alexS, eur(700), group = trip)
+        ledger.transfer(ME, alex, eur(1_000))
+        val h = OpsHarness(ledger.state)
+
+        h.views().mergePreview(alexS, alex).ok().neutralizedEntries.map { it.entryId } shouldBe listOf(between)
+    }
+
+    @Test
+    fun `person and group history include aliases, handles and memberships`() {
+        val ledger = TestLedger().apply { me() }
+        val alex = ledger.person("Alex")
+        val alexS = ledger.person("AlexS")
+        val trip = ledger.group("Trip", members = listOf(ME, alexS))
+        val h = OpsHarness(ledger.state)
+        val iban = HandleDraft(HandleType.IBAN, "GB82WEST12345698765432", label = "UK", isDefault = true)
+        h.run { PeopleOps.addHandle(it, alexS, iban, h.generation) }
+        h.run { PeopleOps.merge(it, alexS, alex, h.token(h.state.people.getValue(alexS))) }
+
+        // Observing the alias shows the canonical person, whose history holds the alias's merge revision.
+        val history = h.views().person(alexS)!!.history
+        history.first().let { it.entity to it.reason } shouldBe (EntityRef(EntityType.PERSON, alexS.value) to "Merged into Alex")
+        history.map { it.entity.type }.toSet() shouldBe setOf(EntityType.PERSON, EntityType.PAYMENT_HANDLE)
+        history.single { it.entity.type == EntityType.PAYMENT_HANDLE }.subject shouldBe "IBAN · UK"
+        h.views().group(trip)!!.history.map { it.entity.type }.toSet() shouldBe setOf(EntityType.GROUP, EntityType.GROUP_MEMBER)
     }
 
     @Test
@@ -659,6 +715,7 @@ package io.github.codex07.iou.ledger.views
 
 import io.github.codex07.iou.api.ActivityFilter
 import io.github.codex07.iou.api.ActivityItem
+import io.github.codex07.iou.api.EntityRef
 import io.github.codex07.iou.api.EntryDetail
 import io.github.codex07.iou.api.EntryDraft
 import io.github.codex07.iou.api.EntryKind
@@ -686,8 +743,12 @@ import io.github.codex07.iou.ledger.model.Expense
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSnapshot
 import io.github.codex07.iou.ledger.model.FxSource
+import io.github.codex07.iou.ledger.model.Group
+import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerGeneration
+import io.github.codex07.iou.ledger.model.PaymentHandle
+import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.ledger.model.TransferKind
@@ -768,20 +829,44 @@ fun fxView(snapshot: FxSnapshot) = FxSnapshotView(
     charged = snapshot.chargedMinor?.let { Money(it, snapshot.quoteCurrency) },
 )
 
-/** Revisions newest first, each diffed against the previous version (spec §5.3). */
-fun LedgerViews.history(type: EntityType, id: String): List<RevisionView> {
-    val own = revisions.filter { it.entityType == type && it.entityId == id }.sortedBy { it.version }
-    return own.mapIndexed { index, revision ->
-        RevisionView(
-            version = revision.version,
-            action = revision.action,
-            at = revision.at,
-            author = personRef(revision.authorId),
-            deviceId = revision.deviceId,
-            reason = revision.reason,
-            changes = RevisionDiff.diff(own.getOrNull(index - 1)?.snapshot, revision.snapshot, names),
-        )
-    }.reversed()
+/** Revisions of one row, newest first, each diffed against the previous version (spec §5.3). */
+fun LedgerViews.history(type: EntityType, id: String): List<RevisionView> = history(listOf(EntityRef(type, id)))
+
+/** Revisions of several rows in one list, newest first; each is diffed against its own row's previous version. */
+fun LedgerViews.history(refs: Collection<EntityRef>): List<RevisionView> {
+    val wanted = refs.toSet()
+    return revisions
+        .filter { EntityRef(it.entityType, it.entityId) in wanted }
+        .groupBy { EntityRef(it.entityType, it.entityId) }
+        .flatMap { (ref, revisionsOfRow) ->
+            val own = revisionsOfRow.sortedBy { it.version }
+            val subject = subject(ref)
+            own.mapIndexed { index, revision ->
+                RevisionView(
+                    entity = ref,
+                    subject = subject,
+                    version = revision.version,
+                    action = revision.action,
+                    at = revision.at,
+                    author = personRef(revision.authorId),
+                    deviceId = revision.deviceId,
+                    reason = revision.reason,
+                    changes = RevisionDiff.diff(own.getOrNull(index - 1)?.snapshot, revision.snapshot, names),
+                )
+            }
+        }
+        .sortedWith(compareByDescending<RevisionView> { it.at }.thenByDescending { it.version }.thenBy { it.entity.id })
+}
+
+/** How a row is named in a mixed history (`RevisionView.subject`). */
+fun LedgerViews.subject(ref: EntityRef): String = when (val entity = state.entity(ref.type, ref.id)) {
+    is Person -> entity.displayName
+    is PaymentHandle -> "${entity.type.name} · ${entity.label}"
+    is Group -> entity.name
+    is GroupMember -> "${rawRef(entity.personId).displayName} in ${groupRef(entity.groupId).name}"
+    is Transfer -> "Transfer on ${entity.occurredOn}"
+    is Expense -> entity.description
+    null -> ref.id
 }
 
 /** "Open as draft" (spec §5.3): the old version's fields, with its FX as a fresh choice. */
@@ -898,7 +983,7 @@ private fun LedgerViews.draftOf(entry: Entry, fx: FxChoice?): EntryDraft = when 
 ./gradlew :app:testFakeDebugUnitTest --tests "io.github.codex07.iou.ledger.views.*"
 ```
 
-Expected: `BUILD SUCCESSFUL`; `LedgerViewsTest` (4) and `EntryViewsTest` (6) pass.
+Expected: `BUILD SUCCESSFUL`; `LedgerViewsTest` (4) and `EntryViewsTest` (8) pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1470,25 +1555,27 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
     override suspend fun parseImport(source: DocumentRef): LedgerResult<ImportPreview> {
         val name = source.uri.substringAfterLast('/')
         if ("corrupt" in name) return LedgerResult.Err(LedgerError.CorruptFile("Not an IOU export: $name"))
-        if ("foreign" in name) {
-            return LedgerResult.Ok(cannedPreview(name, ImportIdentity.NeedsConfirmation(PersonId("foreign-me")), withRows = false))
-        }
-        return LedgerResult.Ok(cannedPreview(name, ImportIdentity.Same, withRows = true, invalid = "invalid" in name))
+        val identity = if ("foreign" in name) ImportIdentity.NeedsConfirmation(PersonId("foreign-me")) else ImportIdentity.Same
+        return LedgerResult.Ok(cannedPreview(name, identity))
     }
 
     override suspend fun confirmIdentity(preview: ImportPreview, accept: Boolean): LedgerResult<ImportPreview> {
+        // A preview parsed before a restore belongs to the replaced ledger, whatever the answer.
+        if (preview.generation != ledger.snapshot.value.generation) return LedgerResult.Err(LedgerError.LedgerReplaced)
         val pending = preview.identity as? ImportIdentity.NeedsConfirmation ?: return LedgerResult.Ok(preview)
         if (!accept) return LedgerResult.Err(LedgerError.ForeignLedger)
-        return LedgerResult.Ok(cannedPreview(preview.fileName, ImportIdentity.Mapped(pending.sourceMe), withRows = true))
+        return LedgerResult.Ok(cannedPreview(preview.fileName, ImportIdentity.Mapped(pending.sourceMe)))
     }
 
     override fun applyChoices(preview: ImportPreview, choices: ImportChoices): ImportPreview = preview
 
+    /** Rebuilds the preview against the current ledger; rows that are new or whose diff changed are flagged. */
     override suspend fun refreshPreview(preview: ImportPreview): LedgerResult<ImportPreview> {
-        val snapshot = ledger.snapshot.value
-        if (preview.generation != snapshot.generation) return LedgerResult.Err(LedgerError.LedgerReplaced)
+        if (preview.generation != ledger.snapshot.value.generation) return LedgerResult.Err(LedgerError.LedgerReplaced)
+        val previous = preview.rows.associateBy { it.key }
+        val fresh = cannedPreview(preview.fileName, preview.identity)
         return LedgerResult.Ok(
-            preview.copy(ledgerSeq = snapshot.ledgerSeq, rows = preview.rows.map { it.copy(changedSinceLastPreview = false) }),
+            fresh.copy(id = preview.id, rows = fresh.rows.map { it.copy(changedSinceLastPreview = previous[it.key]?.changes != it.changes) }),
         )
     }
 
@@ -1529,8 +1616,11 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
         return if (found) LedgerResult.Ok(UndoImportResult(emptyList())) else LedgerResult.Err(LedgerError.NotFound(id.value))
     }
 
-    private fun cannedPreview(fileName: String, identity: ImportIdentity, withRows: Boolean, invalid: Boolean = false): ImportPreview {
+    /** The canned preview of [fileName] against the current ledger; nothing but the identity question until confirmed. */
+    private fun cannedPreview(fileName: String, identity: ImportIdentity): ImportPreview {
         val snapshot = ledger.snapshot.value
+        val withRows = identity !is ImportIdentity.NeedsConfirmation
+        val invalid = withRows && "invalid" in fileName
         val conflict = if (withRows) snapshot.state.transfers.values.firstOrNull { !it.isDeleted } else null
         val rows = listOfNotNull(conflict).map {
             ImportRow(
@@ -2138,20 +2228,33 @@ import io.github.codex07.iou.api.ExportScope
 import io.github.codex07.iou.api.ExportShape
 import io.github.codex07.iou.api.ImportChoices
 import io.github.codex07.iou.api.ImportIdentity
+import io.github.codex07.iou.api.ImportPreview
+import io.github.codex07.iou.api.ImportRowKey
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
+import io.github.codex07.iou.api.SaveMode
+import io.github.codex07.iou.api.TransferDraft
+import io.github.codex07.iou.ledger.model.EntityType
+import io.github.codex07.iou.ledger.model.EntryId
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
+/**
+ * [OWN_EXPORT] is an export of this install's ledger in which the first transfer a test creates has the
+ * note "Imported note" (so it shows as a note conflict); [FOREIGN_EXPORT] comes from another install.
+ */
 enum class ImportFixture { OWN_EXPORT, FOREIGN_EXPORT }
 
 abstract class ImportExportApiContract : ApiContract() {
 
     protected abstract fun importFile(fixture: ImportFixture): DocumentRef
     protected abstract fun exportTarget(): DocumentRef
+    protected abstract fun backupTarget(name: String): DocumentRef
+
+    private fun ImportPreview.row(id: EntryId) = rows.single { it.key == ImportRowKey(EntityType.TRANSFER, id.value) }
 
     @Test
     fun `the normalized shape is always the full ledger`() = runTest {
@@ -2166,6 +2269,35 @@ abstract class ImportExportApiContract : ApiContract() {
         val preview = apis.importExport.parseImport(importFile(ImportFixture.FOREIGN_EXPORT)).orFail()
         preview.identity.shouldBeInstanceOf<ImportIdentity.NeedsConfirmation>()
         apis.importExport.confirmIdentity(preview, accept = false) shouldBe LedgerResult.Err(LedgerError.ForeignLedger)
+    }
+
+    @Test
+    fun `confirming a foreign preview parsed before a restore is refused`() = runTest {
+        setUpMe()
+        val preview = apis.importExport.parseImport(importFile(ImportFixture.FOREIGN_EXPORT)).orFail()
+        val target = backupTarget("before-confirm.iou")
+        apis.backup.createBackup(target, null).orFail()
+        apis.backup.restoreBackup(target, null).orFail()
+
+        apis.importExport.confirmIdentity(preview, accept = true) shouldBe LedgerResult.Err(LedgerError.LedgerReplaced)
+    }
+
+    @Test
+    fun `refreshing rebuilds conflicts against the current ledger and flags what changed`() = runTest {
+        val me = setUpMe()
+        val x = newPerson("X")
+        val id = apis.ledger.saveTransfer(TransferDraft(me, x, eur(1_000), occurredOn = TODAY, note = "A"), SaveMode.Create(basis())).orFail()
+        val preview = apis.importExport.parseImport(importFile(ImportFixture.OWN_EXPORT)).orFail()
+        preview.row(id).changes.single { it.field == "note" }.before shouldBe "A"
+
+        val detail = apis.ledger.observeEntry(id).first()!!
+        apis.ledger.saveTransfer((detail.editDraft as TransferDraft).copy(note = "B"), SaveMode.Update(id, detail.token)).orFail()
+        val refreshed = apis.importExport.refreshPreview(preview).orFail()
+
+        val row = refreshed.row(id)
+        row.changes.single { it.field == "note" }.before shouldBe "B"
+        row.changedSinceLastPreview shouldBe true
+        apis.importExport.commitImport(refreshed, ImportChoices()).orFail()
     }
 
     @Test
@@ -2266,6 +2398,7 @@ class FakeImportExportApiContractTest : ImportExportApiContract() {
         },
     )
     override fun exportTarget() = DocumentRef("fake://exports/out.zip")
+    override fun backupTarget(name: String) = DocumentRef("fake://backups/$name")
 }
 ```
 
