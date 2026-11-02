@@ -1,7 +1,7 @@
 # IOU App — MVP Design (Phases 1–2)
 
 - **Date:** 2026-11-02
-- **Status:** Draft, awaiting review (updated after the design grilling)
+- **Status:** Approved; revised 2026-11-02 after an external review (merge model, import of deleted state, rule kinds, numeric contract, export scope, restore commit point, milestone criteria)
 - **Sources:** `01-core-spec.md` (suggestions), `02-future-features.md` (kept in mind for extension points)
 - **Contributors:** project owner (core: domain, data, engine, I/O, security); friend (the whole UI layer, ViewModels included, see §6)
 
@@ -114,6 +114,7 @@ ui (ViewModels)  ──calls──▶  api interfaces
 ### 3.1 Conventions
 
 - **Money:** `amountMinor: Long` + `currency: String` (ISO 4217). `Double`/`Float` never appear in money paths (CI-enforced). Minor-unit digits come from `java.util.Currency.defaultFractionDigits`.
+- **Money limits and overflow:** every stored amount (original, effect, share, EXACT input) lies between 0 and `MAX_MINOR = 10^13` minor units (> 0 where the entity requires it); larger input → `AmountTooLarge`. All `Long` money arithmetic uses `Math.addExact` / `subtractExact` / `multiplyExact`, and `BigDecimal` → `Long` uses `longValueExact()`. An overflow never wraps: if computing the balances of the state a write would produce overflows, the write is rejected with `AmountTooLarge`. (With the cap, that takes about 900 000 maximal entries in one currency.)
 - **IDs:** UUID strings everywhere.
 - **Identity:** the "me" person's UUID is generated once at first launch and is the user's **permanent global identity**. Backups carry it and restores keep it; it is never regenerated. In phase 5 the user's account is this ID.
 - **Device ID:** a UUID generated per installation, stored in `noBackupFilesDir` (never backed up, restored, or exported). Every revision records it.
@@ -134,7 +135,7 @@ ui (ViewModels)  ──calls──▶  api interfaces
 | note | String? | |
 | defaultCurrency | String? | |
 | archivedAt | Instant? | See §5.2 |
-| mergedIntoId | UUID? | If set, this person is an alias of the referenced canonical person (§5.6) |
+| mergedIntoId | UUID? | If set, this person was merged into the referenced person and resolves to that person's canonical person (§4.1, §5.6) |
 | + sync columns | | |
 
 **PaymentHandle**
@@ -147,7 +148,7 @@ ui (ViewModels)  ──calls──▶  api interfaces
 | holderName | String? | Name as registered at the bank |
 | bic | String? | |
 | label | String | e.g. "Revolut EUR" |
-| isDefault | Boolean | At most one default per canonical person and type |
+| isDefault | Boolean | At most one default per person record and type. The canonical person's default of a type is its own record's default if it has one, otherwise the default of the alias with the lowest UUID. Setting a default through the `api` clears the flag on every other handle of that type resolving to the same canonical person |
 | + sync columns | | |
 
 **Group**
@@ -175,7 +176,7 @@ ui (ViewModels)  ──calls──▶  api interfaces
 | Field | Type | Notes |
 |---|---|---|
 | fromPersonId | UUID | Sender |
-| toPersonId | UUID | Receiver; canonical ID ≠ sender's |
+| toPersonId | UUID | Receiver; canonical ID ≠ sender's when the transfer is created or edited (rule 13). A transfer whose parties later resolve to one person through a merge stays valid and has no effect (§4.1) |
 | amountMinor, currency | Long, String | What actually moved; amount > 0 |
 | effectAmountMinor, effectCurrency | Long, String | Effect on balances; equal to the original unless converted |
 | fxSnapshotId | UUID? | Set when effect currency ≠ currency |
@@ -261,33 +262,39 @@ The DAO exposes insert and query only. A full JSON restore is the only operation
 
 ### 3.4 Integrity rules
 
-`LedgerValidator` (`ledger.rules`) checks these rules over canonical IDs. `LedgerWriter` (and the fake) runs it on **every** write path: create, update, delete, restore, archive, merge, unmerge, revert to version (§5.3), import (§7.4) and undo import (§5.4). A write that violates any rule is rejected in full with a typed `LedgerError` (§8).
+`LedgerValidator` (`ledger.rules`) checks these rules over canonical IDs. There are two kinds:
+
+- **State invariants [S]** describe every committed state. They are checked against the **complete state a write would produce**, on every write path: create, update, delete, restore, archive, member add/remove, merge, unmerge, revert to version (§5.3), import (§7.4) and undo import (§5.4).
+- **Edit rules [E]** guard changes made through the `api`. They apply only to the entities a write creates or changes, plus the operation's own preconditions, never to untouched historical entries. They run on create, update, delete, restore, archive, member add/remove, merge, unmerge and revert. **Import and undo import are checked against the state invariants only:** they reproduce or remove whole records rather than edit them, so an exported group with removed members and their historical entries imports as is.
+
+`LedgerWriter` (and the fake) runs the validator on every write path. A write that violates any applicable rule is rejected in full with a typed `LedgerError` (§8).
 
 **Scope of entries**
 
-1. **Outside groups, exactly me and one other person.** An ad-hoc expense (no group) has exactly two distinct people across payer and share rows: me and one other person. An untagged transfer has me as sender or receiver. Anything involving three or more people, or two people who are not me, must be in a group. → `NeedsGroup` (the UI offers to create a group from the selected people)
+1. [S] **Outside groups, exactly me and one other person.** An ad-hoc expense (no group) has exactly two distinct people across payer and share rows: me and one other person. An untagged transfer has me as sender or receiver. Anything involving three or more people, or two people who are not me, must be in a group. → `NeedsGroup` (the UI offers to create a group from the selected people)
 
 **Group membership**
 
-2. **Me is in every group.** Me is added automatically when a group is created and cannot be removed. → `CannotModifyMe`
-3. **Members only.** In a group expense, the payer and every person with a share row must be active members. In a group-tagged transfer, both parties must be active members. → `NotGroupMember`
-4. **Removal requires a zero net.** A member can be removed only when their group net is 0 in every currency. → `MemberHasBalance`
-5. **Removed members freeze their entries.** Any create, update, delete or restore of a group entry that references a removed member is rejected, because it would change their net. Re-adding the member (clearing `removedAt`, recorded as a revision) unlocks those entries. → `MemberRemoved`
+2. [S] **Me is a member of every group.** [E] Me is added automatically when a group is created and cannot be removed. → `CannotModifyMe`
+3. [S] **Members only.** Every person a group entry references (payer, share rows, transfer parties; soft-deleted entries included, since they can be restored) is a member of that group, active or removed. → `NotGroupMember`
+4. [S] **Removed members have a zero net.** A canonical person who is not an active member of a group has a group net of 0 there in every currency. So removing a member with a non-zero net fails, and so does any import or unmerge that would leave a removed member with one. → `MemberHasBalance`
+5. [E] **Removed members freeze their entries.** Any create, update, delete or restore of a group entry that references a removed member is rejected. Their existing entries stay as they are and keep counting (their net is 0 by rule 4). Re-adding the member (clearing `removedAt`, recorded as a revision) unlocks those entries. → `MemberRemoved`
 
 **Group currency settings**
 
-6. **`fxMode` is locked** once the group has any entry, including soft-deleted ones (they can be restored). → `GroupSettingsLocked`
-7. **In a CONVERT group, `defaultCurrency` is locked** under the same condition. In a KEEP group, `defaultCurrency` is only the default for new entries and stays editable.
-8. **CONVERT invariant:** every entry in a CONVERT group (expenses and group-tagged transfers) has `effectCurrency == group.defaultCurrency`, converted through an FxSnapshot when the paid currency differs.
+6. [E] **`fxMode` is locked** once the group has any entry, including soft-deleted ones (they can be restored). → `GroupSettingsLocked`
+7. [E] **In a CONVERT group, `defaultCurrency` is locked** under the same condition. In a KEEP group, `defaultCurrency` is only the default for new entries and stays editable.
+8. [S] **CONVERT invariant:** every entry in a CONVERT group (expenses and group-tagged transfers) has `effectCurrency == group.defaultCurrency`, converted through an FxSnapshot when the paid currency differs.
 
 **People**
 
-9. **Me** cannot be deleted, archived, merged, or used as a merge target. → `CannotModifyMe`
-10. People and groups can be deleted only when no entry references them; otherwise archive them. → `StillReferenced`
-11. **Merge** (§5.6): source and target must be distinct, non-deleted, non-me people; the target must be canonical (not itself merged). → `InvalidMerge`
-12. **Unmerge** is rejected if the resulting state would violate any rule above (e.g. a removed membership of the split-off person would have a non-zero net). → the violated rule's error
+9. [S] Exactly one person has `isMe`; it is never deleted or merged. [E] **Me** cannot be deleted, archived, merged, or used as a merge target. → `CannotModifyMe`
+10. [S] No entry (soft-deleted ones included), membership or payment handle references a deleted person, and no entry or membership references a deleted group. [E] So people and groups can be deleted only when unreferenced; otherwise archive them. → `StillReferenced`
+11. [S] Every `mergedIntoId` chain ends, without cycles, at a non-deleted canonical person. [E] **Merge** (§5.6): source and target must be distinct, non-deleted, non-me, and both canonical (neither merged into anyone). → `InvalidMerge`
+12. [E] **Unmerge:** the person must be merged into someone. The resulting state must satisfy the state invariants (e.g. rule 4 for a removed membership of the split-off person). → the violated rule's error
+13. [E] **Distinct transfer parties:** a created or updated transfer has different canonical sender and receiver. A transfer that became a self-transfer through a merge stays valid and has no effect (§4.1). → `SelfTransfer`
 
-**Canonical membership:** for rules 2–5, a canonical person is an active member of a group if any of the person records resolving to them has an active membership there.
+**Canonical membership:** for rules 2–5, a canonical person is an active member of a group if any of the person records resolving to them has an active membership there. Group operations act on the canonical person: removing them sets `removedAt` on every active membership of their records in that group, and re-adding clears it on all of them (one revision each).
 
 ---
 
@@ -295,10 +302,10 @@ The DAO exposes insert and query only. A full JSON restore is the only operation
 
 ### 4.1 Identity resolution (`IdentityResolver`)
 
-- `canonical(id)` follows `mergedIntoId` (always one hop, because aliases are flat, §5.6).
+- `canonical(id)` follows `mergedIntoId` until it reaches a person that is not merged. Aliases form a tree under each canonical person, and chains cannot loop, because a merge only ever attaches one canonical person to another (rule 11). The resolver builds the full map once per state.
 - Every effect, share, membership and payment handle is attributed to the canonical person.
-- The canonical person's display name and note are its own. Its payment handles are the union over all records that resolve to it.
-- Effects between two records of the same canonical person cancel out (dropped). Shares of two such records in one expense add up.
+- The canonical person's display name and note are its own. Its payment handles are the union over all records that resolve to it; its default per type follows §3.2.
+- Effects between two records of the same canonical person (e.g. a group transfer between two merged duplicates) are dropped. Shares of two such records in one expense add up.
 
 ### 4.2 Effects
 
@@ -337,11 +344,11 @@ The DAO exposes insert and query only. A full JSON restore is the only operation
 |---|---|---|
 | EQUAL | Participants | `total / n` each |
 | PERCENT | Basis points per participant, must sum to 10 000 | `total × bp / 10 000` |
-| SHARES | Positive integer weight per participant | `total × w / Σw` |
+| SHARES | Integer weight 1–1 000 000 per participant | `total × w / Σw` |
 | EXACT | Minor units per participant, in the original currency | Must sum exactly to `totalMinor` |
 
-- **Largest-remainder rounding** (EQUAL, PERCENT, SHARES): compute exact shares with `BigDecimal`, floor each to minor units, then give +1 minor unit to the `total − Σfloored` participants with the largest fractional parts. Ties go to the lowest person UUID (string order).
-- **EXACT in a converted expense:** the per-person exact amounts in the original currency become weights, and the converted total is distributed by those weights with largest-remainder rounding.
+- **Largest-remainder rounding** (EQUAL, PERCENT, SHARES), in exact integer arithmetic (`BigInteger`; no division with a precision or rounding mode). Each participant has a weight `w` (1 for EQUAL, basis points for PERCENT, the weight for SHARES), and `W = Σw`. The floor share is `total × w div W`, the remainder `total × w mod W`. The `total − Σfloor` leftover minor units (always fewer than the number of participants) go +1 each to the participants with the largest remainders. All remainders share the denominator `W`, so comparing them is exact, and non-terminating fractions such as 100/3 need no precision setting. Ties go to the lowest person UUID (string order).
+- **EXACT in a converted expense:** the per-person exact amounts in the original currency become the weights, and the converted total is distributed by the same procedure.
 - **Errors:** `NoParticipants`, `PercentNotHundred(sumBp)`, `ExactRemaining(diffMinor)`, `ZeroWeights`, `NegativeInput`.
 - Splitting happens over `effectTotalMinor`, so `Σ shareMinor == effectTotalMinor` always holds.
 
@@ -354,8 +361,11 @@ Rate lookup `rateFor(occurredOn, from, to)`:
 3. The most recent cached rate, with the snapshot flagged `isStale = true`.
 4. No rate available, or a currency outside the ECB set: the user enters a rate manually (`USER_ENTERED`).
 
-- **Bank actual override:** the user enters the amount actually charged (e.g. "87.65 EUR"); the rate is derived and the snapshot saved with `source = BANK_ACTUAL`.
-- **Conversion:** `BigDecimal(amount) × rate`, rounded HALF_EVEN to the target currency's minor units. In expenses the converted total is split afterwards (§4.4).
+- **Rate semantics:** `rate` is the number of major units of `quoteCurrency` per one major unit of `baseCurrency`. A snapshot used by an entry always has base = the paid currency and quote = the effect currency, so conversion is always a multiplication. An inverted or cross rate (e.g. from cached rates against the home currency) is computed once with `MathContext.DECIMAL128` and stored as the snapshot's rate string; conversion always uses the stored string, so it is reproducible.
+- **Valid rates:** a rate parses as `BigDecimal`, is > 0 and has at most 34 significant digits; otherwise `InvalidRate`. This applies to fetched, cached and user-entered rates alike.
+- **Conversion:** `effectMinor = HALF_EVEN(amountMinor × rate × 10^(fd(quote) − fd(base)))`, where `fd` is the currency's minor-unit digits. Everything before that single rounding is exact `BigDecimal` arithmetic (a multiplication and a power-of-ten scale shift). Example: 100 JPY (fd 0) at 0.006 EUR/JPY → 100 × 0.006 × 10² = 60 EUR minor units (0.60 EUR). A result above `MAX_MINOR` → `AmountTooLarge`. In expenses the converted total is split afterwards (§4.4).
+- **Zero results:** a positive amount that converts to 0 minor units (e.g. 1 IDR at 0.000055 EUR/IDR) is rejected with `ConvertedToZero`; the user can enter the amount actually charged instead.
+- **Bank actual override:** the user enters the amount actually charged (e.g. "87.65 EUR"). That amount **is** the effect amount; nothing is recomputed from the rate. The snapshot stores the derived rate (`charged / paid` in major units, `DECIMAL128`) with `source = BANK_ACTUAL`, for display.
 - **Editing:** an existing snapshot is kept unless date, currency or amount changes. Then a fresh rate is proposed and the user may keep the old one.
 - **Refresh:** a daily WorkManager job (network required) caches the latest rates for the home currency and the currencies in use. Historical rates are cached forever.
 - **Where conversion applies:** only in CONVERT groups. KEEP groups and everything outside groups keep `effectCurrency = currency`, so balances stay per currency, except for explicit cross-currency settlements (§4.6).
@@ -379,7 +389,7 @@ Rate lookup `rateFor(occurredOn, from, to)`:
 - `net(A, B, c) == −net(B, A, c)` for non-group pairs.
 - Group member nets sum to 0 per group and currency.
 - Recording every transfer of a settle plan brings all nets of that group and currency to 0; a plan has at most n−1 transfers.
-- Merge followed by unmerge restores identical balances.
+- Merge followed by unmerge of the same person, with no other writes in between, restores identical balances, memberships and canonical IDs, also when either person already had aliases of its own.
 - Replaying `EntryRevision` (latest snapshot per entity) reproduces the current entity tables exactly.
 
 ---
@@ -398,7 +408,7 @@ Each operation runs in one `db.withTransaction { }`, which writes the entity row
 | `restore(id, expectedVersion)` | Clear `deletedAt`, `version + 1` | `RESTORED` |
 
 - `expectedVersion` mismatch → `StaleVersion`; nothing is written.
-- Every operation runs `LedgerValidator` (§3.4) against the state the transaction would produce.
+- Every operation runs `LedgerValidator` (§3.4): the state invariants against the complete state the transaction would produce, and (except for import and undo import) the edit rules against the entities it changes.
 - Writes for one logical action (an expense with its shares, a merge, a whole import) happen in a single transaction.
 - Archive, merge and unmerge are `update`s with a descriptive reason.
 - Imports use the same operations with `importBatchId` and an import reason. Incoming version numbers are never written (§7.4).
@@ -421,9 +431,10 @@ Each operation runs in one `db.withTransaction { }`, which writes the entity row
 
 Undoing a batch, in one transaction:
 
-- Rows **created** by the batch are deleted.
-- Rows **updated** by the batch (conflicts resolved as "take incoming", §7.4) are reverted to their pre-import snapshot, but only if their current version is still the one the import wrote.
-- Each row goes through the validator. A row that was changed since the import, or whose reversal violates a rule, is skipped, and the skipped rows are listed with reasons. The rest of the undo proceeds.
+- Rows **created** by the batch are deleted (rows the import created already deleted stay as they are).
+- Rows **updated** by the batch (conflicts resolved as "take incoming", §7.4) are reverted to their pre-import snapshot, including their deleted state, but only if their current version is still the one the import wrote.
+- Rows are undone in reverse dependency order: entries, then memberships and payment handles, then groups and people. The result is checked against the state invariants (§3.4). A row that was changed since the import, or whose undo would break an invariant (e.g. deleting an imported person that a kept entry still references), is skipped. The rest of the undo proceeds.
+- **Undo is best-effort.** The result lists every skipped row with its reason. Balances return exactly to their pre-import values only when nothing was skipped; the UI says so when something was.
 - Everything is recorded with reason "Undo import <file>"; `ImportBatch.undoneAt` is set.
 
 ### 5.5 Snapshot schema evolution
@@ -434,10 +445,11 @@ Each `snapshotJson` carries `schema: Int`. When a Room migration changes an enti
 
 Used now for duplicate contacts ("I created Alex twice"), and in phase 5 for linking a local contact to a real account or claiming a placeholder (§13).
 
-- **`previewMerge(source, target)`:** the combined non-group balance, the combined group nets, and the non-group debts between the two records that will cancel out. Nothing is written.
-- **`merge(source, target)`:** sets `source.mergedIntoId = target` (revision reason "Merged into <target>"). Any person whose `mergedIntoId` was `source` is re-pointed to `target` in the same transaction (each with its own revision), so aliases stay flat.
+- **`previewMerge(source, target)`:** the combined non-group balance, the combined group nets, the entries between the two that will stop having an effect (non-group debts, and group entries whose parties become one person), and the payment-handle defaults that will apply. Nothing is written.
+- **`merge(source, target)`:** both must be canonical (rule 11). Sets `source.mergedIntoId = target` (revision reason "Merged into <target>"). **That is the only row written.** The source's own aliases keep pointing at the source and reach the target through resolution (§4.1).
 - **History is never rewritten.** Entries and snapshots keep referencing the source ID; `IdentityResolver` attributes them to the target.
-- **`unmerge(person)`:** clears `mergedIntoId` (revision reason "Unmerged from <target>"), after validation (rule 12). Entries created after the merge reference the target directly, so they stay with the target.
+- **Collisions resolve at read time, with no extra writes:** memberships in the same group combine (canonical membership, §3.4); shares of both records in one expense add up; entries between the two records, including group transfers that become self-transfers, stay stored and have no effect (§4.1); payment-handle defaults follow §3.2. Merge cannot break a state invariant, so it never fails on collisions.
+- **`unmerge(person)`:** clears that person's `mergedIntoId` (revision reason "Unmerged from <target>"), after validation (rule 12). The person splits off together with its own aliases. Because merge wrote nothing else, unmerging right after a merge restores the previous state exactly (§4.7). Entries created after the merge reference the target directly, so they stay with the target; a default handle set on the canonical person after the merge stays as set.
 - In the MVP, me is never part of a merge (rule 9).
 
 ---
@@ -463,7 +475,7 @@ Used now for duplicate contacts ("I created Alex twice"), and in phase 5 for lin
 | `LedgerApi` | Observe overview (totals, mixed people/group list) and activity feed with filters; save expense and transfer drafts; `previewSplit(draft)`; settle-up drafts from a plan item or a person; delete / restore; observe entry detail with history and diffs; `revertTo(entityId, version)` |
 | `FxApi` | Rate quote for a date and currency pair (value, source, date, stale flag); derive a rate from "amount actually charged" |
 | `BackupApi` | Create a backup (encrypted or not); restore; undo last restore; observe the backup reminder (no manual backup for 30 days) |
-| `ImportExportApi` | Export (scope, shape, format, Excel-friendly flag); parse an import into a preview; commit with per-row conflict choices; observe import batches; undo an import |
+| `ImportExportApi` | Export (shape, format, Excel-friendly flag, and a scope for reports); parse an import into a preview; commit with per-row conflict choices; observe import batches; undo an import |
 | `SettingsApi` | Home currency; app-lock enabled and timeout; screen protection; backup encryption default; `observeLockRequired()` and `markUnlocked()` for the app-lock policy |
 
 `LedgerError` is a sealed hierarchy covering every error in §4.4 and §8, each carrying the data a good message needs (e.g. `ExactRemaining(diff)`, `MemberHasBalance(nets)`, `RestoreConflict(violations)`, `NeedsGroup(people)`).
@@ -490,34 +502,31 @@ Used now for duplicate contacts ("I created Alex twice"), and in phase 5 for lin
 - **Unencrypted format:** plain `.json`, with a warning when chosen.
 - **Backup reminder:** when `lastManualBackupAt` is older than 30 days (or no backup has ever been made), `BackupApi` reports a non-blocking reminder. There are no scheduled automatic backups (they would need a stored passphrase).
 
+**Database files.** Database files have generation names, `iou-<uuid>.db`, in the app's database directory. A small pointer file, `db-state.json` (`{ "current": "iou-<a>.db", "previous": "iou-<b>.db" | null }`), names the live database and the pre-restore copy; Room opens the one named `current`. The pointer is only ever replaced atomically: write `db-state.json.tmp`, fsync, rename it over `db-state.json`, fsync the directory. First launch creates the first database and the pointer.
+
 **Restore procedure** (replaces the whole ledger, after confirmation; all or nothing):
 
-1. **Decrypt, parse and validate** the entire file before touching the live database. Newer `schemaVersion` → rejected; older → migrated in step 2.
-2. **Build** a new Room database at `restore-tmp/iou.db`, run migrations if needed, run the §4.7 invariant checks, then close it with a full WAL checkpoint so it is a single file (no `-wal`/`-shm`).
-3. **Journal:** write `restore-journal.json` (`{ "op": "restore" | "undo", "state": "SWAPPING" }`) and fsync it. All files are in the same app-private directory tree, so the renames below are atomic.
-4. **Swap:** close the live database with a full WAL checkpoint; rename `iou.db` → `pre-restore/iou.db` (replacing any older copy); rename `restore-tmp/iou.db` → `iou.db`; fsync the directory; delete the journal; reopen.
-5. **Roll back on any failure** in steps 2–4: put `pre-restore/iou.db` back as `iou.db` if it was moved, delete `restore-tmp/` and the journal. The user sees "Restore failed, nothing changed".
+1. **Decrypt, parse and validate** the entire file before touching the live database. Newer `schemaVersion` → rejected; older → migrated in step 3.
+2. **Mark:** write `restore-marker.json` (`{ "op": "restore", "target": "iou-<new>.db" }`) and fsync it. The marker only decides which message to show after a crash; correctness never depends on it.
+3. **Build** `iou-<new>.db`, run migrations if needed, run the §4.7 invariant checks, then close it with a full WAL checkpoint so it is a single file (no `-wal`/`-shm`).
+4. **Commit:** close the live database with a full WAL checkpoint, then replace the pointer with `{ current: new, previous: old current }`. **This atomic rename is the commit point.** Reopen.
+5. **Clean up:** delete the database file that was `previous` before the commit (only the latest pre-restore copy is kept), then delete the marker.
+6. **On any failure before the commit point,** delete `iou-<new>.db` and the marker, and reopen the live database. The user sees "Restore failed, nothing changed".
 
-**Crash recovery** (process death between steps): on every app start, *before* Room opens the database, `RestoreRecovery` checks for `restore-journal.json`:
+**Undo last restore** writes a marker with `op = "undo"` and `target` = the current `previous`, then commits a pointer with `current` and `previous` swapped (same close-and-commit as step 4). The restored database becomes the pre-restore copy, so an undo can itself be undone.
 
-| Files found | Meaning | Action |
-|---|---|---|
-| No journal | Nothing in progress | Delete any leftover `restore-tmp/` |
-| Journal, `iou.db` present, `restore-tmp/iou.db` present | Crashed before or during the first rename | Roll back: delete `restore-tmp/` and the journal |
-| Journal, `iou.db` absent, `pre-restore/iou.db` present | Crashed between the two renames | Roll back: rename `pre-restore/iou.db` → `iou.db`, delete `restore-tmp/` and the journal |
-| Journal, `iou.db` present, `restore-tmp/iou.db` absent | Both renames completed | Finalize: delete the journal |
+**Crash recovery:** on every app start, *before* Room opens a database, `RestoreRecovery`:
 
-After a rollback the app shows "The last restore was interrupted, nothing changed" once.
+1. Reads the pointer and deletes every `iou-*.db` (with its `-wal`/`-shm`) and any `db-state.json.tmp` that the pointer does not name. Process death before the commit point leaves the old database live plus an unreferenced new file, which is deleted. After the commit point the new database is live, and at most a stale old copy is left to delete. No other state can exist, so nothing is rolled back or inferred from which files are present.
+2. If a marker exists: when the pointer's `current` equals the marker's `target`, the operation had committed and nothing is shown; otherwise the app shows "The last restore was interrupted, nothing changed" once. Then the marker is deleted.
 
-**Undo last restore** uses the same journal with `op = "undo"`. After writing the journal, it first renames `pre-restore/iou.db` → `restore-tmp/iou.db`, then runs step 4 unchanged, so the restored database becomes the new `pre-restore/` copy. When recovery rolls back an `undo`, it renames `restore-tmp/iou.db` back to `pre-restore/iou.db` instead of deleting it. An interrupted undo therefore never loses the pre-restore copy.
-
-- Ledger settings live in Room (§3.3), so the swap restores them atomically; no second store can partially fail.
+- Ledger settings live in Room (§3.3), so the commit restores them atomically; no second store can partially fail.
 - The me identity comes from the backup (a restore on a new phone keeps the same identity). The device ID stays the installation's own.
-- **Pre-restore copy:** `pre-restore/` holds a copy of the live database and gets the same protection: app-private storage with file-based encryption. It is not passphrase-encrypted (no passphrase is available, and it never leaves the device) and is excluded from Android Auto Backup. Only the latest copy is kept. **Undo last restore** swaps it back using the same procedure.
+- **Pre-restore copy:** the database named `previous` is an ordinary database file with the same protection as the live one: app-private storage with file-based encryption. It is not passphrase-encrypted (no passphrase is available). Only the latest copy is kept.
 
 ### 7.2 CSV export
 
-- **Scope:** full ledger, one group, or one person, each with an optional date range.
+- **Scope:** the **normalized shape is always the full ledger**: every table, every row including soft-deleted ones and the me person, so a re-import never meets a dangling reference (merge targets, members, FX snapshots). The **report shape** can be scoped to the full ledger, one group, or one person, each with an optional `occurredOn` date range. A person scope contains the entries in which that person (canonically) is the payer, has a share, or is a transfer party, shown in full with the other participants and the entry totals; it is a report for my own use.
 - **Normalized shape:** `.zip` with one CSV per table (`people` including `merged_into_id`, `payment_handles`, `groups`, `group_members`, `transfers`, `expenses`, `expense_shares`, `fx_snapshots`) plus `manifest.json` (app version, schema version, timestamp, scope, text escaping). Amounts are exported as `amount_minor` integers and decimal strings.
 - **Report shape:** one row per entry: `date, type, description, group, paid_by, from, to, amount, currency, my_share, balance_effect_for_me, account, note`. Names are canonical. Not re-importable.
 - **Format:** default UTF-8 without BOM, `,` delimiter, RFC 4180 quoting; "Excel-friendly" mode = UTF-8 with BOM and `;`. Dates as ISO 8601 (`occurredOn` as `2026-11-02`, instants in UTC with `Z`), `.` decimal separator.
@@ -525,6 +534,7 @@ After a rollback the app shows "The last restore was interrupted, nothing change
 
 ### 7.3 XLSX export (FastExcel)
 
+- Scopes as in §7.2: the report workbook takes a scope, the normalized workbook is always the full ledger.
 - **Report workbook:** `Summary` sheet (non-group balances per person and my net per group, per currency), `Report` sheet (as the §7.2 report), and one sheet per group with member nets and its settle plan. Real date cells; amounts as numeric cells with currency-appropriate decimal formats.
 - **Normalized workbook:** one sheet per table with integer `amount_minor` columns.
 - The same formula-injection rule applies to string cells.
@@ -535,12 +545,13 @@ Version numbers from the file are **never** used to decide which side wins. Two 
 
 | Case | Classification | Action |
 |---|---|---|
-| UUID unknown locally | New | `create` at local version 1; revision `CREATED`, reason "Imported from <file> (source v<N>)" |
-| UUID exists, business fields identical (sync columns ignored) | Duplicate | Skipped |
-| UUID exists, business fields differ | **Conflict** | Shown in the preview with a field diff. Per-row choice: **keep local** (default) or **take incoming** (`update` on the local version; revision `UPDATED`, reason "Import conflict resolved from <file> (source v<N>)") |
+| UUID unknown locally | New | `create` at local version 1; revision `CREATED`, reason "Imported from <file> (source v<N>)". An incoming row that is deleted is created and then deleted in the same transaction (revisions `CREATED` and `DELETED`), so it can be restored later |
+| UUID exists, business fields and deleted state identical | Duplicate | Skipped |
+| UUID exists, business fields or deleted state differ | **Conflict** | Shown in the preview with a field diff; the deleted state shows as a field ("active → deleted", "deleted → active"). Per-row choice: **keep local** (default) or **take incoming**: an `update` on the local version for changed business fields and a `delete` or `restore` for a changed deleted state, each with its own revision, reason "Import conflict resolved from <file> (source v<N>)" |
 
+- **Compared fields:** sync columns are ignored, except that `deletedAt` is compared as a deleted / not-deleted state (its timestamp is ignored), because it changes balances.
 - **Audit history stays complete locally.** Every imported entity's local history starts with a revision that records the file and source version it came from. Source-device history is not imported; only JSON restore (§7.1) carries full history.
-- All rows pass the validator (§3.4); violations appear as invalid rows in the preview.
+- The import is checked against the **state invariants** of §3.4, not the edit rules (§3.4): it reproduces records rather than editing them. A group with removed members and their historical entries therefore imports as is, while anything that would leave an inconsistent state (e.g. a removed member with a non-zero net) shows up as invalid rows in the preview.
 - **Identity mapping.** Own-export import is for *your own* data, so the source's me must become the local me:
   - **Same identity** (the source's `isMe` UUID equals the local me UUID, e.g. an install restored from your backup): imported as is.
   - **Different identity** (e.g. a second install that was set up fresh): the preview asks the user to confirm that this export is their own data from another install. On confirmation, every reference to the source me in incoming rows (payer, share rows, transfer parties, group members, `authorId`) is mapped to the local me while the rows are imported. The source me's Person row itself is not imported. Each affected entity's origin revision records the mapping ("Imported from <file> (source v<N>), source identity <uuid> mapped to me"). Existing local rows are never rewritten; mapping applies only to incoming data, before classification and validation.
@@ -553,10 +564,10 @@ Version numbers from the file are **never** used to decide which side wins. Two 
 
 1. **Parse**, streaming, in a background coroutine.
 2. **Map** columns using `manifest.json` and the CSV headers, then apply identity mapping (§7.4).
-3. **Validate** each row: required fields, amounts (`BigDecimal`, never `Double`; too many decimals → invalid), dates, known currency codes, shares sum, IBAN checksum, §3.4 rules.
+3. **Validate** each row: required fields, amounts (`BigDecimal`, never `Double`; too many decimals or above `MAX_MINOR` → invalid), FX rates, dates, known currency codes, shares sum, IBAN checksum. Then check the §3.4 state invariants over the complete state the import would produce, and attribute each violation to the rows that cause it.
 4. **Classify** by UUID as new / duplicate / conflict (§7.4).
 5. **Preview:** counts of new / conflicting / duplicate / invalid rows, conflicts with field diffs and a per-row choice, invalid rows with row number and reason, the resulting balance changes. Invalid rows must be fixed in the file or explicitly skipped.
-6. **Commit** in one transaction through `LedgerWriter`, create an `ImportBatch`, tag the rows.
+6. **Commit** in one transaction through `LedgerWriter`, applying rows in dependency order (people, payment handles, groups, memberships, FX snapshots, entries); create an `ImportBatch`, tag the rows. The state invariants are checked once, on the final state.
 
 **Limits:** 20 MB per file, 100 000 rows; for zips, at most 50 entries, at most 200 MB total uncompressed, compression ratio at most 100.
 
@@ -570,13 +581,13 @@ All failures come back as typed `LedgerError`s that the UI can display. No parti
 
 | Area | Errors | Behaviour |
 |---|---|---|
-| Money / validation | `InvalidAmount`, `TooManyDecimals`, `UnknownCurrency`, `InvalidIban`, split errors (§4.4) | Returned as results; save is not possible |
-| Integrity (§3.4) | `NeedsGroup`, `NotGroupMember`, `MemberHasBalance`, `MemberRemoved`, `GroupSettingsLocked`, `CannotModifyMe`, `StillReferenced`, `InvalidMerge` | Transaction rolled back; error carries the data for a suggested action (create group, settle, re-add member, archive) |
+| Money / validation | `InvalidAmount`, `TooManyDecimals`, `AmountTooLarge`, `UnknownCurrency`, `InvalidRate`, `ConvertedToZero`, `InvalidIban`, split errors (§4.4) | Returned as results; save is not possible |
+| Integrity (§3.4) | `NeedsGroup`, `NotGroupMember`, `MemberHasBalance`, `MemberRemoved`, `GroupSettingsLocked`, `CannotModifyMe`, `StillReferenced`, `InvalidMerge`, `SelfTransfer` | Transaction rolled back; error carries the data for a suggested action (create group, settle, re-add member, archive) |
 | Concurrency | `StaleVersion` | Nothing written; reload |
 | Revert to version | `RestoreConflict(violations)` | Nothing written; list of violated rules; "Open as draft" |
 | FX | Network failure, unsupported currency | Fallback chain §4.5; worst case the user enters a rate manually. Never blocks entry |
 | Rate refresh worker | Any | WorkManager exponential backoff; silent |
-| Restore / import (fatal) | Corrupt file, limits exceeded, schema too new, GCM tag failure ("Wrong passphrase or damaged file"), `ForeignLedger` (identity mapping declined), failure or process death during the restore swap | Nothing written; an incomplete swap is rolled back (§7.1) |
+| Restore / import (fatal) | Corrupt file, limits exceeded, schema too new, GCM tag failure ("Wrong passphrase or damaged file"), `ForeignLedger` (identity mapping declined), failure or process death during a restore or undo | Before the commit point: nothing changes and the new file is discarded. After it: the operation is complete. Never a mix (§7.1) |
 | Import (per row) | Validation failures | Shown in the preview |
 
 No third-party crash reporting.
@@ -588,7 +599,7 @@ No third-party crash reporting.
 - **App lock:** `BiometricPrompt` with `BIOMETRIC_STRONG or DEVICE_CREDENTIAL` (available as one API from minSdk 30). The core's lock policy (`SettingsApi.observeLockRequired()`) requires unlock on cold start and after a configurable time in the background (immediately, 1, 5, 15 min; default 1 min), tracked with `ProcessLifecycleOwner`. The UI shows a lock screen covering all content until `markUnlocked()`. App lock can only be enabled if the device has a secure lock screen.
 - **Screen protection:** a toggle (default **off**) that sets `FLAG_SECURE` on the single Activity.
 - **Backup encryption:** §7.1; default on. Passphrase at least 8 characters, entered twice, with a clear "cannot be recovered" warning.
-- **Android Auto Backup** (system cloud backup, separate from manual JSON backups): enabled **only for the Room database** (`iou.db`) through `dataExtractionRules` and `fullBackupContent`. It is end-to-end encrypted by Android on devices with a screen lock. Excluded: DataStore (device-local settings, §3.3), `noBackupFilesDir` (device ID), `pre-restore/`, `restore-tmp/` and `restore-journal.json`. When Auto Backup restores the database onto a new phone, the me identity comes with it, the device gets a new device ID, and device-local settings start at their defaults.
+- **Android Auto Backup** (system cloud backup, separate from manual JSON backups): enabled **only for the ledger databases** (the `iou-*.db` files, which includes the pre-restore copy) and their pointer `db-state.json`, through `dataExtractionRules` and `fullBackupContent`. It is end-to-end encrypted by Android on devices with a screen lock. Excluded: DataStore (device-local settings, §3.3), `noBackupFilesDir` (device ID), `db-state.json.tmp` and `restore-marker.json`. Any unreferenced database file that arrives with a system restore is deleted by `RestoreRecovery` at the next start. When Auto Backup restores the database onto a new phone, the me identity comes with it, the device gets a new device ID, and device-local settings start at their defaults.
 - **Permissions:** no runtime (dangerous) permissions. Install-time normal permissions only: `INTERNET` (declared by the app), `USE_BIOMETRIC` (merged from `androidx.biometric`), and the permissions WorkManager merges for scheduling (e.g. `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`). The merged manifest is reviewed before each release (§14), and unexpected entries are removed with `tools:node="remove"` where safe.
 - **Network:** cleartext traffic disabled. Release builds never log amounts, names or payment handles.
 
@@ -602,10 +613,11 @@ Signed APKs on GitHub Releases (§2.4); friends install by sideloading, optional
 
 ## 11. Testing
 
-- **JVM unit tests:** `Money` (parse/format/arithmetic, currencies with 0 and 3 decimals), `SplitResolver`, `FxConverter`, `IdentityResolver`, `LedgerEngine`, `SettlePlanner`, `LedgerValidator` (every rule, positive and negative), IBAN mod-97, `RevisionDiff`, snapshot upcasters, CSV escaping and unescaping, import classification, backup encrypt/decrypt and wrong-passphrase handling.
-- **Kotest property tests:** the invariants of §4.7; normalized CSV export → wipe → import yields identical balances, IDs and business fields (including arbitrary text with leading `=`, `+`, `-`, `@`, `'`); JSON backup → restore yields an identical database.
+- **JVM unit tests:** `Money` (parse/format/arithmetic, currencies with 0 and 3 decimals, `MAX_MINOR` and overflow → `AmountTooLarge`), `SplitResolver` (including non-terminating fractions and maximal weights), `FxConverter` (differing minor digits, e.g. 100 JPY at 0.006 → 60 EUR minor units; `ConvertedToZero`; `InvalidRate`; inverted rates), `IdentityResolver` (alias trees, handle defaults), `LedgerEngine`, `SettlePlanner`, `LedgerValidator` (every rule, positive and negative), IBAN mod-97, `RevisionDiff`, snapshot upcasters, CSV escaping and unescaping, import classification, backup encrypt/decrypt and wrong-passphrase handling.
+- **Kotest property tests:** the invariants of §4.7; normalized CSV export → wipe → import yields identical balances, IDs, business fields and deleted states (including arbitrary text with leading `=`, `+`, `-`, `@`, `'`, soft-deleted entries, merged people, and removed members with historical entries); JSON backup → restore yields an identical database.
 - **`api` contract tests:** one abstract test suite per `*Api` interface, run against both the fake and the real implementation (the real one on an in-memory Room database). It keeps the fake honest and protects the UI contributor from drift.
-- **Room tests (in-memory):** `LedgerWriter` atomicity (a failure mid-write leaves no row and no revision), `StaleVersion`, import undo, merge re-pointing, migrations with `MigrationTestHelper`.
+- **Room tests (in-memory):** `LedgerWriter` atomicity (a failure mid-write leaves no row and no revision), `StaleVersion`, import undo (complete and with skipped rows), merge and unmerge with nested aliases, migrations with `MigrationTestHelper`.
+- **Restore tests (file system):** process death injected at every step of a restore and of an undo, followed by `RestoreRecovery`.
 - **UI tests:** defined by the UI contributor.
 - **CI:** §2.4, including a check that fails if `Double` or `Float` appears in `money`, `ledger`, `api`, `data` or `io` sources.
 - **Manual checklist** (`docs/manual-test-checklist.md`): app lock on a real device, `FLAG_SECURE`, exported CSV (both modes) and XLSX opened in Excel and LibreOffice, signed release APK installs and upgrades over the previous release.
@@ -638,15 +650,15 @@ Signed APKs on GitHub Releases (§2.4); friends install by sideloading, optional
 3. An untagged transfer between two people who are not me, and an ad-hoc expense with three people, are rejected with `NeedsGroup`.
 4. Editing a transfer from 40.00 to 45.00 adds an `UPDATED` revision whose diff shows "40.00 → 45.00 EUR"; reverting to v1 brings back 40.00 and adds a further revision.
 5. Deleting a transfer removes its effect immediately; restoring brings it back; both appear in history.
-6. Two duplicates "Alex" (owes me 10.00) and "Alex S." (owes me 5.00) merge into one person who owes me 15.00. Their old entries still show their original revisions, and unmerging restores 10.00 / 5.00.
+6. Two duplicates "Alex" (owes me 10.00) and "Alex S." (owes me 5.00) merge into one person who owes me 15.00. Their old entries still show their original revisions, and unmerging restores 10.00 / 5.00. If "Alex" was first merged into "Alex S." and "Alex S." is then merged into "A. Smith", unmerging "Alex S." takes "Alex" along and restores the balances from before the second merge.
 7. JSON backup → wipe → restore yields identical balances, IDs, versions, revisions and the same me identity; the device ID is unchanged by the restore.
-8. Restoring with a wrong passphrase writes nothing and shows "Wrong passphrase or damaged file". A failure injected during the restore swap leaves the previous database and ledger settings intact. "Undo last restore" after a successful restore brings back the previous state.
+8. Restoring with a wrong passphrase writes nothing and shows "Wrong passphrase or damaged file". A failure injected before the commit point leaves the previous database and ledger settings intact. "Undo last restore" after a successful restore brings back the previous state.
 9. A text field `=HYPERLINK("http://evil","x")` exports as text in CSV, and re-importing the export restores exactly `=HYPERLINK("http://evil","x")`; a note `'quoted` also round-trips unchanged.
-10. Importing an export in which a transfer was edited differently from the local copy (even with a higher source version) shows a conflict with a field diff. Nothing is overwritten unless "take incoming" is chosen, and the resulting revision records the source file and version.
+10. Importing an export in which a transfer was edited differently from the local copy (even with a higher source version) shows a conflict with a field diff. Nothing is overwritten unless "take incoming" is chosen, and the resulting revision records the source file and version. A transfer deleted in the export but active locally shows as a conflict "active → deleted"; taking incoming deletes it (and the reverse restores it).
 11. Importing an export from a fresh second install (different me identity): after confirmation, its transfers with X arrive as transfers between the local me and X, pass all §3.4 rules, and their origin revisions record the identity mapping. Declining rejects the import with `ForeignLedger` and writes nothing.
-12. Killing the process at each step of the restore swap (test hook) leaves, after restart, either the complete old database or the complete new one, never a mix. An interrupted swap is rolled back and reported once.
+12. Killing the process at each step of a restore and of an undo (test hook) leaves, after restart, either the complete old database or the complete new one, never a mix. A kill before the commit point keeps the old database and is reported once; a kill after it keeps the new one and reports nothing.
 13. With no manual backup for 30 days, `BackupApi` reports the reminder; making a backup clears it.
-14. All M0 contract tests pass against the real implementation.
+14. The M0 contract tests for setup, people, the non-group ledger, FX, backup, import/export and settings pass against the real implementation. Contract tests that need groups are tagged `groups` and join the real run in M2; until then the real flavor's `GroupsApi` emits no groups and rejects writes.
 
 ### Milestone 2: Groups and splits
 
@@ -667,8 +679,11 @@ Signed APKs on GitHub Releases (§2.4); friends install by sideloading, optional
 11. Reverting an expense to a version that includes a since-removed member returns `RestoreConflict` naming that rule and writes nothing; "Open as draft" pre-fills the old values.
 12. Archiving a group in which my net is −15.00 is allowed after a warning. The group still counts in "I owe" and stays in the overview as "archived, unsettled" until settled.
 13. Deleting an expense removes its effect from all nets immediately.
-14. An import file with one invalid row shows that row and the reason in the preview and commits nothing until it is fixed or skipped. Undoing an import removes exactly the rows it created, reverts the rows it updated, and restores the previous balances.
+14. An import file with one invalid row shows that row and the reason in the preview and commits nothing until it is fixed or skipped. Undoing an import in which no row was changed afterwards removes exactly the rows it created, reverts the rows it updated (including their deleted state), and restores the previous balances. If an imported row was changed after the import, undo skips it (and any row that still depends on it), lists each skipped row with its reason, and undoes the rest.
 15. XLSX report and normalized workbooks open in Excel and LibreOffice with correct numbers and dates.
+16. A full export of a ledger containing a group with a removed member and that member's historical expenses imports into an empty install without errors and reproduces every net.
+17. Merging two people who both belong to a group, each with a default IBAN and with a group transfer between them, succeeds: the transfer has no effect, the canonical person has one default IBAN (§3.2), and unmerging restores both people's nets.
+18. All `api` contract tests, including those tagged `groups`, pass against the real implementation.
 
 ---
 

@@ -10,7 +10,9 @@ Each device creates its own records for people, so "Alice" on my phone and Alice
 
 ## Decision
 
-The me person's UUID is generated once at first launch and is the user's permanent global identity (kept on restore, never regenerated). Each installation has a device ID, never backed up, recorded on every revision. `Person.mergedIntoId` turns a person into an alias of a canonical person (flat aliases only; me is never merged); `IdentityResolver` maps every ID to its canonical person at read time, and history is never rewritten. Phase 5 linking and placeholder claiming reuse merge.
+The me person's UUID is generated once at first launch and is the user's permanent global identity (kept on restore, never regenerated). Each installation has a device ID, never backed up, recorded on every revision. `Person.mergedIntoId` points a merged person at the person it was merged into; aliases form a tree, and the canonical person is the root (me is never merged). A merge writes only the source's `mergedIntoId`, and only canonical people can be merged into canonical people, so unmerge is the exact inverse of merge. `IdentityResolver` maps every ID to its canonical person at read time, and history is never rewritten. Collisions (handle defaults, shared memberships, transfers between the two records) resolve at read time without extra writes. Phase 5 linking and placeholder claiming reuse merge.
+
+*Amended 2026-11-02 after an external review:* the first version kept aliases flat by re-pointing a source's aliases to the target. Unmerging the source then left those aliases attached to the target, so merge → unmerge did not restore balances. The tree model fixes this.
 
 ## Alternatives Considered
 
@@ -34,4 +36,5 @@ The me person's UUID is generated once at first launch and is the user's permane
 - Canonical resolution touches every read and the validator.
 
 ### Risks
-- Alias chains or merge cycles. Prevented by the flat-alias rule and re-pointing within one transaction.
+- Merge cycles. Prevented because both merge source and target must be canonical, and a state invariant checks imported data for cycles.
+- Resolution follows chains instead of one hop. The resolver builds the full map once per state, so the cost is negligible.
