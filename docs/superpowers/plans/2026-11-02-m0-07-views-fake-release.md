@@ -61,7 +61,7 @@
 
 **Interfaces:**
 - Consumes: model (Part 2), read models (Part 3), `IdentityResolver`, `LedgerEngine`, `SettlePlanner`, `FxConverter`, `RevisionDiff`, `DiffNames` (Parts 2, 4), `PeopleOps.merge`, `WriteContext` (Part 6).
-- Produces: `class LedgerViews(state, revisions, generation, homeCurrency, rateToHome: (CurrencyCode) -> String?)` with public `resolver`, `balances` (lazy), `personRef(id)` (canonical), `rawRef(id)` (the record itself), `groupRef(id)`, `token(entity)`, `overview()`, `people(includeArchived)`, `person(id)`, `groups(includeArchived)`, `group(id)`, `groupPlan(groupId)`, `handleView(handle, canonical)`, `mergePreview(source, target)`; internal `meId`, `names`, `amounts(map)`, `approxHome(map)`. `rateToHome(c)` returns home units per one unit of `c` (`"1"` for the home currency) or null when unknown.
+- Produces: `class LedgerViews(state, revisions, generation, homeCurrency, rateToHome: (CurrencyCode) -> String?)` with public `resolver`, `balances` (lazy), `personRef(id)` (canonical), `rawRef(id)` (the record itself), `groupRef(id)`, `token(entity)`, `overview()`, `people(includeArchived, includeDeleted)`, `person(id)`, `groups(includeArchived, includeDeleted)`, `group(id)`, `groupPlan(groupId)`, `handleView(handle, canonical)`, `mergePreview(source, target)`; internal `meId`, `names`, `amounts(map)`, `approxHome(map)`. `rateToHome(c)` returns home units per one unit of `c` (`"1"` for the home currency) or null when unknown.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -159,6 +159,23 @@ class LedgerViewsTest {
         detail.flows.size shouldBe 2
         detail.settingsLocked shouldBe true
         views(ledger.state).groups(includeArchived = false).single().myNets shouldBe listOf(eur(-2_000))
+    }
+
+    @Test
+    fun `deleted people and groups are listed only when asked`() {
+        val ledger = TestLedger().apply { me() }
+        val gone = ledger.person("Gone", deleted = true)
+        ledger.person("Kept")
+        val old = ledger.group("Old", deleted = true)
+
+        views(ledger.state).people(includeArchived = false).map { it.person.displayName } shouldBe listOf("Kept")
+        views(ledger.state).people(includeArchived = false, includeDeleted = true).single { it.deleted }.person.id shouldBe gone
+        views(ledger.state).groups(includeArchived = false) shouldBe emptyList()
+        views(ledger.state).groups(includeArchived = false, includeDeleted = true).single().let {
+            it.group.id shouldBe old
+            it.deleted shouldBe true
+        }
+        views(ledger.state).person(gone)!!.deleted shouldBe true
     }
 
     @Test
@@ -298,9 +315,9 @@ class LedgerViews(
         return Money(total, homeCurrency)
     }
 
-    private fun canonicalPeople(): List<Person> =
+    private fun canonicalPeople(includeDeleted: Boolean = false): List<Person> =
         state.people.values
-            .filter { !it.isMe && !it.isDeleted && it.mergedIntoId == null }
+            .filter { !it.isMe && (includeDeleted || !it.isDeleted) && it.mergedIntoId == null }
             .sortedBy { it.displayName.lowercase() }
 
     // ---- overview and people ----
@@ -330,10 +347,13 @@ class LedgerViews(
         )
     }
 
-    fun people(includeArchived: Boolean): List<PersonSummary> =
-        canonicalPeople()
+    /** Deleted people only with [includeDeleted]: the UI's way back to a deleted person's history and restore. */
+    fun people(includeArchived: Boolean, includeDeleted: Boolean = false): List<PersonSummary> =
+        canonicalPeople(includeDeleted)
             .filter { includeArchived || it.archivedAt == null }
-            .map { PersonSummary(rawRef(it.id), amounts(balances.net(it.id)), it.archivedAt != null, resolver.recordsOf(it.id).size - 1) }
+            .map {
+                PersonSummary(rawRef(it.id), amounts(balances.net(it.id)), it.archivedAt != null, it.isDeleted, resolver.recordsOf(it.id).size - 1)
+            }
 
     fun person(id: PersonId): PersonDetail? {
         val canonical = resolver.canonical(id)
@@ -409,9 +429,9 @@ class LedgerViews(
 
     // ---- groups ----
 
-    fun groups(includeArchived: Boolean): List<GroupSummary> =
+    fun groups(includeArchived: Boolean, includeDeleted: Boolean = false): List<GroupSummary> =
         state.groups.values
-            .filter { !it.isDeleted && (includeArchived || it.archivedAt == null) }
+            .filter { (includeDeleted || !it.isDeleted) && (includeArchived || it.archivedAt == null) }
             .sortedBy { it.name.lowercase() }
             .map { group ->
                 GroupSummary(
@@ -419,6 +439,7 @@ class LedgerViews(
                     defaultCurrency = group.defaultCurrency,
                     fxMode = group.fxMode,
                     archived = group.archivedAt != null,
+                    deleted = group.isDeleted,
                     myNets = amounts(balances.myGroupNet(group.id)),
                     activeMemberCount = resolver.canonicalMembers(group.id).count { resolver.isActiveMember(group.id, it) },
                 )
@@ -484,7 +505,7 @@ fun LedgerViews.history(refs: Collection<EntityRef>): List<RevisionView> = empty
 ./gradlew :app:testFakeDebugUnitTest --tests "io.github.codex07.iou.ledger.views.LedgerViewsTest"
 ```
 
-Expected: `BUILD SUCCESSFUL`, 4 tests pass (the merge preview's example has no neutralized entry, so the `activityItem` stub isn't called).
+Expected: `BUILD SUCCESSFUL`, 5 tests pass (the merge preview's example has no neutralized entry, so the `activityItem` stub isn't called).
 
 - [ ] **Step 5: Commit**
 
@@ -504,7 +525,7 @@ git commit -m "Add LedgerViews for the overview, people, groups and merge previe
 
 **Interfaces:**
 - Consumes: Task 1, `EntryOps.splitInputsOf`, `EntryOps.previewShares` (Part 6), `RevisionDiff` (Part 4).
-- Produces (extension functions on `LedgerViews`): `activity(filter)`, `activityItem(entry)`, `entry(id): EntryDetail?`, `shareViews(expense)`, `history(type, id)`, `history(refs)` (several rows merged newest first, each diffed against its own previous version), `subject(ref)`, `draftFromVersion(id, version): LedgerResult<EntryDraft>`, `splitPreview(draft, editing, now): LedgerResult<SplitPreview>`, `settleUpFromPlan(item, today): LedgerResult<SettleUpDraft>`, `settleUpWithPerson(id, basis, today): LedgerResult<List<SettleUpDraft>>`, `balanceSummaryText(id): LedgerResult<String>`; plus top-level `fxView(snapshot)`.
+- Produces (extension functions on `LedgerViews`): `activity(filter)`, `activityItem(entry)`, `entry(id): EntryDetail?`, `shareViews(expense)`, `history(type, id)`, `history(refs)` (several rows merged newest first, each diffed against its own previous version), `subject(ref)`, `draftFromVersion(ref, version): LedgerResult<VersionDraft>`, `splitPreview(draft, editing, now): LedgerResult<SplitPreview>`, `settleUpFromPlan(item, today): LedgerResult<SettleUpDraft>`, `settleUpWithPerson(id, basis, today): LedgerResult<List<SettleUpDraft>>`, `balanceSummaryText(id): LedgerResult<String>`; plus top-level `fxView(snapshot)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -524,6 +545,7 @@ import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.SaveMode
 import io.github.codex07.iou.api.TransferDraft
+import io.github.codex07.iou.api.VersionDraft
 import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.FieldChange
 import io.github.codex07.iou.ledger.model.FxMode
@@ -604,7 +626,9 @@ class EntryViewsTest {
             FieldChange("amount", "40.00 EUR", "45.00 EUR"),
             FieldChange("effect", "40.00 EUR", "45.00 EUR"),
         )
-        h.views().draftFromVersion(id, 1).ok().let { (it as TransferDraft).amount } shouldBe eur(4_000)
+        val ref = EntityRef(EntityType.TRANSFER, id.value)
+        h.views().draftFromVersion(ref, 1).ok().let { ((it as VersionDraft.OfEntry).draft as TransferDraft).amount } shouldBe eur(4_000)
+        h.views().draftFromVersion(ref, 9) shouldBe LedgerResult.Err(LedgerError.NotFound("${id.value} v9"))
     }
 
     @Test
@@ -724,14 +748,18 @@ import io.github.codex07.iou.api.FlowView
 import io.github.codex07.iou.api.FxChoice
 import io.github.codex07.iou.api.FxQuote
 import io.github.codex07.iou.api.FxSnapshotView
+import io.github.codex07.iou.api.GroupDraft
+import io.github.codex07.iou.api.HandleDraft
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
+import io.github.codex07.iou.api.PersonDraft
 import io.github.codex07.iou.api.PlanItem
 import io.github.codex07.iou.api.RevisionView
 import io.github.codex07.iou.api.SettleUpDraft
 import io.github.codex07.iou.api.ShareView
 import io.github.codex07.iou.api.SplitPreview
 import io.github.codex07.iou.api.TransferDraft
+import io.github.codex07.iou.api.VersionDraft
 import io.github.codex07.iou.api.map
 import io.github.codex07.iou.ledger.engine.LedgerEngine
 import io.github.codex07.iou.ledger.engine.RevisionDiff
@@ -869,19 +897,29 @@ fun LedgerViews.subject(ref: EntityRef): String = when (val entity = state.entit
     null -> ref.id
 }
 
-/** "Open as draft" (spec §5.3): the old version's fields, with its FX as a fresh choice. */
-fun LedgerViews.draftFromVersion(id: EntryId, version: Int): LedgerResult<EntryDraft> {
-    val old = revisions.firstOrNull { it.entityId == id.value && it.version == version }?.snapshot as? Entry
-        ?: return LedgerResult.Err(LedgerError.NotFound("${id.value} v$version"))
-    val fx = old.fxSnapshotId?.let { state.fxSnapshots[it] }?.let { snapshot ->
+/** "Open as draft" (spec §5.3): the old version's fields as its edit form's draft; an entry's FX becomes a fresh choice. */
+fun LedgerViews.draftFromVersion(ref: EntityRef, version: Int): LedgerResult<VersionDraft> {
+    val old = revisions.firstOrNull { it.entityType == ref.type && it.entityId == ref.id && it.version == version }?.snapshot
+        ?: return LedgerResult.Err(LedgerError.NotFound("${ref.id} v$version"))
+    val draft = when (old) {
+        is Entry -> VersionDraft.OfEntry(draftOf(old, fxChoiceOf(old)))
+        is Person -> VersionDraft.OfPerson(PersonDraft(old.displayName, old.note, old.defaultCurrency))
+        is PaymentHandle -> VersionDraft.OfHandle(HandleDraft(old.type, old.value, old.label, old.holderName, old.bic, old.isDefault))
+        is Group -> VersionDraft.OfGroup(GroupDraft(old.name, old.defaultCurrency, old.fxMode))
+        // Memberships have no edit form: the UI adds or removes the member instead.
+        else -> return LedgerResult.Err(LedgerError.InvalidField("entity"))
+    }
+    return LedgerResult.Ok(draft)
+}
+
+private fun LedgerViews.fxChoiceOf(entry: Entry): FxChoice? =
+    entry.fxSnapshotId?.let { state.fxSnapshots[it] }?.let { snapshot ->
         if (snapshot.source == FxSource.BANK_ACTUAL) {
             FxChoice.BankActual(Money(snapshot.chargedMinor!!, snapshot.quoteCurrency))
         } else {
             FxChoice.Rate(FxQuote(snapshot.baseCurrency, snapshot.quoteCurrency, snapshot.rate, snapshot.rateDate, snapshot.source, snapshot.isStale))
         }
     }
-    return LedgerResult.Ok(draftOf(old, fx))
-}
 
 fun LedgerViews.splitPreview(draft: ExpenseDraft, editing: EntryId?, now: Instant): LedgerResult<SplitPreview> {
     val existing = editing?.let { state.expenses[it] ?: return LedgerResult.Err(LedgerError.NotFound(it.value)) }
@@ -1276,7 +1314,6 @@ import io.github.codex07.iou.api.ActivityItem
 import io.github.codex07.iou.api.EditToken
 import io.github.codex07.iou.api.EntityRef
 import io.github.codex07.iou.api.EntryDetail
-import io.github.codex07.iou.api.EntryDraft
 import io.github.codex07.iou.api.ExpenseDraft
 import io.github.codex07.iou.api.GroupDetail
 import io.github.codex07.iou.api.GroupDraft
@@ -1298,6 +1335,7 @@ import io.github.codex07.iou.api.SetupApi
 import io.github.codex07.iou.api.SetupState
 import io.github.codex07.iou.api.SplitPreview
 import io.github.codex07.iou.api.TransferDraft
+import io.github.codex07.iou.api.VersionDraft
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.GroupId
 import io.github.codex07.iou.ledger.model.HandleId
@@ -1332,8 +1370,8 @@ class FakeSetupApi(private val ledger: InMemoryLedger) : SetupApi {
 }
 
 class FakePeopleApi(private val ledger: InMemoryLedger) : PeopleApi {
-    override fun observePeople(includeArchived: Boolean): Flow<List<PersonSummary>> =
-        ledger.ready.map { it.people(includeArchived) }.distinctUntilChanged()
+    override fun observePeople(includeArchived: Boolean, includeDeleted: Boolean): Flow<List<PersonSummary>> =
+        ledger.ready.map { it.people(includeArchived, includeDeleted) }.distinctUntilChanged()
 
     override fun observePerson(id: PersonId): Flow<PersonDetail?> = ledger.ready.map { it.person(id) }.distinctUntilChanged()
 
@@ -1370,8 +1408,8 @@ class FakePeopleApi(private val ledger: InMemoryLedger) : PeopleApi {
 }
 
 class FakeGroupsApi(private val ledger: InMemoryLedger) : GroupsApi {
-    override fun observeGroups(includeArchived: Boolean): Flow<List<GroupSummary>> =
-        ledger.ready.map { it.groups(includeArchived) }.distinctUntilChanged()
+    override fun observeGroups(includeArchived: Boolean, includeDeleted: Boolean): Flow<List<GroupSummary>> =
+        ledger.ready.map { it.groups(includeArchived, includeDeleted) }.distinctUntilChanged()
 
     override fun observeGroup(id: GroupId): Flow<GroupDetail?> = ledger.ready.map { it.group(id) }.distinctUntilChanged()
 
@@ -1425,8 +1463,8 @@ class FakeLedgerApi(private val ledger: InMemoryLedger) : LedgerApi {
     override suspend fun revertTo(entity: EntityRef, version: Int, token: EditToken) =
         ledger.write { RevertOps.revertTo(it, entity, version, token, ledger.snapshot.value.revisions) }
 
-    override suspend fun draftFromVersion(id: EntryId, version: Int): LedgerResult<EntryDraft> =
-        ledger.currentViews().draftFromVersion(id, version)
+    override suspend fun draftFromVersion(entity: EntityRef, version: Int): LedgerResult<VersionDraft> =
+        ledger.currentViews().draftFromVersion(entity, version)
 }
 ```
 
@@ -1872,6 +1910,41 @@ abstract class PeopleApiContract : ApiContract() {
     }
 
     @Test
+    fun `a deleted person can be found again and restored`() = runTest {
+        setUpMe()
+        val y = newPerson("Y")
+        apis.people.deletePerson(y, apis.people.observePerson(y).first()!!.token).orFail()
+
+        apis.people.observePeople().first() shouldBe emptyList()
+        val found = apis.people.observePeople(includeDeleted = true).first().single()
+        found.person.id shouldBe y
+        found.deleted shouldBe true
+        apis.people.restorePerson(y, apis.people.observePerson(y).first()!!.token).orFail()
+        apis.people.observePeople().first().map { it.person.id } shouldBe listOf(y)
+    }
+
+    @Test
+    fun `editing handles as shown after a merge keeps the alias's default for unmerge`() = runTest {
+        setUpMe()
+        val alex = newPerson("Alex")
+        val alexS = newPerson("Alex S.")
+        apis.people.addHandle(alex, HandleDraft(HandleType.IBAN, "DE89370400440532013000", "Main", isDefault = true), basis()).orFail()
+        apis.people.addHandle(alexS, HandleDraft(HandleType.IBAN, "GB82WEST12345698765432", "UK", isDefault = true), basis()).orFail()
+        apis.people.merge(alexS, alex, apis.people.observePerson(alexS).first()!!.token).orFail()
+
+        // Rename every handle, everything else as the view shows it.
+        apis.people.observePerson(alex).first()!!.handles.forEach {
+            apis.people.updateHandle(it.id, HandleDraft(it.type, it.value, "${it.label}!", it.holderName, it.bic, it.isDefault), it.token).orFail()
+        }
+        apis.people.observePerson(alex).first()!!.handles.single { it.isDefault }.label shouldBe "Main!"
+
+        val alias = apis.people.observePerson(alex).first()!!.aliases.single()
+        apis.people.unmerge(alias.person.id, alias.token).orFail()
+        apis.people.observePerson(alexS).first()!!.handles.single().isDefault shouldBe true
+        apis.people.observePerson(alex).first()!!.handles.single().isDefault shouldBe true
+    }
+
+    @Test
     fun `handles are normalized and validated`() = runTest {
         setUpMe()
         val x = newPerson("X")
@@ -2072,11 +2145,15 @@ abstract class LedgerApiContract : ApiContract() {
 ```kotlin
 package io.github.codex07.iou.api.contract
 
+import io.github.codex07.iou.api.EntityRef
 import io.github.codex07.iou.api.GroupDraft
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
+import io.github.codex07.iou.api.VersionDraft
+import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.FxMode
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Tag
@@ -2117,6 +2194,32 @@ abstract class GroupsApiContract : ApiContract() {
         detail.settingsLocked shouldBe true
         apis.groups.updateGroup(group, GroupDraft("Trip", EUR, FxMode.KEEP), detail.token) shouldBe
             LedgerResult.Err(LedgerError.GroupSettingsLocked(group))
+    }
+
+    @Test
+    fun `reverting a group past its currency lock conflicts and opens as a draft`() = runTest {
+        val me = setUpMe()
+        val a = newPerson("A")
+        val group = apis.groups.createGroup(GroupDraft("Trip", EUR, FxMode.KEEP), listOf(a), basis()).orFail()
+        apis.groups.updateGroup(group, GroupDraft("Trip", EUR, FxMode.CONVERT), apis.groups.observeGroup(group).first()!!.token).orFail()
+        transfer(me, a, eur(100), group)
+        val ref = EntityRef(EntityType.GROUP, group.value)
+
+        apis.ledger.revertTo(ref, 1, apis.groups.observeGroup(group).first()!!.token)
+            .shouldBeInstanceOf<LedgerResult.Err>().error.shouldBeInstanceOf<LedgerError.RestoreConflict>()
+        apis.ledger.draftFromVersion(ref, 1).orFail() shouldBe VersionDraft.OfGroup(GroupDraft("Trip", EUR, FxMode.KEEP))
+    }
+
+    @Test
+    fun `a deleted group can be found again and restored`() = runTest {
+        setUpMe()
+        val group = apis.groups.createGroup(GroupDraft("Trip", EUR), emptyList(), basis()).orFail()
+        apis.groups.deleteGroup(group, apis.groups.observeGroup(group).first()!!.token).orFail()
+
+        apis.groups.observeGroups().first() shouldBe emptyList()
+        apis.groups.observeGroups(includeDeleted = true).first().single().deleted shouldBe true
+        apis.groups.restoreGroup(group, apis.groups.observeGroup(group).first()!!.token).orFail()
+        apis.groups.observeGroups().first().single().group.id shouldBe group
     }
 }
 ```
@@ -2408,7 +2511,7 @@ class FakeImportExportApiContractTest : ImportExportApiContract() {
 ./gradlew :app:testFakeDebugUnitTest --tests "io.github.codex07.iou.fake.Fake*ContractTest"
 ```
 
-Expected: `BUILD SUCCESSFUL`; all eight fake contract classes pass (1 + 5 + 3 + 9 + 2 + 2 + 3 + 3 tests). A failure here is a real fake/spec mismatch: fix the fake, ops or views, not the suite, unless the suite contradicts the spec.
+Expected: `BUILD SUCCESSFUL`; all eight fake contract classes pass (1 + 7 + 5 + 9 + 2 + 2 + 3 + 5 tests). A failure here is a real fake/spec mismatch: fix the fake, ops or views, not the suite, unless the suite contradicts the spec.
 
 - [ ] **Step 4: Commit**
 

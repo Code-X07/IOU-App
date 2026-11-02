@@ -28,6 +28,9 @@
 - **Archiving** is `set…Archived(id, archived, token)`; the UI warns from the balances it already shows (spec §5.2). Unarchiving is allowed.
 - **`observePerson(id)` with an alias ID** returns the canonical person's detail (`person.id` is the canonical ID).
 - **Each alias carries its own `EditToken`** (`PersonDetail.aliases: List<AliasView>`), because unmerge writes the alias's row, not the canonical person's (ADR-0009).
+- **Deleted people and groups stay listable**: `observePeople`/`observeGroups` take `includeDeleted` and the summaries carry `deleted`, so a deleted record can always be found again to view its history or restore it (spec §1). A "Recently deleted" screen or filter is the UI's choice.
+- **`HandleDraft.isDefault` means what `PaymentHandleView.isDefault` shows**: the canonical person's default of that type. An edit that leaves it as shown keeps the stored flags as they are, including a merged alias's own default that only shows again after an unmerge; only switching it on moves the default (and clears the others of that type, spec §3.2).
+- **"Open as draft" covers every entity with an edit form**: `draftFromVersion(entity, version)` returns a `VersionDraft` (entry, person, handle or group draft), saved with that entity's normal update call. Spec §5.3's example is a group revert that breaks today's currency lock.
 - **History is reached through the detail that owns it.** Spec §1 requires every change to be viewable, and some rows have no detail screen of their own: an alias (observing it redirects to the canonical person), payment handles and memberships. So `PersonDetail.history` also holds the revisions of the person's aliases and handles, and `GroupDetail.history` those of the group's memberships, deleted rows included. Each `RevisionView` names its row (`entity`, `subject`), so the UI can label it and pick the matching token for a revert.
 
 ## File map
@@ -37,7 +40,7 @@ All under `android/app/src/main/kotlin/io/github/codex07/iou/api/`:
 | File | Contents |
 |---|---|
 | `Common.kt` | `EditToken`, `DocumentRef`, `PersonRef`, `GroupRef`, `EntityRef`, `SaveMode`, `FxQuote`, `FxChoice`, `Inputs` |
-| `Drafts.kt` | `PersonDraft`, `HandleDraft`, `GroupDraft`, `EntryDraft`, `TransferDraft`, `ExpenseDraft`, `SettleUpDraft` |
+| `Drafts.kt` | `PersonDraft`, `HandleDraft`, `GroupDraft`, `EntryDraft`, `TransferDraft`, `ExpenseDraft`, `SettleUpDraft`, `VersionDraft` |
 | `ReadModels.kt` | Overview, people, groups, activity, entry detail, history, previews |
 | `TransferModels.kt` | Backup, import/export and settings models |
 | `SetupApi.kt`, `PeopleApi.kt`, `GroupsApi.kt`, `LedgerApi.kt`, `FxApi.kt`, `BackupApi.kt`, `ImportExportApi.kt`, `SettingsApi.kt` | One interface each |
@@ -196,7 +199,8 @@ data class PersonDraft(
 
 /**
  * IBAN: any case, spaces allowed (stored uppercase without spaces, mod-97 checked); Revtag: with or
- * without `@` (stored without); phone: E.164 (`+` and 8–15 digits).
+ * without `@` (stored without); phone: E.164 (`+` and 8–15 digits). [isDefault] means the canonical
+ * person's default of [type], as `PaymentHandleView.isDefault` shows it: fill it from the view.
  */
 data class HandleDraft(
     val type: HandleType,
@@ -257,6 +261,18 @@ data class SettleUpDraft(
     val draft: TransferDraft,
     val basis: LedgerGeneration,
 )
+
+/**
+ * "Open as draft" (spec §5.3): an old version's fields as the draft its edit form takes. Save it with
+ * the entity's normal update (`saveTransfer`/`saveExpense` with `SaveMode.Update`, `updatePerson`,
+ * `updateHandle`, `updateGroup`) and the entity's current token.
+ */
+sealed interface VersionDraft {
+    data class OfEntry(val draft: EntryDraft) : VersionDraft
+    data class OfPerson(val draft: PersonDraft) : VersionDraft
+    data class OfHandle(val draft: HandleDraft) : VersionDraft
+    data class OfGroup(val draft: GroupDraft) : VersionDraft
+}
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -358,6 +374,7 @@ data class PersonSummary(
     /** `net(me, X)` per currency, non-group only. */
     val balances: List<Money>,
     val archived: Boolean,
+    val deleted: Boolean,
     /** Number of other person records merged into this one. */
     val aliasCount: Int,
 )
@@ -409,7 +426,10 @@ data class PaymentHandleView(
     val label: String,
     val holderName: String?,
     val bic: String?,
-    /** True for the canonical person's default of this type (spec §3.2). */
+    /**
+     * True for the canonical person's default of this type (spec §3.2). A merged alias's own default
+     * shows false here but is kept, and applies again after an unmerge.
+     */
     val isDefault: Boolean,
     val token: EditToken,
 )
@@ -438,6 +458,7 @@ data class GroupSummary(
     val defaultCurrency: CurrencyCode,
     val fxMode: FxMode,
     val archived: Boolean,
+    val deleted: Boolean,
     /** `groupNet(me)` per currency. */
     val myNets: List<Money>,
     val activeMemberCount: Int,
@@ -773,8 +794,11 @@ import io.github.codex07.iou.ledger.model.PersonId
 import kotlinx.coroutines.flow.Flow
 
 interface PeopleApi {
-    /** Canonical people other than me, by display name. Archived ones only when asked. */
-    fun observePeople(includeArchived: Boolean = false): Flow<List<PersonSummary>>
+    /**
+     * Canonical people other than me, by display name. Archived and deleted ones only when asked: deleted
+     * people are found here to view their history or restore them.
+     */
+    fun observePeople(includeArchived: Boolean = false, includeDeleted: Boolean = false): Flow<List<PersonSummary>>
 
     /** Detail of the canonical person [id] resolves to; null if unknown. */
     fun observePerson(id: PersonId): Flow<PersonDetail?>
@@ -796,6 +820,10 @@ interface PeopleApi {
     /** Errors: `InvalidIban`, `InvalidField("value" | "label")`. A new default clears the old one of that type. */
     suspend fun addHandle(personId: PersonId, draft: HandleDraft, basis: LedgerGeneration): LedgerResult<HandleId>
 
+    /**
+     * Fill [draft] from the `PaymentHandleView`. Leaving `isDefault` as shown keeps every stored default
+     * flag; switching it on makes this the default and clears the others of that type.
+     */
     suspend fun updateHandle(id: HandleId, draft: HandleDraft, token: EditToken): LedgerResult<Unit>
 
     suspend fun deleteHandle(id: HandleId, token: EditToken): LedgerResult<Unit>
@@ -828,7 +856,8 @@ import io.github.codex07.iou.ledger.model.PersonId
 import kotlinx.coroutines.flow.Flow
 
 interface GroupsApi {
-    fun observeGroups(includeArchived: Boolean = false): Flow<List<GroupSummary>>
+    /** By name. Archived and deleted groups only when asked (deleted ones to view history or restore). */
+    fun observeGroups(includeArchived: Boolean = false, includeDeleted: Boolean = false): Flow<List<GroupSummary>>
 
     fun observeGroup(id: GroupId): Flow<GroupDetail?>
 
@@ -902,8 +931,12 @@ interface LedgerApi {
      */
     suspend fun revertTo(entity: EntityRef, version: Int, token: EditToken): LedgerResult<Unit>
 
-    /** "Open as draft": an edit draft pre-filled from [version] of an entry, saved as a normal update. */
-    suspend fun draftFromVersion(id: EntryId, version: Int): LedgerResult<EntryDraft>
+    /**
+     * "Open as draft" after a `RestoreConflict`: [version] of [entity] as an edit draft, saved as a normal
+     * update (see [VersionDraft]). Memberships have no edit form (`InvalidField("entity")`): add or remove
+     * the member instead.
+     */
+    suspend fun draftFromVersion(entity: EntityRef, version: Int): LedgerResult<VersionDraft>
 }
 ```
 
@@ -1134,6 +1167,10 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 
 Every change is recorded and must be viewable (spec §1, §5.3). `EntryDetail.history` covers the entry. `PersonDetail.history` covers the person, every alias merged into them (the merge itself is the alias's revision) and their payment handles; `GroupDetail.history` covers the group and its memberships. Deleted rows are included. Each `RevisionView` says which row it belongs to (`entity`, `subject`); show the subject when it isn't the screen's own row. To revert, call `revertTo(revision.entity, revision.version, token)` with that row's token (`PersonDetail.token`, `AliasView.token`, `PaymentHandleView.token`, `GroupDetail.token`, `EntryDetail.token`).
 
+Deleted people and groups disappear from the normal lists but must stay reachable: `observePeople(includeDeleted = true)` and `observeGroups(includeDeleted = true)` list them (`deleted = true`), so a "Recently deleted" view can open their detail, history and restore. Deleted entries come from `observeActivity(ActivityFilter(includeDeleted = true))`.
+
+Payment handles: fill an edit form's `HandleDraft` from the `PaymentHandleView`, `isDefault` included. Leaving the default switch as shown keeps every stored flag (a merged alias's own default comes back after an unmerge); switching it on moves the default.
+
 ## Settle up
 
 - Group detail has `settlePlan`; person detail has `inGroups`. Call `settleUpFromPlan(item)` to get a pre-filled `SettleUpDraft`, let the user adjust amount or currency, and save with `SaveMode.Create(draft.basis)`.
@@ -1141,7 +1178,7 @@ Every change is recorded and must be viewable (spec §1, §5.3). `EntryDetail.hi
 
 ## Errors
 
-`LedgerError` (in `api/LedgerError.kt`) is a sealed interface; map every case to a message. Each carries the data a good message needs, e.g. `ExactRemaining(diffMinor)`, `MemberHasBalance(groupId, personId, nets)`, `NeedsGroup(people)`. `RestoreConflict(violations)` after a revert means "this old version breaks today's rules"; offer **Open as draft** via `draftFromVersion`.
+`LedgerError` (in `api/LedgerError.kt`) is a sealed interface; map every case to a message. Each carries the data a good message needs, e.g. `ExactRemaining(diffMinor)`, `MemberHasBalance(groupId, personId, nets)`, `NeedsGroup(people)`. `RestoreConflict(violations)` after a revert means "this old version breaks today's rules"; offer **Open as draft** via `draftFromVersion(revision.entity, revision.version)` and open the edit form matching the `VersionDraft` (entry, person, handle or group).
 
 ## Changing the contract
 
