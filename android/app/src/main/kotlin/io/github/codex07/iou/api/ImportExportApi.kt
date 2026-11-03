@@ -1,0 +1,34 @@
+package io.github.codex07.iou.api
+
+import io.github.codex07.iou.ledger.model.ImportBatchId
+import kotlinx.coroutines.flow.Flow
+
+interface ImportExportApi {
+    /** Errors: `InvalidField("scope")` for a scoped normalized export. */
+    suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo>
+
+    /** Parses and validates; writes nothing. Errors: `CorruptFile`, `LimitsExceeded`, `SchemaTooNew`. */
+    suspend fun parseImport(source: DocumentRef): LedgerResult<ImportPreview>
+
+    /**
+     * Answers `ImportIdentity.NeedsConfirmation`: accept → the full preview, built against the current ledger;
+     * decline → `ForeignLedger`. A preview from an earlier generation → `LedgerReplaced`, whatever the answer.
+     */
+    suspend fun confirmIdentity(preview: ImportPreview, accept: Boolean): LedgerResult<ImportPreview>
+
+    /** The preview with forced owner/owned outcomes recomputed for [choices]. Pure. */
+    fun applyChoices(preview: ImportPreview, choices: ImportChoices): ImportPreview
+
+    /**
+     * Rebuilds a stale preview against the current ledger: conflicts, diffs and counts are recomputed, and rows
+     * that are new or whose diff changed get `changedSinceLastPreview`. Earlier generation → `LedgerReplaced`.
+     */
+    suspend fun refreshPreview(preview: ImportPreview): LedgerResult<ImportPreview>
+
+    /** Errors: `LedgerReplaced`, `ImportPreviewStale` (any write since the preview), invalid rows not skipped. */
+    suspend fun commitImport(preview: ImportPreview, choices: ImportChoices): LedgerResult<ImportBatchId>
+
+    fun observeImportBatches(): Flow<List<ImportBatchView>>
+
+    suspend fun undoImport(id: ImportBatchId): LedgerResult<UndoImportResult>
+}
