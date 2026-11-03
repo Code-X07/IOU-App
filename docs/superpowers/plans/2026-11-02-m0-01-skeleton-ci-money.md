@@ -29,6 +29,7 @@
 | `android/gradle.properties` | Gradle/AndroidX flags |
 | `android/gradle/libs.versions.toml` | Every dependency and plugin version |
 | `android/gradle/wrapper/*`, `android/gradlew`, `android/gradlew.bat` | Gradle wrapper |
+| `android/gradle/gradle-daemon-jvm.properties` | Runs Gradle on Java 21 everywhere (CLI, Android Studio sync, CI) |
 | `android/.editorconfig` | Shared code style |
 | `android/app/build.gradle.kts` | Android config, flavors, signing, dependencies, JUnit 5 |
 | `android/app/src/main/AndroidManifest.xml` | Application and launcher activity |
@@ -49,7 +50,7 @@ Commands run from `android/` in Git Bash (`./gradlew …`). In PowerShell use `.
 ### Task 1: Toolchain, Gradle skeleton, flavors and Hilt app shell
 
 **Files:**
-- Create: `android/gradlew`, `android/gradlew.bat`, `android/gradle/wrapper/gradle-wrapper.jar`, `android/gradle/wrapper/gradle-wrapper.properties`
+- Create: `android/gradlew`, `android/gradlew.bat`, `android/gradle/wrapper/gradle-wrapper.jar`, `android/gradle/wrapper/gradle-wrapper.properties`, `android/gradle/gradle-daemon-jvm.properties`
 - Create: `android/settings.gradle.kts`, `android/build.gradle.kts`, `android/gradle.properties`, `android/gradle/libs.versions.toml`, `android/.editorconfig`
 - Create: `android/app/build.gradle.kts`, `android/app/src/main/AndroidManifest.xml`
 - Create: `android/app/src/main/kotlin/io/github/codex07/iou/IouApplication.kt`, `.../MainActivity.kt`
@@ -60,10 +61,12 @@ Commands run from `android/` in Git Bash (`./gradlew …`). In PowerShell use `.
 
 - [ ] **Step 1 (owner, by hand): Install the toolchain**
 
-This machine has no JDK or Android SDK yet. Install Android Studio (stable) with the default components: it brings the Android SDK and a bundled JDK (JBR). Then, in Android Studio's SDK Manager, install **Android SDK Platform 36** and the latest **Build-Tools**, and create one emulator (any Pixel image with API 30 or newer). Set these user environment variables and open a new terminal:
+Install Android Studio (stable) with the default components: it brings the Android SDK. Then, in Android Studio's SDK Manager, install **Android SDK Platform 36** and the latest **Build-Tools**, and create one emulator (any Pixel image with API 30 or newer).
+
+Install a separate **JDK 21** (done: Microsoft OpenJDK 21). Don't use Studio's bundled JBR: it is Java 25, and Gradle 8.14.x can't run on Java 25 (that needs Gradle 9.1+, which comes with the AGP 9 upgrade chore). Set these user environment variables and open a new terminal:
 
 ```
-JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
+JAVA_HOME=C:\Program Files\Microsoft\jdk-21.0.13.21-hotspot
 ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk
 PATH += %JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools
 ```
@@ -75,7 +78,13 @@ java -version
 adb version
 ```
 
-Expected: a Java 17+ version line, and an `Android Debug Bridge version …` line.
+Expected: a Java 21 version line, and an `Android Debug Bridge version …` line.
+
+Recent Android Studio versions have no Gradle JDK setting for projects that declare daemon JVM criteria; Step 2 adds that file, so Studio's sync runs Gradle on Java 21 too. If sync reports that no matching JDK was found, add this line to the user-level `%USERPROFILE%\.gradle\gradle.properties` (never the repo):
+
+```properties
+org.gradle.java.installations.paths=C:/Program Files/Microsoft/jdk-21.0.13.21-hotspot
+```
 
 - [ ] **Step 2: Get the Gradle wrapper files**
 
@@ -97,6 +106,12 @@ networkTimeout=10000
 validateDistributionUrl=true
 zipStoreBase=GRADLE_USER_HOME
 zipStorePath=wrapper/dists
+```
+
+Create `android/gradle/gradle-daemon-jvm.properties` (Gradle's daemon JVM criteria). It makes the command line, Android Studio's sync and CI all run Gradle on Java 21. The app still compiles to Java 17 bytecode (`jvmTarget` in Step 4). There are no download URLs and no foojay plugin: Gradle uses an installed JDK 21 (`JAVA_HOME` locally, `setup-java` on CI):
+
+```properties
+toolchainVersion=21
 ```
 
 Delete the throwaway project. Mark `gradlew` executable for Linux CI:
@@ -424,6 +439,15 @@ Open `android/` once in Android Studio so it writes `android/local.properties` (
 ```
 
 Expected: `BUILD SUCCESSFUL`, and two APKs: `app/build/outputs/apk/fake/debug/app-fake-debug.apk` and `app/build/outputs/apk/real/debug/app-real-debug.apk`.
+
+The wrapper scripts and jar came from a newer Gradle's template. Regenerate them from the pinned version so they match, then rebuild once:
+
+```bash
+./gradlew wrapper --gradle-version 8.14.3
+./gradlew assembleFakeDebug
+```
+
+Expected: `gradle-wrapper.properties` still points to `gradle-8.14.3-bin.zip`, and the build is still `BUILD SUCCESSFUL`.
 
 If Gradle reports that one of the pinned versions can't be found, take the nearest existing patch release of the same minor version from Google Maven / Maven Central, put it in `libs.versions.toml`, and update locked decision 9 in the index in the same commit.
 
@@ -1026,7 +1050,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -1111,7 +1135,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -1181,7 +1205,7 @@ Steps 1–2 involve passwords: **the project owner runs them by hand**. An agent
 
 ```bash
 mkdir -p /d/Secrets
-"/c/Program Files/Android/Android Studio/jbr/bin/keytool" -genkeypair -v -keystore /d/Secrets/iou-release.jks -alias iou -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=IOU"
+keytool -genkeypair -v -keystore /d/Secrets/iou-release.jks -alias iou -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=IOU"
 ```
 
 Use one strong password (PKCS12 keystores use the same password for store and key). Copy `iou-release.jks` and the password to an offline backup (spec §2.4): a lost key means users must uninstall to update.
