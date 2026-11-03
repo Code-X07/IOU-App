@@ -60,7 +60,7 @@ fun LedgerViews.activity(filter: ActivityFilter): List<ActivityItem> {
         .filter { person == null || it.personIds.any { id -> resolver.canonical(id) == person } }
         .filter { from == null || !it.occurredOn.isBefore(from) }
         .filter { to == null || !it.occurredOn.isAfter(to) }
-        .sortedWith(compareByDescending<Entry> { it.occurredOn }.thenByDescending { it.meta.createdAt })
+        .sortedWith(compareByDescending<Entry> { it.occurredOn }.thenByDescending { it.meta.createdAt }.thenByDescending { it.id.value })
         .map { activityItem(it) }
         .toList()
 }

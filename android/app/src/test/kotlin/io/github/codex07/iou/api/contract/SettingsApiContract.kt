@@ -22,7 +22,7 @@ abstract class SettingsApiContract : ApiContract() {
     }
 
     @Test
-    fun `no lock is required while app lock is off, and unlocking clears it`() = runTest {
+    fun `turning app lock on mid-session doesn't require a lock, and unlocking keeps it clear`() = runTest {
         apis.settings.observeLockRequired().first() shouldBe false
         apis.settings.setAppLockEnabled(true).orFail()
         apis.settings.markUnlocked()

@@ -173,7 +173,7 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
             found = snapshot.importBatches.any { it.id == id }
             snapshot.copy(
                 importBatches = snapshot.importBatches.map { if (it.id == id && it.undoneAt == null) it.copy(undoneAt = ledger.now()) else it },
-                ledgerSeq = if (found) snapshot.ledgerSeq + 1 else snapshot.ledgerSeq,
+                ledgerSeq = if (snapshot.importBatches.any { it.id == id && it.undoneAt == null }) snapshot.ledgerSeq + 1 else snapshot.ledgerSeq,
             )
         }
         return if (found) LedgerResult.Ok(UndoImportResult(emptyList())) else LedgerResult.Err(LedgerError.NotFound(id.value))

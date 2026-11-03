@@ -25,7 +25,7 @@
 - **Simulated restore** in the fake restores a backup of the *current* data under a fresh generation (so `LedgerReplaced` behaves exactly as spec AC M1-15 describes); undo swaps back, again with a fresh generation. Backups remember their passphrase in memory, so a wrong passphrase returns `WrongPassphraseOrDamagedFile`.
 - **Simulated import:** a file name containing `foreign` needs identity confirmation; `corrupt` → `CorruptFile`; `invalid` adds one invalid row; anything else gives a canned preview (two new rows, one conflict on the first live transfer's note, five duplicates). The canned preview is always built from the current ledger, so `confirmIdentity` and `refreshPreview` rebuild it (after checking the preview's generation, `LedgerReplaced` otherwise) and refresh flags rows whose diff changed. Commit checks generation, `ledgerSeq`, identity and invalid rows like the real thing, records an `ImportBatch`, and doesn't change ledger data.
 - **Fake FX rates** are a fixed table against EUR (`FakeRates`); unknown currencies → `RateRequired`.
-- **Before setup**, ledger-data flows emit nothing and writes other than setup return `NotFound("me")`.
+- **Before setup**, ledger writes (people, groups, entries) other than setup return `NotFound("me")`, and ledger-data flows emit nothing; settings, backup and import simulations do not require setup.
 - **The placeholder `MainActivity`** injects `LedgerApi` and shows the number of overview rows, which proves the Hilt wiring end to end. The friend replaces it.
 
 ## File map
@@ -797,7 +797,7 @@ fun LedgerViews.activity(filter: ActivityFilter): List<ActivityItem> {
         .filter { person == null || it.personIds.any { id -> resolver.canonical(id) == person } }
         .filter { from == null || !it.occurredOn.isBefore(from) }
         .filter { to == null || !it.occurredOn.isAfter(to) }
-        .sortedWith(compareByDescending<Entry> { it.occurredOn }.thenByDescending { it.meta.createdAt })
+        .sortedWith(compareByDescending<Entry> { it.occurredOn }.thenByDescending { it.meta.createdAt }.thenByDescending { it.id.value })
         .map { activityItem(it) }
         .toList()
 }
@@ -1021,7 +1021,7 @@ private fun LedgerViews.draftOf(entry: Entry, fx: FxChoice?): EntryDraft = when 
 ./gradlew :app:testFakeDebugUnitTest --tests "io.github.codex07.iou.ledger.views.*"
 ```
 
-Expected: `BUILD SUCCESSFUL`; `LedgerViewsTest` (4) and `EntryViewsTest` (8) pass.
+Expected: `BUILD SUCCESSFUL`; `LedgerViewsTest` (5) and `EntryViewsTest` (8) pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1648,7 +1648,7 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
             found = snapshot.importBatches.any { it.id == id }
             snapshot.copy(
                 importBatches = snapshot.importBatches.map { if (it.id == id && it.undoneAt == null) it.copy(undoneAt = ledger.now()) else it },
-                ledgerSeq = if (found) snapshot.ledgerSeq + 1 else snapshot.ledgerSeq,
+                ledgerSeq = if (snapshot.importBatches.any { it.id == id && it.undoneAt == null }) snapshot.ledgerSeq + 1 else snapshot.ledgerSeq,
             )
         }
         return if (found) LedgerResult.Ok(UndoImportResult(emptyList())) else LedgerResult.Err(LedgerError.NotFound(id.value))
@@ -2445,7 +2445,7 @@ abstract class SettingsApiContract : ApiContract() {
     }
 
     @Test
-    fun `no lock is required while app lock is off, and unlocking clears it`() = runTest {
+    fun `turning app lock on mid-session doesn't require a lock, and unlocking keeps it clear`() = runTest {
         apis.settings.observeLockRequired().first() shouldBe false
         apis.settings.setAppLockEnabled(true).orFail()
         apis.settings.markUnlocked()
@@ -2528,7 +2528,6 @@ git commit -m "Add the api contract suites and run them against the fake"
 **Files:**
 - Create: `main/.../fake/SeedData.kt`
 - Modify: `main/.../fake/FakeApis.kt` (add `seeded`)
-- Modify: `test/.../fake/InMemoryLedgerTest.kt` (re-enable the replay test)
 - Test: `test/.../fake/SeedDataTest.kt`
 
 **Interfaces:**
