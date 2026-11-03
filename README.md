@@ -26,6 +26,7 @@ Later phases add pay/request helpers (EPC QR, Revolut links), automatic detectio
 ## Docs
 
 - [MVP design spec (milestones 0–2)](docs/superpowers/specs/2026-11-02-iou-mvp-design.md)
+- [UI contributor guide](docs/ui-contributor-guide.md)
 
 ## Tech
 
