@@ -90,7 +90,14 @@ object FieldRules {
         expense.shares.groupBy { it.personId }.entries.firstOrNull { it.value.size > 1 }
             ?.let { return listOf(LedgerError.DuplicateParticipant(it.key)) }
         expense.shares.firstOrNull { it.shareMinor < 0 }?.let { return listOf(LedgerError.NegativeInput(it.personId)) }
-        val sum = expense.shares.fold(0L) { acc, share -> Math.addExact(acc, share.shareMinor) }
+        var sum = 0L
+        for (share in expense.shares) {
+            // Shares are non-negative here; stopping above MAX_MINOR keeps a corrupt import from overflowing.
+            if (share.shareMinor > MAX_MINOR - sum) {
+                return listOf(LedgerError.CorruptData("shares of ${expense.id} sum to more than $MAX_MINOR"))
+            }
+            sum += share.shareMinor
+        }
         return if (sum == expense.effectTotal.amountMinor) {
             emptyList()
         } else {

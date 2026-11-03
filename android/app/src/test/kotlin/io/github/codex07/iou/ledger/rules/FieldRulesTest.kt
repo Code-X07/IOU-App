@@ -76,6 +76,18 @@ class FieldRulesTest {
     }
 
     @Test
+    fun `share sums that overflow are corrupt data, not a crash`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val alex = ledger.person("Alex")
+        val e = ledger.expense(ME, eur(100), mapOf(ME to 50L, alex to 50L))
+        val expense = ledger.state.expenses.getValue(e)
+
+        FieldRules.check(listOf(expense.copy(shares = listOf(ExpenseShare(ME, Long.MAX_VALUE), ExpenseShare(alex, Long.MAX_VALUE))))) shouldBe
+            listOf(RuleViolation(0, LedgerError.CorruptData("shares of ${expense.id} sum to more than $MAX_MINOR")))
+    }
+
+    @Test
     fun `stored handle values must already be normalized`() {
         val ledger = TestLedger()
         ledger.me()
