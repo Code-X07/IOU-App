@@ -1,7 +1,7 @@
 # ADR-0008: Write path and read models are shared pure packages (`ledger.ops`, `ledger.views`)
 
 **Date**: 2026-11-02
-**Status**: proposed (to be confirmed in the M0 plan review)
+**Status**: accepted (2026-11-03)
 **Deciders**: project owner, Claude (M0 planning)
 
 ## Context
