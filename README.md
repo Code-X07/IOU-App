@@ -2,7 +2,7 @@
 
 An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" threads in WhatsApp with exact, auditable balances.
 
-> **Status:** design phase. The MVP spec is written; no app code yet.
+> **Status:** Milestone 0 done: the core ↔ UI contract and an in-memory fake with demo data. The real (Room) implementation comes in Milestone 1.
 
 ## What it does (MVP)
 

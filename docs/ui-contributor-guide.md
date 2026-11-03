@@ -71,4 +71,32 @@ The `api` package is shared ground. To change it, open a small PR that touches `
 
 ## Running the fake
 
-Available after M0 Part 7 lands (instructions added then).
+1. Open `android/` in Android Studio. In *Build Variants*, pick **fakeDebug**.
+2. Run on an emulator or phone. "IOU (fake)" installs next to the real app (`.fake` suffix).
+3. Or from a terminal in `android/`:
+
+   ```bash
+   ./gradlew installFakeDebug
+   ```
+
+The fake keeps everything in memory and starts with demo data every launch: me, Alex (with a merged
+duplicate "Alex S." and two payment handles), Bea, Chen, Dana (archived but still owing), Erik (an
+ad-hoc dinner), the CONVERT EUR group "Lisbon trip" (with a SEK taxi converted to EUR) and the KEEP
+group "Flat" (SEK rent plus a EUR purchase). It uses the real rules, balances and settle plans, so
+errors and numbers are the real ones.
+
+Simulated parts:
+
+- **Backup:** any target works; restoring needs the same passphrase used for that backup, and brings the
+  current data back under a new ledger generation (so you can test the `LedgerReplaced` flow). Undo works.
+- **Import:** a file whose name contains `foreign` asks for identity confirmation; `corrupt` fails;
+  `invalid` adds an invalid row; anything else gives a canned preview with one conflict. Committing
+  records an import batch but doesn't change data. Any write after parsing makes the preview stale.
+- **FX:** fixed demo rates against EUR (SEK, USD, GBP, NOK, DKK, CHF, JPY, PLN); other currencies return
+  `RateRequired`, so you can test manual rate entry.
+
+For Compose previews and UI tests, build the same thing in code:
+
+```kotlin
+val apis = FakeApis.seeded()
+```
