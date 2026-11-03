@@ -35,10 +35,10 @@ data class Balances(
     fun myGroupNet(groupId: GroupId): Map<CurrencyCode, Long> = groupNet(groupId, me)
 
     /** Σ positive `net(me, X)` + Σ over groups of `max(groupNet(me), 0)`, per currency. */
-    val owedToMe: Map<CurrencyCode, Long> by lazy { totals(positive = true) }
+    val owedToMe: Map<CurrencyCode, Long> = totals(positive = true)
 
     /** Σ |negative `net(me, X)`| + Σ over groups of |`min(groupNet(me), 0)`|, per currency, as magnitudes. */
-    val iOwe: Map<CurrencyCode, Long> by lazy { totals(positive = false) }
+    val iOwe: Map<CurrencyCode, Long> = totals(positive = false)
 
     private fun totals(positive: Boolean): Map<CurrencyCode, Long> {
         val sums = Sums<Unit>()
@@ -77,6 +77,7 @@ object LedgerEngine {
         }
     }
 
+    /** Computes every balance of [state]. Throws [ArithmeticException] when any balance or total overflows. */
     fun compute(state: LedgerState): Balances {
         val resolver = IdentityResolver(state)
         val me = resolver.canonical(state.me.id)

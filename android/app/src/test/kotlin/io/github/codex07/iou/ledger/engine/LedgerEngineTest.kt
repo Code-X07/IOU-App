@@ -131,4 +131,16 @@ class LedgerEngineTest {
 
         shouldThrow<ArithmeticException> { LedgerEngine.compute(ledger.state) }
     }
+
+    @Test
+    fun `totals that overflow throw from compute`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        val y = ledger.person("Y")
+        ledger.transfer(ME, x, Money(Long.MAX_VALUE, EUR))
+        ledger.transfer(ME, y, eur(1))
+
+        shouldThrow<ArithmeticException> { LedgerEngine.compute(ledger.state) }
+    }
 }

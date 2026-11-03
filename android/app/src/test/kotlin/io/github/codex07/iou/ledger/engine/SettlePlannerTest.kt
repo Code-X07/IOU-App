@@ -40,6 +40,12 @@ class SettlePlannerTest {
     }
 
     @Test
+    fun `creditor ties go to the lowest person id`() {
+        val nets = mapOf(a to mapOf(EUR to 2_000L), b to mapOf(EUR to 2_000L), ME to mapOf(EUR to -4_000L))
+        SettlePlanner.planGroup(nets).first() shouldBe PlannedTransfer(ME, a, eur(2_000))
+    }
+
+    @Test
     fun `each currency is planned on its own`() {
         val nets = mapOf(a to mapOf(EUR to 100L, SEK to -500L), b to mapOf(EUR to -100L, SEK to 500L))
         SettlePlanner.planGroup(nets) shouldBe listOf(PlannedTransfer(b, a, eur(100)), PlannedTransfer(a, b, sek(500)))

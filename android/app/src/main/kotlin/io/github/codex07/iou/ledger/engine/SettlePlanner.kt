@@ -11,6 +11,10 @@ data class PlannedTransfer(val from: PersonId, val to: PersonId, val amount: Mon
 /** Greedy settle plans (spec §4.6). */
 object SettlePlanner {
 
+    /**
+     * Plans a group settle-up from [nets] (positive: the group owes the person). The nets must sum to 0 per
+     * currency, as `Balances.groupNets` do; otherwise the unmatched remainder is left out of the plan.
+     */
     fun planGroup(nets: Map<PersonId, Map<CurrencyCode, Long>>): List<PlannedTransfer> =
         nets.values
             .flatMap { it.keys }
