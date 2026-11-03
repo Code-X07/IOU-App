@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   ci:
@@ -13,6 +13,8 @@ jobs:
 
   release:
     needs: ci
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -28,12 +30,21 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Decode the release keystore
+      - name: Check the signing secrets and decode the keystore
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          if [ -z "$RELEASE_KEYSTORE_BASE64" ]; then
-            echo "::error::Secret RELEASE_KEYSTORE_BASE64 is not set"
+          missing=0
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
             exit 1
           fi
           echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
@@ -59,6 +70,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/real/release/app-real-release.apk "iou-${GITHUB_REF_NAME}.apk"
-          gh release create "$GITHUB_REF_NAME" "iou-${GITHUB_REF_NAME}.apk" \
-            --title "IOU ${GITHUB_REF_NAME}" \
-            --generate-notes
+          args=(--title "IOU ${GITHUB_REF_NAME}" --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" "iou-${GITHUB_REF_NAME}.apk" "${args[@]}"

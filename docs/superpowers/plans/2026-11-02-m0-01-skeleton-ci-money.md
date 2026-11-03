@@ -1034,7 +1034,7 @@ git commit -m "Add the domain purity check for Android imports and floating poin
 
 - [ ] **Step 1: Write the workflow**
 
-`.github/workflows/ci.yml`. The push filter lists branches only, so tag pushes don't run CI twice (the release workflow calls it instead). `testRealDebugUnitTest` is included because the contract suites will run against each flavor's binding.
+`.github/workflows/ci.yml`. The workflow token is read-only (`contents: read`). The push filter lists branches only, so tag pushes don't run CI twice (the release workflow calls it instead). `testRealDebugUnitTest` is included because the contract suites will run against each flavor's binding.
 
 ```yaml
 name: CI
@@ -1044,6 +1044,9 @@ on:
     branches: ["**"]
   pull_request:
   workflow_call:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -1114,7 +1117,7 @@ Expected: the `CI` run completes with `✓ build`. If it fails, download the `re
 
 **Interfaces:**
 - Consumes: `CI` via `workflow_call` (Task 5); the signing variables read by `android/app/build.gradle.kts` (Task 1): `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`, `RELEASE_VERSION_NAME`, `RELEASE_VERSION_CODE`.
-- Produces: on a `v*` tag, a GitHub Release named after the tag with `iou-<tag>.apk` attached. The release job fails loudly when the keystore secret is missing; the unsigned-APK case also fails, because the copy step looks for the signed file name.
+- Produces: on a `v*` tag, a GitHub Release named after the tag with `iou-<tag>.apk` attached. The workflow token is read-only except in the `release` job, which gets `contents: write` for `gh release create`. A tag containing a hyphen (`v0.0.0-test.1`, `v1.0.0-rc.1`) is published as a pre-release. The release job fails loudly, naming each missing secret, when any of the four signing secrets is not set; the unsigned-APK case also fails, because the copy step looks for the signed file name.
 
 - [ ] **Step 1: Write the workflow**
 
@@ -1128,7 +1131,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   ci:
@@ -1136,6 +1139,8 @@ jobs:
 
   release:
     needs: ci
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -1151,12 +1156,21 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Decode the release keystore
+      - name: Check the signing secrets and decode the keystore
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          if [ -z "$RELEASE_KEYSTORE_BASE64" ]; then
-            echo "::error::Secret RELEASE_KEYSTORE_BASE64 is not set"
+          missing=0
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
             exit 1
           fi
           echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
@@ -1182,9 +1196,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/real/release/app-real-release.apk "iou-${GITHUB_REF_NAME}.apk"
-          gh release create "$GITHUB_REF_NAME" "iou-${GITHUB_REF_NAME}.apk" \
-            --title "IOU ${GITHUB_REF_NAME}" \
-            --generate-notes
+          args=(--title "IOU ${GITHUB_REF_NAME}" --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" "iou-${GITHUB_REF_NAME}.apk" "${args[@]}"
 ```
 
 `RELEASE_VERSION_CODE` uses the workflow's run number, which only grows, so every release installs over the previous one.
