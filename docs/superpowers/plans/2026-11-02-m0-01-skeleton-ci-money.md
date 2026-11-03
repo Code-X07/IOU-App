@@ -913,6 +913,14 @@ class DomainPurityTest {
             "val z = 2f",
             "val w = amount.toDouble()",
             "val v = 1.0e3",
+            "val a = text.toDoubleOrNull()",
+            "val b = text.toFloatOrNull()",
+            "val c = DoubleArray(3)",
+            "val d: FloatArray = arr",
+            "texts.map(String::toDouble)",
+            "val e = 1_000.5",
+            "val g = 1e3",
+            "val h = 1E-3",
         ).forEach { SourceScan.usesFloatingPoint(it) shouldBe true }
 
         listOf(
@@ -923,6 +931,9 @@ class DomainPurityTest {
             "Money(1234, eur)",
             "val max = 10_000_000_000_000L",
             "x.version",
+            "val mask = 0xFF",
+            "for (i in 1..2) {}",
+            "val doubled = total.times(2)",
         ).forEach { SourceScan.usesFloatingPoint(it) shouldBe false }
     }
 
@@ -951,10 +962,11 @@ internal object SourceScan {
     private val androidImport = Regex("""^\s*import\s+(android|androidx)\.""")
     private val stringLiteral = Regex("\"(?:\\\\.|[^\"\\\\])*\"")
     private val floatingPoint = Regex(
-        """\b(Double|Float)\b""" +
-            """|\.to(Double|Float)\(""" +
-            """|(?<![\w.])\d+\.\d+([eE][+-]?\d+)?[fF]?\b""" +
-            """|(?<![\w.])\d+[fF]\b""",
+        """\b(Double|Float)(Array)?\b""" +
+            """|\bto(Double|Float)(OrNull)?\b""" +
+            """|(?<![\w.])\d[\d_]*\.\d[\d_]*([eE][+-]?\d+)?[fF]?\b""" +
+            """|(?<![\w.])\d[\d_]*[eE][+-]?\d+[fF]?\b""" +
+            """|(?<![\w.])\d[\d_]*[fF]\b""",
     )
 
     fun importsAndroid(line: String): Boolean = androidImport.containsMatchIn(line)
