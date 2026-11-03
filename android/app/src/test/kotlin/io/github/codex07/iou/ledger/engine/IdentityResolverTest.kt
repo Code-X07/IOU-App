@@ -42,11 +42,13 @@ class IdentityResolverTest {
         ledger.person("A", mergedInto = PersonId("person-b"), deleted = true)
         ledger.person("B", mergedInto = PersonId("person-a"), deleted = true)
         val c = ledger.person("C", mergedInto = PersonId("missing"))
+        val d = ledger.person("D", mergedInto = c)
         val resolver = IdentityResolver(ledger.state)
 
-        resolver.brokenChains shouldBe setOf(PersonId("person-a"), PersonId("person-b"), c)
+        resolver.brokenChains shouldBe setOf(PersonId("person-a"), PersonId("person-b"), c, d)
         resolver.canonical(PersonId("person-a")) shouldBe PersonId("person-a")
         resolver.canonical(c) shouldBe c
+        resolver.canonical(d) shouldBe c
     }
 
     @Test

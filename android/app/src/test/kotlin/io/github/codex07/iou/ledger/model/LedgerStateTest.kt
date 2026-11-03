@@ -1,6 +1,10 @@
 package io.github.codex07.iou.ledger.model
 
+import io.github.codex07.iou.testutil.D0
+import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.ME
+import io.github.codex07.iou.testutil.SEK
+import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.TestLedger
 import io.github.codex07.iou.testutil.eur
 import io.github.codex07.iou.testutil.testMeta
@@ -48,9 +52,12 @@ class LedgerStateTest {
         val alex = ledger.person("Alex")
         val renamed = ledger.state.people.getValue(alex).copy(displayName = "Alex S.", meta = testMeta(version = 2))
 
-        val after = ledger.state.applying(listOf(Change(renamed, RevisionAction.UPDATED)))
+        val snapshot = FxSnapshot(FxSnapshotId("fx-1"), EUR, SEK, "11.2", D0, FxSource.USER_ENTERED, fetchedAt = T0)
+
+        val after = ledger.state.applying(listOf(Change(renamed, RevisionAction.UPDATED)), listOf(snapshot))
 
         after.people.getValue(alex).displayName shouldBe "Alex S."
+        after.fxSnapshots.getValue(snapshot.id) shouldBe snapshot
         after.people.size shouldBe 2
         ledger.state.people.getValue(alex).displayName shouldBe "Alex"
     }

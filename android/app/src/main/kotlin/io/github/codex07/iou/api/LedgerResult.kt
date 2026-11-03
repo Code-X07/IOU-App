@@ -39,7 +39,11 @@ class ResultScope @PublishedApi internal constructor() {
     }
 }
 
-/** Runs [block]; the first `bind()` of an error, or `fail`, becomes the result. */
+/**
+ * Runs [block]; the first `bind()` of an error, or `fail`, becomes the result.
+ * `bind`, `fail` and `ensure` stop the block by throwing, so a `catch (e: Exception)` or `runCatching`
+ * around them inside the block would swallow the failure; don't wrap them that way.
+ */
 inline fun <T> ledgerResult(block: ResultScope.() -> T): LedgerResult<T> {
     val scope = ResultScope()
     return try {

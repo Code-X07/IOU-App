@@ -76,6 +76,8 @@ class SplitResolverTest {
             LedgerResult.Err(LedgerError.ExactRemaining(-1_000))
         shares(SplitResolver.resolve(SplitType.EXACT, 10_000, 10_000, listOf(SplitInput(a, 2_500), SplitInput(b, 7_500)))) shouldBe
             mapOf(a to 2_500L, b to 7_500L)
+        SplitResolver.resolve(SplitType.EXACT, 0, 0, listOf(SplitInput(a, 0), SplitInput(b, 0))) shouldBe
+            LedgerResult.Err(LedgerError.ZeroWeights)
     }
 
     @Test

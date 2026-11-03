@@ -36,6 +36,11 @@ class FxConverterTest {
     }
 
     @Test
+    fun `a zero amount converts to zero without being rejected`() {
+        FxConverter.convert(Money(0, EUR), USD, "1.1") shouldBe LedgerResult.Ok(Money(0, USD))
+    }
+
+    @Test
     fun `results above MAX_MINOR are rejected`() {
         FxConverter.convert(Money(MAX_MINOR, EUR), USD, "1.0000001") shouldBe LedgerResult.Err(LedgerError.AmountTooLarge)
         FxConverter.convert(Money(MAX_MINOR, EUR), USD, "1") shouldBe LedgerResult.Ok(Money(MAX_MINOR, USD))

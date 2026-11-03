@@ -41,7 +41,10 @@ object FxConverter {
         Money(minor, to)
     }
 
-    /** Display rate of a bank-actual snapshot: charged ÷ paid in major units (spec §4.5). */
+    /**
+     * Display rate of a bank-actual snapshot: charged ÷ paid in major units (spec §4.5).
+     * Rate arguments must already be valid (see [validateRate]); malformed or zero input throws.
+     */
     fun deriveRate(paid: Money, charged: Money): String {
         require(paid.amountMinor > 0) { "Paid amount must be positive" }
         val shift = paid.currency.fractionDigits - charged.currency.fractionDigits
@@ -51,10 +54,14 @@ object FxConverter {
             .canonical()
     }
 
+    /** Reciprocal rate. [rate] must already be valid (see [validateRate]); malformed or zero input throws. */
     fun invert(rate: String): String =
         BigDecimal.ONE.divide(BigDecimal(rate), MathContext.DECIMAL128).canonical()
 
-    /** Rate base→quote from `1 home = homeToBase base` and `1 home = homeToQuote quote`. */
+    /**
+     * Rate base→quote from `1 home = homeToBase base` and `1 home = homeToQuote quote`.
+     * Both rates must already be valid (see [validateRate]); malformed or zero input throws.
+     */
     fun cross(homeToBase: String, homeToQuote: String): String =
         BigDecimal(homeToQuote).divide(BigDecimal(homeToBase), MathContext.DECIMAL128).canonical()
 

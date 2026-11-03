@@ -602,7 +602,11 @@ class TestLedger {
 ```kotlin
 package io.github.codex07.iou.ledger.model
 
+import io.github.codex07.iou.testutil.D0
+import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.ME
+import io.github.codex07.iou.testutil.SEK
+import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.TestLedger
 import io.github.codex07.iou.testutil.eur
 import io.github.codex07.iou.testutil.testMeta
@@ -650,9 +654,12 @@ class LedgerStateTest {
         val alex = ledger.person("Alex")
         val renamed = ledger.state.people.getValue(alex).copy(displayName = "Alex S.", meta = testMeta(version = 2))
 
-        val after = ledger.state.applying(listOf(Change(renamed, RevisionAction.UPDATED)))
+        val snapshot = FxSnapshot(FxSnapshotId("fx-1"), EUR, SEK, "11.2", D0, FxSource.USER_ENTERED, fetchedAt = T0)
+
+        val after = ledger.state.applying(listOf(Change(renamed, RevisionAction.UPDATED)), listOf(snapshot))
 
         after.people.getValue(alex).displayName shouldBe "Alex S."
+        after.fxSnapshots.getValue(snapshot.id) shouldBe snapshot
         after.people.size shouldBe 2
         ledger.state.people.getValue(alex).displayName shouldBe "Alex"
     }
@@ -827,7 +834,11 @@ class ResultScope @PublishedApi internal constructor() {
     }
 }
 
-/** Runs [block]; the first `bind()` of an error, or `fail`, becomes the result. */
+/**
+ * Runs [block]; the first `bind()` of an error, or `fail`, becomes the result.
+ * `bind`, `fail` and `ensure` stop the block by throwing, so a `catch (e: Exception)` or `runCatching`
+ * around them inside the block would swallow the failure; don't wrap them that way.
+ */
 inline fun <T> ledgerResult(block: ResultScope.() -> T): LedgerResult<T> {
     val scope = ResultScope()
     return try {
@@ -1021,11 +1032,13 @@ class IdentityResolverTest {
         ledger.person("A", mergedInto = PersonId("person-b"), deleted = true)
         ledger.person("B", mergedInto = PersonId("person-a"), deleted = true)
         val c = ledger.person("C", mergedInto = PersonId("missing"))
+        val d = ledger.person("D", mergedInto = c)
         val resolver = IdentityResolver(ledger.state)
 
-        resolver.brokenChains shouldBe setOf(PersonId("person-a"), PersonId("person-b"), c)
+        resolver.brokenChains shouldBe setOf(PersonId("person-a"), PersonId("person-b"), c, d)
         resolver.canonical(PersonId("person-a")) shouldBe PersonId("person-a")
         resolver.canonical(c) shouldBe c
+        resolver.canonical(d) shouldBe c
     }
 
     @Test
@@ -1305,6 +1318,8 @@ class SplitResolverTest {
             LedgerResult.Err(LedgerError.ExactRemaining(-1_000))
         shares(SplitResolver.resolve(SplitType.EXACT, 10_000, 10_000, listOf(SplitInput(a, 2_500), SplitInput(b, 7_500)))) shouldBe
             mapOf(a to 2_500L, b to 7_500L)
+        SplitResolver.resolve(SplitType.EXACT, 0, 0, listOf(SplitInput(a, 0), SplitInput(b, 0))) shouldBe
+            LedgerResult.Err(LedgerError.ZeroWeights)
     }
 
     @Test
@@ -1537,6 +1552,11 @@ class FxConverterTest {
     }
 
     @Test
+    fun `a zero amount converts to zero without being rejected`() {
+        FxConverter.convert(Money(0, EUR), USD, "1.1") shouldBe LedgerResult.Ok(Money(0, USD))
+    }
+
+    @Test
     fun `results above MAX_MINOR are rejected`() {
         FxConverter.convert(Money(MAX_MINOR, EUR), USD, "1.0000001") shouldBe LedgerResult.Err(LedgerError.AmountTooLarge)
         FxConverter.convert(Money(MAX_MINOR, EUR), USD, "1") shouldBe LedgerResult.Ok(Money(MAX_MINOR, USD))
@@ -1628,7 +1648,10 @@ object FxConverter {
         Money(minor, to)
     }
 
-    /** Display rate of a bank-actual snapshot: charged ÷ paid in major units (spec §4.5). */
+    /**
+     * Display rate of a bank-actual snapshot: charged ÷ paid in major units (spec §4.5).
+     * Rate arguments must already be valid (see [validateRate]); malformed or zero input throws.
+     */
     fun deriveRate(paid: Money, charged: Money): String {
         require(paid.amountMinor > 0) { "Paid amount must be positive" }
         val shift = paid.currency.fractionDigits - charged.currency.fractionDigits
@@ -1638,10 +1661,14 @@ object FxConverter {
             .canonical()
     }
 
+    /** Reciprocal rate. [rate] must already be valid (see [validateRate]); malformed or zero input throws. */
     fun invert(rate: String): String =
         BigDecimal.ONE.divide(BigDecimal(rate), MathContext.DECIMAL128).canonical()
 
-    /** Rate base→quote from `1 home = homeToBase base` and `1 home = homeToQuote quote`. */
+    /**
+     * Rate base→quote from `1 home = homeToBase base` and `1 home = homeToQuote quote`.
+     * Both rates must already be valid (see [validateRate]); malformed or zero input throws.
+     */
     fun cross(homeToBase: String, homeToQuote: String): String =
         BigDecimal(homeToQuote).divide(BigDecimal(homeToBase), MathContext.DECIMAL128).canonical()
 
@@ -1655,7 +1682,7 @@ object FxConverter {
 ./gradlew :app:testFakeDebugUnitTest --tests "io.github.codex07.iou.ledger.engine.FxConverterTest"
 ```
 
-Expected: `BUILD SUCCESSFUL`, 7 tests pass.
+Expected: `BUILD SUCCESSFUL`, 8 tests pass.
 
 - [ ] **Step 5: Run everything, commit, push**
 
