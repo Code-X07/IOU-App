@@ -15,7 +15,7 @@
 - IDs are UUID strings; sync columns on every syncable entity: `createdAt`, `updatedAt`, `authorId`, `deletedAt`, `version` (starts at 1), `importBatchId` (spec §3.1).
 - Sign convention: `net(A, B, currency) > 0` means B owes A; `groupNet(M) > 0` means the group owes M (spec §3.1).
 - Splits: largest-remainder rounding in exact integer arithmetic (`BigInteger`), ties to the lowest canonical person UUID in string order; PERCENT inputs are basis points summing to 10 000; SHARES weights are integers up to 1 000 000; EXACT inputs are minor units in the original currency and must sum exactly to `totalMinor`; `Σ shareMinor == effectTotalMinor` (spec §4.4).
-- FX: `rate` = major units of quote per one major unit of base; a valid rate parses as `BigDecimal`, is > 0 and has at most 34 significant digits, else `InvalidRate`; `effectMinor = HALF_EVEN(amountMinor × rate × 10^(fd(quote) − fd(base)))`; result above `MAX_MINOR` → `AmountTooLarge`; positive amount converting to 0 → `ConvertedToZero`; inverted rates use `MathContext.DECIMAL128` (spec §4.5).
+- FX: `rate` = major units of quote per one major unit of base; a valid rate parses as `BigDecimal`, is > 0 and has at most 34 significant digits and a scale within ±64, else `InvalidRate`; `effectMinor = HALF_EVEN(amountMinor × rate × 10^(fd(quote) − fd(base)))`; result above `MAX_MINOR` → `AmountTooLarge`; positive amount converting to 0 → `ConvertedToZero`; inverted rates use `MathContext.DECIMAL128` (spec §4.5).
 - Canonical identity: `canonical(id)` follows `mergedIntoId` to a person that is not merged; a canonical person's default handle of a type is its own record's default if it has one, otherwise the default of the alias with the lowest UUID (spec §3.2, §4.1).
 
 ## Deviations from the spec text (deliberate, small)
@@ -23,6 +23,7 @@
 - SHARES weights may be **0** for an individual participant (listed but pays nothing this time); all-zero weights → `ZeroWeights`; a weight above 1 000 000 → `WeightOutOfRange`. The spec says "1–1 000 000"; allowing 0 is the only way `ZeroWeights` can occur and is useful in the UI.
 - `LedgerError` adds a few errors the spec implies but doesn't name: `NotFound`, `InvalidField`, `RateRequired` (no rate given or none available, the user must enter one), `MissingInput`, `WeightOutOfRange`, `DuplicateParticipant`, and file-level errors for M1 (`WrongPassphraseOrDamagedFile`, `CorruptFile`, `LimitsExceeded`, `SchemaTooNew`).
 - `FieldChange`, `SplitInput` and `Change` live in `ledger.model` (plain data shared by engine, rules, ops and api). The index lists them there.
+- A rate's scale must lie within ±64 (`MAX_RATE_SCALE`); otherwise `InvalidRate`. Without it an exponent-notation rate like `1E999999999` makes conversion build a number with a billion digits.
 
 ## File map
 
@@ -1485,7 +1486,7 @@ git commit -m "Add SplitResolver with exact largest-remainder rounding"
 **Interfaces:**
 - Consumes: `Money`, `CurrencyCode`, `MAX_MINOR` (Part 1), `LedgerResult`, `LedgerError` (Task 2).
 - Produces: `object FxConverter` with
-  - `const val MAX_RATE_DIGITS = 34`,
+  - `const val MAX_RATE_DIGITS = 34`, `const val MAX_RATE_SCALE = 64`,
   - `fun validateRate(rate: String): LedgerResult<BigDecimal>` (`InvalidRate(rate)` on failure),
   - `fun convert(amount: Money, to: CurrencyCode, rate: String): LedgerResult<Money>`,
   - `fun deriveRate(paid: Money, charged: Money): String` (charged ÷ paid in major units, `DECIMAL128`; requires `paid.amountMinor > 0`),
@@ -1545,12 +1546,14 @@ class FxConverterTest {
     fun `invalid rates are rejected`() {
         val thirtyFiveDigits = "1." + "0".repeat(33) + "1"
         val thirtyFourDigits = "1." + "0".repeat(32) + "1"
-        listOf("0", "-1", "abc", "", thirtyFiveDigits).forEach { rate ->
+        listOf("0", "-1", "abc", "", thirtyFiveDigits, "1E65", "1E-65", "1E999999999", "1E-999999999").forEach { rate ->
             FxConverter.validateRate(rate) shouldBe LedgerResult.Err(LedgerError.InvalidRate(rate))
             FxConverter.convert(Money(100, EUR), USD, rate) shouldBe LedgerResult.Err(LedgerError.InvalidRate(rate))
         }
         FxConverter.validateRate("0.09") shouldBe LedgerResult.Ok(BigDecimal("0.09"))
         FxConverter.validateRate(thirtyFourDigits) shouldBe LedgerResult.Ok(BigDecimal(thirtyFourDigits))
+        FxConverter.validateRate("1E64") shouldBe LedgerResult.Ok(BigDecimal("1E64"))
+        FxConverter.validateRate("1E-64") shouldBe LedgerResult.Ok(BigDecimal("1E-64"))
     }
 
     @Test
@@ -1593,15 +1596,21 @@ import io.github.codex07.iou.money.Money
 import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
+import kotlin.math.abs
 
 /** Exact currency conversion (spec §4.5). A rate is quote major units per one base major unit. */
 object FxConverter {
 
     const val MAX_RATE_DIGITS = 34
 
+    /** Bounds the rate's exponent so conversion never builds huge numbers (e.g. "1E999999999"). */
+    const val MAX_RATE_SCALE = 64
+
     fun validateRate(rate: String): LedgerResult<BigDecimal> {
         val parsed = runCatching { BigDecimal(rate.trim()) }.getOrNull()
-        val valid = parsed != null && parsed.signum() > 0 && parsed.stripTrailingZeros().precision() <= MAX_RATE_DIGITS
+        val stripped = parsed?.stripTrailingZeros()
+        val valid = parsed != null && parsed.signum() > 0 &&
+            stripped!!.precision() <= MAX_RATE_DIGITS && abs(stripped.scale()) <= MAX_RATE_SCALE
         return if (valid) LedgerResult.Ok(parsed!!) else LedgerResult.Err(LedgerError.InvalidRate(rate))
     }
 

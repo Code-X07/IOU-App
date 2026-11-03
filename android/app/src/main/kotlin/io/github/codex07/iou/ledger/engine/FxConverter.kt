@@ -9,15 +9,21 @@ import io.github.codex07.iou.money.Money
 import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
+import kotlin.math.abs
 
 /** Exact currency conversion (spec §4.5). A rate is quote major units per one base major unit. */
 object FxConverter {
 
     const val MAX_RATE_DIGITS = 34
 
+    /** Bounds the rate's exponent so conversion never builds huge numbers (e.g. "1E999999999"). */
+    const val MAX_RATE_SCALE = 64
+
     fun validateRate(rate: String): LedgerResult<BigDecimal> {
         val parsed = runCatching { BigDecimal(rate.trim()) }.getOrNull()
-        val valid = parsed != null && parsed.signum() > 0 && parsed.stripTrailingZeros().precision() <= MAX_RATE_DIGITS
+        val stripped = parsed?.stripTrailingZeros()
+        val valid = parsed != null && parsed.signum() > 0 &&
+            stripped!!.precision() <= MAX_RATE_DIGITS && abs(stripped.scale()) <= MAX_RATE_SCALE
         return if (valid) LedgerResult.Ok(parsed!!) else LedgerResult.Err(LedgerError.InvalidRate(rate))
     }
 

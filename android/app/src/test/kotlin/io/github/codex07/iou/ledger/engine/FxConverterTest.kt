@@ -45,12 +45,14 @@ class FxConverterTest {
     fun `invalid rates are rejected`() {
         val thirtyFiveDigits = "1." + "0".repeat(33) + "1"
         val thirtyFourDigits = "1." + "0".repeat(32) + "1"
-        listOf("0", "-1", "abc", "", thirtyFiveDigits).forEach { rate ->
+        listOf("0", "-1", "abc", "", thirtyFiveDigits, "1E65", "1E-65", "1E999999999", "1E-999999999").forEach { rate ->
             FxConverter.validateRate(rate) shouldBe LedgerResult.Err(LedgerError.InvalidRate(rate))
             FxConverter.convert(Money(100, EUR), USD, rate) shouldBe LedgerResult.Err(LedgerError.InvalidRate(rate))
         }
         FxConverter.validateRate("0.09") shouldBe LedgerResult.Ok(BigDecimal("0.09"))
         FxConverter.validateRate(thirtyFourDigits) shouldBe LedgerResult.Ok(BigDecimal(thirtyFourDigits))
+        FxConverter.validateRate("1E64") shouldBe LedgerResult.Ok(BigDecimal("1E64"))
+        FxConverter.validateRate("1E-64") shouldBe LedgerResult.Ok(BigDecimal("1E-64"))
     }
 
     @Test
