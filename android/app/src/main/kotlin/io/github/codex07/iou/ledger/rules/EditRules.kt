@@ -93,7 +93,8 @@ internal object EditRules {
         // Rule 10
         if (newlyDeleted) {
             val referenced = after.entries.any { new.id in it.personIds } ||
-                after.members.values.any { it.personId == new.id }
+                after.members.values.any { it.personId == new.id } ||
+                after.people.values.any { !it.isDeleted && it.mergedIntoId == new.id }
             if (referenced) add(10, LedgerError.StillReferenced(new.id.value))
         }
 

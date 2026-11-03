@@ -269,4 +269,54 @@ class EntryOpsTest {
         result shouldNotBe LedgerResult.Ok(Unit)
         (result as LedgerResult.Err).error shouldBe LedgerError.DeletedReference(setOf(orphan.value, gone.value))
     }
+
+    @Test
+    fun `huge split inputs on two records of one person are AmountTooLarge, and a negative cannot hide behind a positive one`() {
+        val ledger = TestLedger().apply { me() }
+        val alias = ledger.person("Alias")
+        val target = ledger.person("Target")
+        val h = OpsHarness(ledger.state.with(ledger.state.people.getValue(alias).copy(mergedIntoId = target)))
+        val draft = ExpenseDraft(ME, "Dinner", total = eur(10_000), splitType = SplitType.SHARES,
+            participants = listOf(SplitInput(alias, Long.MAX_VALUE / 2 + 1), SplitInput(target, Long.MAX_VALUE / 2 + 1)), occurredOn = D0)
+
+        h.run { EntryOps.saveExpense(it, draft, SaveMode.Create(h.generation)) } shouldBe LedgerResult.Err(LedgerError.AmountTooLarge)
+        h.run {
+            EntryOps.saveExpense(it, draft.copy(participants = listOf(SplitInput(alias, -5), SplitInput(target, 10))), SaveMode.Create(h.generation))
+        } shouldBe LedgerResult.Err(LedgerError.NegativeInput(alias))
+    }
+
+    @Test
+    fun `a bank-actual quote is not a rate`() {
+        val ledger = TestLedger().apply { me() }
+        val a = ledger.person("A")
+        val group = ledger.group("Convert", fxMode = FxMode.CONVERT, members = listOf(ME, a))
+        val h = OpsHarness(ledger.state)
+        val draft = ExpenseDraft(ME, "Hotel", total = sek(100_000), groupId = group,
+            participants = listOf(SplitInput(ME), SplitInput(a)), occurredOn = D0,
+            fx = FxChoice.Rate(FxQuote(SEK, EUR, "0.09", D0, FxSource.BANK_ACTUAL, isStale = false)))
+
+        h.run { EntryOps.saveExpense(it, draft, SaveMode.Create(h.generation)) } shouldBe LedgerResult.Err(LedgerError.InvalidRate("0.09"))
+    }
+
+    @Test
+    fun `an update that changes only the participants replaces the stored shares`() {
+        val ledger = TestLedger().apply { me() }
+        val a = ledger.person("A")
+        val b = ledger.person("B")
+        val group = ledger.group("Trip", members = listOf(ME, a, b))
+        val h = OpsHarness(ledger.state)
+        val draft = ExpenseDraft(ME, "Dinner", total = eur(9_000), groupId = group, splitType = SplitType.EQUAL,
+            participants = listOf(SplitInput(ME), SplitInput(a)), occurredOn = D0)
+        val id = ok(h.run { EntryOps.saveExpense(it, draft, SaveMode.Create(h.generation)) })
+        val before = h.state.expenses.getValue(id).shares
+
+        h.run {
+            EntryOps.saveExpense(it, draft.copy(participants = listOf(SplitInput(ME), SplitInput(a), SplitInput(b))),
+                SaveMode.Update(id, h.token(h.state.expenses.getValue(id))))
+        } shouldBe LedgerResult.Ok(id)
+        val after = h.state.expenses.getValue(id).shares
+        after shouldNotBe before
+        after.map { it.personId }.toSet() shouldBe setOf(ME, a, b)
+        after.sumOf { it.shareMinor } shouldBe 9_000L
+    }
 }

@@ -114,4 +114,18 @@ class PeopleOpsTest {
             LedgerResult.Err(LedgerError.StillReferenced(x.value))
         h.run { PeopleOps.deletePerson(it, ME, h.token(h.state.me)) }.shouldBeInstanceOf<LedgerResult.Err>()
     }
+
+    @Test
+    fun `a canonical person with a live alias cannot be deleted until the alias is gone`() {
+        val ledger = TestLedger().apply { me() }
+        val alias = ledger.person("Alias")
+        val canonical = ledger.person("Canonical")
+        val h = OpsHarness(ledger.state)
+        h.run { PeopleOps.merge(it, alias, canonical, h.token(h.state.people.getValue(alias))) } shouldBe LedgerResult.Ok(Unit)
+
+        h.run { PeopleOps.deletePerson(it, canonical, h.token(h.state.people.getValue(canonical))) } shouldBe
+            LedgerResult.Err(LedgerError.StillReferenced(canonical.value))
+        h.run { PeopleOps.deletePerson(it, alias, h.token(h.state.people.getValue(alias))) } shouldBe LedgerResult.Ok(Unit)
+        h.run { PeopleOps.deletePerson(it, canonical, h.token(h.state.people.getValue(canonical))) } shouldBe LedgerResult.Ok(Unit)
+    }
 }

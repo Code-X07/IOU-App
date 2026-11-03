@@ -167,7 +167,14 @@ object EntryOps {
         val required = requiredEffectCurrency(ctx.state, draft.groupId, draft.total.currency, settlesCurrency = null)
         val fx = resolveFx(ctx, draft.total, required, draft.fx, existing, draft.occurredOn)
         val resolver = IdentityResolver(ctx.state)
-        val inputs = combineInputs(draft.participants, draft.splitType, resolver)
+        // Negatives are rejected per record first: combining records of one person could hide one, and
+        // combining is exact arithmetic, so an overflow there is AmountTooLarge (index decision 4).
+        draft.participants.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
+        val inputs = try {
+            combineInputs(draft.participants, draft.splitType, resolver)
+        } catch (overflow: ArithmeticException) {
+            null
+        } ?: fail(LedgerError.AmountTooLarge)
 
         val keep = existing != null &&
             (draft.fx == null || draft.fx == FxChoice.KeepExisting) &&

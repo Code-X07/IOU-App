@@ -137,6 +137,15 @@ class EditRulesTest {
         ledger3.member(group3, z, deleted = true)
         val s3 = ledger3.state
         edit(s3, bumped(s3.people.getValue(z), deleted = true)) shouldBe listOf(LedgerError.StillReferenced(z.value))
+
+        // A live alias still points at the canonical person (no entries): isolates the alias clause.
+        val ledger4 = TestLedger()
+        ledger4.me()
+        val canonical = ledger4.person("Canonical")
+        val alias = ledger4.person("Alias")
+        val s4 = ledger4.state.with(ledger4.state.people.getValue(alias).copy(mergedIntoId = canonical))
+        // Edit rules come first, so the UI sees StillReferenced before the state-rule DeletedReference.
+        edit(s4, bumped(s4.people.getValue(canonical), deleted = true)).first() shouldBe LedgerError.StillReferenced(canonical.value)
     }
 
     @Test
