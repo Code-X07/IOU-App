@@ -139,8 +139,18 @@ fun PersonPreview(person: PersonSummary, hidden: Boolean, onClick: () -> Unit) {
             Text(if (person.archived) stringResource(R.string.archived_status, status) else status,
                 style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
-        MoneyLines(person.balances, hidden, Modifier.weight(.85f), magnitude = true,
-            color = if (person.balances.all { it.amountMinor >= 0 }) colors.primary else colors.error)
+        Column(Modifier.weight(.85f), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (person.balances.isEmpty()) Text(stringResource(R.string.all_settled), style = MaterialTheme.typography.bodySmall)
+            person.balances.forEach { money ->
+                MoneyText(money, hidden, magnitude = true,
+                    color = if (money.amountMinor < 0) colors.error else colors.primary)
+                if (person.balances.size > 1) Text(stringResource(when {
+                    money.amountMinor > 0 -> R.string.owes_you
+                    money.amountMinor < 0 -> R.string.you_owe_person
+                    else -> R.string.all_settled
+                }), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            }
+        }
         Icon(IouIcons.Chevron, null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
     }
 }
@@ -187,12 +197,26 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
         .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(40.dp).background(colors.primaryContainer, MaterialTheme.shapes.small),
-            contentAlignment = Alignment.Center) { Icon(IouIcons.Activity, null, tint = colors.primary) }
+            contentAlignment = Alignment.Center) {
+            Icon(when {
+                item.kind == io.github.codex07.iou.api.EntryKind.EXPENSE -> IouIcons.Activity
+                item.transferKind == TransferKind.LOAN -> IouIcons.People
+                item.transferKind == TransferKind.REPAYMENT -> IouIcons.Settle
+                else -> IouIcons.UpRight
+            }, null, tint = colors.primary)
+        }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(when {
+                item.kind == io.github.codex07.iou.api.EntryKind.EXPENSE -> "Shared expense"
+                item.transferKind == TransferKind.LOAN -> "Personal loan"
+                item.transferKind == TransferKind.REPAYMENT -> "Recorded repayment"
+                else -> "Transfer"
+            }, style = MaterialTheme.typography.bodySmall, color = colors.secondary)
             Text(stringResource(R.string.paid_context, payer,
                 item.group?.name ?: stringResource(R.string.personal_context)),
                 style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            item.receiver?.let { Text("To ${it.displayName}", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
             Text(item.occurredOn.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)),
                 style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
         }
@@ -200,6 +224,7 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             MoneyText(item.paid, hidden)
             item.myBalanceEffect?.takeIf { it.amountMinor != 0L }?.let {
+                Text("Your position", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                 MoneyText(it, hidden, signed = true, color = if (it.amountMinor > 0) colors.primary else colors.error)
             }
         }

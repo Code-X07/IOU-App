@@ -13,7 +13,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -33,13 +32,12 @@ import java.time.format.FormatStyle
 
 @Composable
 fun OverviewScreen(state: OverviewUiState, hidden: Boolean, onNavigate: (Destination) -> Unit,
-                   onFeature: (String) -> Unit, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+                   onFeature: (String) -> Unit, onRetry: () -> Unit, modifier: Modifier = Modifier,
+                   onPerson: (String) -> Unit = {}, onGroup: (String) -> Unit = {}, onEntry: (String) -> Unit = {}) {
     val addPerson = stringResource(R.string.add_person)
     val createGroup = stringResource(R.string.create_group)
     val addExpense = stringResource(R.string.add_expense)
     val backup = stringResource(R.string.backup_controls)
-    val entryDetails = stringResource(R.string.entry_details)
-    val context = LocalContext.current
     when (state) {
         OverviewUiState.NeedsSetup -> Box(modifier.fillMaxSize().padding(20.dp), contentAlignment = Alignment.Center) {
             val setupTitle = stringResource(R.string.setup_required)
@@ -111,7 +109,7 @@ fun OverviewScreen(state: OverviewUiState, hidden: Boolean, onNavigate: (Destina
                             state.people.forEachIndexed { index, person ->
                                 if (index > 0) HorizontalDivider(Modifier.padding(start = 70.dp), color = MaterialTheme.colorScheme.outlineVariant)
                                 PersonPreview(person, hidden) {
-                                    onFeature(context.getString(R.string.person_details, person.person.displayName))
+                                    onPerson(person.person.id.value)
                                 }
                             }
                         }
@@ -133,7 +131,7 @@ fun OverviewScreen(state: OverviewUiState, hidden: Boolean, onNavigate: (Destina
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(state.groups, key = { it.group.id.value }) { group ->
                         GroupPreview(group, hidden,
-                            { onFeature(context.getString(R.string.group_details, group.group.name)) }, Modifier.width(272.dp))
+                            { onGroup(group.group.id.value) }, Modifier.width(272.dp))
                     }
                 }
             }
@@ -146,7 +144,7 @@ fun OverviewScreen(state: OverviewUiState, hidden: Boolean, onNavigate: (Destina
                         Column {
                             state.recent.forEachIndexed { index, entry ->
                                 if (index > 0) HorizontalDivider(Modifier.padding(start = 68.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                                EntryPreview(entry, hidden) { onFeature(entryDetails) }
+                                EntryPreview(entry, hidden) { onEntry(entry.entryId.value) }
                             }
                         }
                     }
