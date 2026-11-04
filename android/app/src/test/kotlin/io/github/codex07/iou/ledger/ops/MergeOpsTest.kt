@@ -73,6 +73,23 @@ class MergeOpsTest {
     }
 
     @Test
+    fun `making a deleted handle the default leaves the live default alone`() {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val h = OpsHarness(ledger.state)
+        fun add(value: String, label: String) =
+            (h.run { PeopleOps.addHandle(it, x, HandleDraft(HandleType.IBAN, value, label = label, isDefault = true), h.generation) } as LedgerResult.Ok).value
+        val a = add("GB82WEST12345698765432", "A")
+        h.run { PeopleOps.deleteHandle(it, a, h.token(h.state.handles.getValue(a))) } shouldBe LedgerResult.Ok(Unit)
+        val b = add("DE89370400440532013000", "B")
+
+        val draft = HandleDraft(HandleType.IBAN, "GB82WEST12345698765432", label = "A", isDefault = true)
+        h.run { PeopleOps.updateHandle(it, a, draft, h.token(h.state.handles.getValue(a))) } shouldBe LedgerResult.Ok(Unit)
+        h.state.handles.getValue(b).isDefault shouldBe true
+        h.lastPlan!!.changes.size shouldBe 1
+    }
+
+    @Test
     fun `merge writes only the source row and combines balances, unmerge splits them again`() {
         val ledger = TestLedger().apply { me() }
         val alex = ledger.person("Alex")

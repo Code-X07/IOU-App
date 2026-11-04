@@ -3,6 +3,7 @@ package io.github.codex07.iou.ledger.rules
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.RuleViolation
+import io.github.codex07.iou.ledger.engine.SplitResolver
 import io.github.codex07.iou.ledger.model.Expense
 import io.github.codex07.iou.ledger.model.Group
 import io.github.codex07.iou.ledger.model.GroupMember
@@ -10,6 +11,8 @@ import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
+import io.github.codex07.iou.ledger.model.SplitInput
+import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.money.MAX_MINOR
 import io.github.codex07.iou.money.Money
@@ -99,9 +102,23 @@ object FieldRules {
             sum += share.shareMinor
         }
         return if (sum == expense.effectTotal.amountMinor) {
-            emptyList()
+            listOfNotNull(inputs(expense))
         } else {
             listOf(LedgerError.CorruptData("shares of ${expense.id} sum to $sum, not ${expense.effectTotal.amountMinor}"))
         }
+    }
+
+    /**
+     * Spec §7.4: stored inputs must suit the split type, row by row as stored, without recomputing the stored
+     * allocations. Each row keeps the limits it was saved under, so a later merge of its people never breaks it.
+     */
+    private fun inputs(expense: Expense): LedgerError? {
+        if (expense.splitType == SplitType.EQUAL) {
+            return expense.shares.firstOrNull { it.inputValue != null }
+                ?.let { LedgerError.CorruptData("EQUAL shares of ${expense.id} carry an input") }
+        }
+        val inputs = expense.shares.map { SplitInput(it.personId, it.inputValue) }
+        val resolved = SplitResolver.resolve(expense.splitType, expense.effectTotal.amountMinor, expense.total.amountMinor, inputs)
+        return (resolved as? LedgerResult.Err)?.error
     }
 }

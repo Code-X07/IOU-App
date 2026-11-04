@@ -1042,8 +1042,8 @@ git commit -m "Add entry views: activity, detail, edit drafts, history, previews
 **Interfaces:**
 - Consumes: `WriteContext`, `WritePlan`, `Planned` (Part 6), `LedgerViews` (Tasks 1–2), `Settings`, `LockTimeout` (Part 3).
 - Produces:
-  - `data class FakeSnapshot(state, revisions, generation, ledgerSeq, settings, importBatches = emptyList(), lastBackupAt = null, preRestore: Pair<LedgerState, List<EntryRevision>>? = null)`.
-  - `class InMemoryLedger(clock = Clock.systemUTC(), ids = IdGenerator.Random, settings = DefaultSettings)` with `deviceId`, `snapshot: StateFlow<FakeSnapshot>`, `views: Flow<LedgerViews>`, `ready: Flow<LedgerViews>` (only after setup), `currentViews()`, `now()`, `today()`, `newGeneration()`, `write(beforeSetup = false, op)`, `update(transform)`.
+  - `data class FakeSnapshot(state, revisions, generation, ledgerSeq, settings, importBatches = emptyList(), lastBackupAt = null, preRestore: RestorePoint? = null)`, with `restorePoint()` and `replacedBy(point)`; `data class RestorePoint(state, revisions, importBatches, homeCurrency, backupEncryptionDefault)` is what a restore swaps (spec §3.3: device-local settings and `lastBackupAt` stay).
+  - `class InMemoryLedger(clock = Clock.systemUTC(), ids = IdGenerator.Random, settings = DefaultSettings)` with `deviceId`, `snapshot: StateFlow<FakeSnapshot>`, `views: Flow<LedgerViews>`, `ready: Flow<LedgerViews>` (only after setup), `read(project)` and `readSnapshot(project)` (re-emit on every generation change, spec §6.2), `currentViews()`, `now()`, `today()`, `newGeneration()`, `write(beforeSetup = false, op)`, `update(transform)`.
   - `object FakeRates { val perEur: Map<String, String>; fun rate(from, to): String? }`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1182,6 +1182,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 
@@ -1194,7 +1195,27 @@ data class FakeSnapshot(
     val settings: Settings,
     val importBatches: List<ImportBatch> = emptyList(),
     val lastBackupAt: Instant? = null,
-    val preRestore: Pair<LedgerState, List<EntryRevision>>? = null,
+    val preRestore: RestorePoint? = null,
+) {
+    /** The ledger-scoped part a restore replaces. */
+    fun restorePoint() = RestorePoint(state, revisions, importBatches, settings.homeCurrency, settings.backupEncryptionDefault)
+
+    /** This snapshot with [point]'s ledger in place; device-local settings and the last backup time stay. */
+    fun replacedBy(point: RestorePoint) = copy(
+        state = point.state,
+        revisions = point.revisions,
+        importBatches = point.importBatches,
+        settings = settings.copy(homeCurrency = point.homeCurrency, backupEncryptionDefault = point.backupEncryptionDefault),
+    )
+}
+
+/** What a restore swaps (spec §3.3, §7.1): the ledger with its import history and ledger settings. */
+data class RestorePoint(
+    val state: LedgerState,
+    val revisions: List<EntryRevision>,
+    val importBatches: List<ImportBatch>,
+    val homeCurrency: CurrencyCode,
+    val backupEncryptionDefault: Boolean,
 )
 
 /** The fake's store: applies validated plans from `ledger.ops` and publishes snapshots. */
@@ -1215,6 +1236,12 @@ class InMemoryLedger(
 
     /** Views once setup has run; ledger-data reads observe this. */
     val ready: Flow<LedgerViews> = views.filter { it.state.meOrNull != null }
+
+    /** A read of the set-up ledger. It re-emits after every replacement, even when its value compares equal (spec §6.2). */
+    fun <T> read(project: (LedgerViews) -> T): Flow<T> = ready.perGeneration({ it.generation }, project)
+
+    /** A read of other replaced state (import history, ledger settings); it re-emits the same way. */
+    fun <T> readSnapshot(project: (FakeSnapshot) -> T): Flow<T> = snapshot.perGeneration({ it.generation }, project)
 
     fun currentViews(): LedgerViews = viewsOf(current.value)
 
@@ -1262,6 +1289,9 @@ class InMemoryLedger(
         val home = snapshot.settings.homeCurrency
         return LedgerViews(snapshot.state, snapshot.revisions, snapshot.generation, home) { FakeRates.rate(it, home) }
     }
+
+    private fun <S, T> Flow<S>.perGeneration(generation: (S) -> LedgerGeneration, project: (S) -> T): Flow<T> =
+        map { generation(it) to project(it) }.distinctUntilChanged().map { it.second }
 
     companion object {
         val DefaultSettings = Settings(
@@ -1371,9 +1401,9 @@ class FakeSetupApi(private val ledger: InMemoryLedger) : SetupApi {
 
 class FakePeopleApi(private val ledger: InMemoryLedger) : PeopleApi {
     override fun observePeople(includeArchived: Boolean, includeDeleted: Boolean): Flow<List<PersonSummary>> =
-        ledger.ready.map { it.people(includeArchived, includeDeleted) }.distinctUntilChanged()
+        ledger.read { it.people(includeArchived, includeDeleted) }
 
-    override fun observePerson(id: PersonId): Flow<PersonDetail?> = ledger.ready.map { it.person(id) }.distinctUntilChanged()
+    override fun observePerson(id: PersonId): Flow<PersonDetail?> = ledger.read { it.person(id) }
 
     override suspend fun createPerson(draft: PersonDraft, basis: LedgerGeneration) =
         ledger.write { PeopleOps.createPerson(it, draft, basis) }
@@ -1409,9 +1439,9 @@ class FakePeopleApi(private val ledger: InMemoryLedger) : PeopleApi {
 
 class FakeGroupsApi(private val ledger: InMemoryLedger) : GroupsApi {
     override fun observeGroups(includeArchived: Boolean, includeDeleted: Boolean): Flow<List<GroupSummary>> =
-        ledger.ready.map { it.groups(includeArchived, includeDeleted) }.distinctUntilChanged()
+        ledger.read { it.groups(includeArchived, includeDeleted) }
 
-    override fun observeGroup(id: GroupId): Flow<GroupDetail?> = ledger.ready.map { it.group(id) }.distinctUntilChanged()
+    override fun observeGroup(id: GroupId): Flow<GroupDetail?> = ledger.read { it.group(id) }
 
     override suspend fun createGroup(draft: GroupDraft, members: List<PersonId>, basis: LedgerGeneration): LedgerResult<GroupId> =
         ledger.write { GroupOps.createGroup(it, draft, members, basis) }
@@ -1434,12 +1464,12 @@ class FakeGroupsApi(private val ledger: InMemoryLedger) : GroupsApi {
 }
 
 class FakeLedgerApi(private val ledger: InMemoryLedger) : LedgerApi {
-    override fun observeOverview(): Flow<Overview> = ledger.ready.map { it.overview() }.distinctUntilChanged()
+    override fun observeOverview(): Flow<Overview> = ledger.read { it.overview() }
 
     override fun observeActivity(filter: ActivityFilter): Flow<List<ActivityItem>> =
-        ledger.ready.map { it.activity(filter) }.distinctUntilChanged()
+        ledger.read { it.activity(filter) }
 
-    override fun observeEntry(id: EntryId): Flow<EntryDetail?> = ledger.ready.map { it.entry(id) }.distinctUntilChanged()
+    override fun observeEntry(id: EntryId): Flow<EntryDetail?> = ledger.read { it.entry(id) }
 
     override suspend fun saveTransfer(draft: TransferDraft, mode: SaveMode): LedgerResult<EntryId> =
         ledger.write { EntryOps.saveTransfer(it, draft, mode) }
@@ -1559,7 +1589,7 @@ class FakeBackupApi(private val ledger: InMemoryLedger) : BackupApi {
         val stored = passphrases[source.uri] ?: return LedgerResult.Err(LedgerError.CorruptFile("No IOU backup at ${source.uri}"))
         if (stored != passphrase?.concatToString().orEmpty()) return LedgerResult.Err(LedgerError.WrongPassphraseOrDamagedFile)
         ledger.update {
-            it.copy(generation = ledger.newGeneration(), ledgerSeq = it.ledgerSeq + 1, preRestore = it.state to it.revisions)
+            it.copy(generation = ledger.newGeneration(), ledgerSeq = it.ledgerSeq + 1, preRestore = it.restorePoint())
         }
         return LedgerResult.Ok(Unit)
     }
@@ -1571,9 +1601,8 @@ class FakeBackupApi(private val ledger: InMemoryLedger) : BackupApi {
         ledger.update { snapshot ->
             val previous = snapshot.preRestore ?: return@update snapshot
             undone = true
-            snapshot.copy(
-                state = previous.first, revisions = previous.second, preRestore = snapshot.state to snapshot.revisions,
-                generation = ledger.newGeneration(), ledgerSeq = snapshot.ledgerSeq + 1,
+            snapshot.replacedBy(previous).copy(
+                preRestore = snapshot.restorePoint(), generation = ledger.newGeneration(), ledgerSeq = snapshot.ledgerSeq + 1,
             )
         }
         return if (undone) LedgerResult.Ok(Unit) else LedgerResult.Err(LedgerError.NotFound("restore"))
@@ -1637,10 +1666,10 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
         return result
     }
 
-    override fun observeImportBatches(): Flow<List<ImportBatchView>> = ledger.snapshot.map { snapshot ->
+    override fun observeImportBatches(): Flow<List<ImportBatchView>> = ledger.readSnapshot { snapshot ->
         snapshot.importBatches.sortedByDescending { it.importedAt }
             .map { ImportBatchView(it.id, it.fileName, it.importedAt, it.rowCount, it.undoneAt) }
-    }.distinctUntilChanged()
+    }
 
     override suspend fun undoImport(id: ImportBatchId): LedgerResult<UndoImportResult> {
         var found = false
@@ -1687,7 +1716,7 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
 class FakeSettingsApi(private val ledger: InMemoryLedger) : SettingsApi {
     private val lockRequired = MutableStateFlow(ledger.snapshot.value.settings.appLockEnabled)
 
-    override fun observeSettings(): Flow<Settings> = ledger.snapshot.map { it.settings }.distinctUntilChanged()
+    override fun observeSettings(): Flow<Settings> = ledger.readSnapshot { it.settings }
 
     override suspend fun setHomeCurrency(currency: CurrencyCode) = change { it.copy(homeCurrency = currency) }
 
@@ -2261,6 +2290,7 @@ abstract class FxApiContract : ApiContract() {
 ```kotlin
 package io.github.codex07.iou.api.contract
 
+import app.cash.turbine.test
 import io.github.codex07.iou.api.DocumentRef
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
@@ -2305,6 +2335,42 @@ abstract class BackupApiContract : ApiContract() {
         basis() shouldNotBe afterRestore
         basis() shouldNotBe before
         apis.ledger.deleteEntry(id, token) shouldBe LedgerResult.Err(LedgerError.LedgerReplaced)
+    }
+
+    @Test
+    fun `reads re-emit after a restore even when the restored data looks the same`() = runTest {
+        setUpMe()
+        val target = backupTarget("d.iou")
+        apis.backup.createBackup(target, null).orFail()
+        apis.people.observePeople().test {
+            val before = awaitItem()
+            apis.backup.restoreBackup(target, null).orFail()
+            awaitItem() shouldBe before
+            cancelAndIgnoreRemainingEvents()
+        }
+        apis.people.observePeople().test {
+            val before = awaitItem()
+            apis.backup.undoLastRestore().orFail()
+            awaitItem() shouldBe before
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `undoing a restore brings back the ledger settings and keeps the device settings`() = runTest {
+        setUpMe()
+        val target = backupTarget("e.iou")
+        apis.backup.createBackup(target, null).orFail()
+        apis.backup.restoreBackup(target, null).orFail()
+        apis.settings.setHomeCurrency(SEK).orFail()
+        apis.settings.setBackupEncryptionDefault(false).orFail()
+        apis.settings.setScreenProtection(true).orFail()
+
+        apis.backup.undoLastRestore().orFail()
+        val settings = apis.settings.observeSettings().first()
+        settings.homeCurrency shouldBe EUR
+        settings.backupEncryptionDefault shouldBe true
+        settings.screenProtection shouldBe true
     }
 
     @Test
@@ -2401,6 +2467,20 @@ abstract class ImportExportApiContract : ApiContract() {
         row.changes.single { it.field == "note" }.before shouldBe "B"
         row.changedSinceLastPreview shouldBe true
         apis.importExport.commitImport(refreshed, ImportChoices()).orFail()
+    }
+
+    @Test
+    fun `undoing a restore brings back the import history from before it`() = runTest {
+        setUpMe()
+        val target = backupTarget("before-import.iou")
+        apis.backup.createBackup(target, null).orFail()
+        apis.backup.restoreBackup(target, null).orFail()
+        val preview = apis.importExport.parseImport(importFile(ImportFixture.OWN_EXPORT)).orFail()
+        apis.importExport.commitImport(preview, ImportChoices()).orFail()
+        apis.importExport.observeImportBatches().first().size shouldBe 1
+
+        apis.backup.undoLastRestore().orFail()
+        apis.importExport.observeImportBatches().first() shouldBe emptyList()
     }
 
     @Test
@@ -2511,7 +2591,7 @@ class FakeImportExportApiContractTest : ImportExportApiContract() {
 ./gradlew :app:testFakeDebugUnitTest --tests "io.github.codex07.iou.fake.Fake*ContractTest"
 ```
 
-Expected: `BUILD SUCCESSFUL`; all eight fake contract classes pass (1 + 7 + 5 + 9 + 2 + 2 + 3 + 5 tests). A failure here is a real fake/spec mismatch: fix the fake, ops or views, not the suite, unless the suite contradicts the spec.
+Expected: `BUILD SUCCESSFUL`; all eight fake contract classes pass (1 + 7 + 5 + 9 + 2 + 2 + 5 + 6 tests). A failure here is a real fake/spec mismatch: fix the fake, ops or views, not the suite, unless the suite contradicts the spec.
 
 - [ ] **Step 4: Commit**
 

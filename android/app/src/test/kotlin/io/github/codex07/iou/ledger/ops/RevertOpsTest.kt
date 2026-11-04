@@ -116,6 +116,25 @@ class RevertOpsTest {
     }
 
     @Test
+    fun `reverting a deleted handle to a default version leaves the live default alone`() {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val h = OpsHarness(ledger.state)
+        fun add(value: String, label: String) =
+            (h.run { PeopleOps.addHandle(it, x, HandleDraft(HandleType.IBAN, value, label = label, isDefault = true), h.generation) } as LedgerResult.Ok).value
+        val a = add("GB82WEST12345698765432", "A")
+        val b = add("DE89370400440532013000", "B")
+        h.run { PeopleOps.deleteHandle(it, a, h.token(h.state.handles.getValue(a))) } shouldBe LedgerResult.Ok(Unit)
+        val revisionsBefore = h.revisions.size
+
+        h.run { RevertOps.revertTo(it, EntityRef(EntityType.PAYMENT_HANDLE, a.value), 1, h.token(h.state.handles.getValue(a)), h.revisions) } shouldBe
+            LedgerResult.Ok(Unit)
+        h.state.handles.getValue(a).isDeleted shouldBe true
+        h.state.handles.getValue(b).isDefault shouldBe true
+        h.revisions.size shouldBe revisionsBefore + 1
+    }
+
+    @Test
     fun `reverting a person to a version from before a merge keeps the merge`() {
         val ledger = TestLedger().apply { me() }
         val alex = ledger.person("Alex")

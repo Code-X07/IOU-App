@@ -3,8 +3,10 @@ package io.github.codex07.iou.ledger.rules
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.RuleViolation
+import io.github.codex07.iou.ledger.engine.SplitResolver
 import io.github.codex07.iou.ledger.model.ExpenseShare
 import io.github.codex07.iou.ledger.model.HandleType
+import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.money.MAX_MINOR
 import io.github.codex07.iou.testutil.ME
 import io.github.codex07.iou.testutil.TestLedger
@@ -85,6 +87,42 @@ class FieldRulesTest {
 
         FieldRules.check(listOf(expense.copy(shares = listOf(ExpenseShare(ME, Long.MAX_VALUE), ExpenseShare(alex, Long.MAX_VALUE))))) shouldBe
             listOf(RuleViolation(0, LedgerError.CorruptData("shares of ${expense.id} sum to more than $MAX_MINOR")))
+    }
+
+    @Test
+    fun `stored inputs must suit the split type`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val alex = ledger.person("Alex")
+        val e = ledger.expense(ME, eur(1000), mapOf(ME to 500L, alex to 500L))
+        val expense = ledger.state.expenses.getValue(e)
+        fun with(type: SplitType, me: Long?, other: Long?) =
+            FieldRules.check(listOf(expense.copy(splitType = type, shares = listOf(ExpenseShare(ME, 500, me), ExpenseShare(alex, 500, other)))))
+
+        with(SplitType.PERCENT, 5_000, 5_000).shouldBeEmpty()
+        with(SplitType.PERCENT, 10_000, 10_000) shouldBe listOf(RuleViolation(0, LedgerError.PercentNotHundred(20_000)))
+        with(SplitType.SHARES, 1, null) shouldBe listOf(RuleViolation(0, LedgerError.MissingInput(alex)))
+        with(SplitType.SHARES, 1, -1) shouldBe listOf(RuleViolation(0, LedgerError.NegativeInput(alex)))
+        with(SplitType.SHARES, 0, 0) shouldBe listOf(RuleViolation(0, LedgerError.ZeroWeights))
+        with(SplitType.EXACT, 500, 400) shouldBe listOf(RuleViolation(0, LedgerError.ExactRemaining(100)))
+        with(SplitType.EQUAL, null, 1) shouldBe
+            listOf(RuleViolation(0, LedgerError.CorruptData("EQUAL shares of ${expense.id} carry an input")))
+        // Zero weights are accepted per person (Part 2), and the stored allocation is never recomputed.
+        FieldRules.check(listOf(expense.copy(splitType = SplitType.SHARES, shares = listOf(ExpenseShare(ME, 999, 0), ExpenseShare(alex, 1, 3))))).shouldBeEmpty()
+    }
+
+    @Test
+    fun `stored rows of merged people keep their own input limits`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val alex = ledger.person("Alex")
+        val alias = ledger.person("Alex 2", mergedInto = alex)
+        val e = ledger.expense(
+            ME, eur(1000), mapOf(ME to 334L, alex to 333L, alias to 333L), splitType = SplitType.SHARES,
+            inputs = mapOf(ME to SplitResolver.MAX_WEIGHT, alex to SplitResolver.MAX_WEIGHT, alias to SplitResolver.MAX_WEIGHT),
+        )
+
+        FieldRules.check(listOf(ledger.state.expenses.getValue(e))).shouldBeEmpty()
     }
 
     @Test

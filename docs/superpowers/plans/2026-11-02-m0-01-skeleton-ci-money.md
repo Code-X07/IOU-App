@@ -921,10 +921,13 @@ class DomainPurityTest {
             "val e = 1_000.5",
             "val g = 1e3",
             "val h = 1E-3",
+            "val i = \"\${amount.toDouble()}\"",
+            "val j = \"total: \${total * 1.5} EUR\"",
         ).forEach { SourceScan.usesFloatingPoint(it) shouldBe true }
 
         listOf(
             "val s = \"12.34 Double\"",
+            "val t = \"\${amount} is 1.5 Double\"",
             "// 1.5 Double",
             " * Float in KDoc",
             "/* 2f */",
@@ -961,6 +964,7 @@ internal object SourceScan {
 
     private val androidImport = Regex("""^\s*import\s+(android|androidx)\.""")
     private val stringLiteral = Regex("\"(?:\\\\.|[^\"\\\\])*\"")
+    private val interpolation = Regex("""\$\{([^{}]*)\}""")
     private val floatingPoint = Regex(
         """\b(Double|Float)(Array)?\b""" +
             """|\bto(Double|Float)(OrNull)?\b""" +
@@ -974,7 +978,10 @@ internal object SourceScan {
     fun usesFloatingPoint(line: String): Boolean {
         val trimmed = line.trimStart()
         if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) return false
-        val code = line.replace(stringLiteral, "\"\"").substringBefore("//")
+        // A string's text is ignored, but the expressions interpolated into it run, so they stay in the scan.
+        val code = line.replace(stringLiteral) { literal ->
+            "\"\"" + interpolation.findAll(literal.value).joinToString("") { " " + it.groupValues[1] }
+        }.substringBefore("//")
         return floatingPoint.containsMatchIn(code)
     }
 }

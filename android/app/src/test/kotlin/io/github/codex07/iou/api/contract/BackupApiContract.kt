@@ -1,5 +1,6 @@
 package io.github.codex07.iou.api.contract
 
+import app.cash.turbine.test
 import io.github.codex07.iou.api.DocumentRef
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
@@ -44,6 +45,42 @@ abstract class BackupApiContract : ApiContract() {
         basis() shouldNotBe afterRestore
         basis() shouldNotBe before
         apis.ledger.deleteEntry(id, token) shouldBe LedgerResult.Err(LedgerError.LedgerReplaced)
+    }
+
+    @Test
+    fun `reads re-emit after a restore even when the restored data looks the same`() = runTest {
+        setUpMe()
+        val target = backupTarget("d.iou")
+        apis.backup.createBackup(target, null).orFail()
+        apis.people.observePeople().test {
+            val before = awaitItem()
+            apis.backup.restoreBackup(target, null).orFail()
+            awaitItem() shouldBe before
+            cancelAndIgnoreRemainingEvents()
+        }
+        apis.people.observePeople().test {
+            val before = awaitItem()
+            apis.backup.undoLastRestore().orFail()
+            awaitItem() shouldBe before
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `undoing a restore brings back the ledger settings and keeps the device settings`() = runTest {
+        setUpMe()
+        val target = backupTarget("e.iou")
+        apis.backup.createBackup(target, null).orFail()
+        apis.backup.restoreBackup(target, null).orFail()
+        apis.settings.setHomeCurrency(SEK).orFail()
+        apis.settings.setBackupEncryptionDefault(false).orFail()
+        apis.settings.setScreenProtection(true).orFail()
+
+        apis.backup.undoLastRestore().orFail()
+        val settings = apis.settings.observeSettings().first()
+        settings.homeCurrency shouldBe EUR
+        settings.backupEncryptionDefault shouldBe true
+        settings.screenProtection shouldBe true
     }
 
     @Test

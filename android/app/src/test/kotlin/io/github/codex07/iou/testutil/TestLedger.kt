@@ -158,7 +158,10 @@ class TestLedger {
         return entryId
     }
 
-    /** [shares] are final share amounts in the effect currency; inputs are stored as given. */
+    /**
+     * [shares] are final share amounts in the effect currency; inputs are stored as given. An EXACT expense
+     * without inputs and without conversion stores its shares as inputs, as a saved one would.
+     */
     fun expense(
         payer: PersonId,
         total: Money,
@@ -172,11 +175,12 @@ class TestLedger {
         id: String = nextId("expense"),
     ): EntryId {
         val entryId = EntryId(id)
+        val exactAsShares = splitType == SplitType.EXACT && inputs.isEmpty() && total == effectTotal
         state = state.with(
             Expense(
                 id = entryId, groupId = group, payerPersonId = payer, description = "Expense $id",
                 total = total, effectTotal = effectTotal, fxSnapshotId = fx, splitType = splitType,
-                shares = shares.map { (person, share) -> ExpenseShare(person, share, inputs[person]) },
+                shares = shares.map { (person, share) -> ExpenseShare(person, share, if (exactAsShares) share else inputs[person]) },
                 occurredOn = D0, meta = testMeta(deleted),
             ),
         )

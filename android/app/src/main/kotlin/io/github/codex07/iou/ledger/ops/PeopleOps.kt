@@ -153,9 +153,12 @@ object PeopleOps {
         Planned(Unit, validated(ctx, listOf(Change(split, RevisionAction.UPDATED, "Unmerged from $targetName"))))
     }
 
-    /** Spec §3.2: a new default clears the flag on other handles of the type for the same canonical person. */
+    /**
+     * Spec §3.2: a new default clears the flag on other handles of the type for the same canonical person.
+     * A deleted handle is never the effective default, so its flag displaces nothing.
+     */
     internal fun clearedDefaults(ctx: WriteContext, handle: PaymentHandle): List<Change> {
-        if (!handle.isDefault) return emptyList()
+        if (!handle.isDefault || handle.isDeleted) return emptyList()
         val resolver = IdentityResolver(ctx.state)
         return resolver.handlesOf(resolver.canonical(handle.personId))
             .filter { it.id != handle.id && it.type == handle.type && it.isDefault }

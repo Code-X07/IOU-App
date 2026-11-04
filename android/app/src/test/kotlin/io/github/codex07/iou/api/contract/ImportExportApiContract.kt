@@ -80,6 +80,20 @@ abstract class ImportExportApiContract : ApiContract() {
     }
 
     @Test
+    fun `undoing a restore brings back the import history from before it`() = runTest {
+        setUpMe()
+        val target = backupTarget("before-import.iou")
+        apis.backup.createBackup(target, null).orFail()
+        apis.backup.restoreBackup(target, null).orFail()
+        val preview = apis.importExport.parseImport(importFile(ImportFixture.OWN_EXPORT)).orFail()
+        apis.importExport.commitImport(preview, ImportChoices()).orFail()
+        apis.importExport.observeImportBatches().first().size shouldBe 1
+
+        apis.backup.undoLastRestore().orFail()
+        apis.importExport.observeImportBatches().first() shouldBe emptyList()
+    }
+
+    @Test
     fun `any write after parsing makes the preview stale until refreshed`() = runTest {
         setUpMe()
         val preview = apis.importExport.parseImport(importFile(ImportFixture.OWN_EXPORT)).orFail()

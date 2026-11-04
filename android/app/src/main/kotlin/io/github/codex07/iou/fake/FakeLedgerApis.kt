@@ -62,9 +62,9 @@ class FakeSetupApi(private val ledger: InMemoryLedger) : SetupApi {
 
 class FakePeopleApi(private val ledger: InMemoryLedger) : PeopleApi {
     override fun observePeople(includeArchived: Boolean, includeDeleted: Boolean): Flow<List<PersonSummary>> =
-        ledger.ready.map { it.people(includeArchived, includeDeleted) }.distinctUntilChanged()
+        ledger.read { it.people(includeArchived, includeDeleted) }
 
-    override fun observePerson(id: PersonId): Flow<PersonDetail?> = ledger.ready.map { it.person(id) }.distinctUntilChanged()
+    override fun observePerson(id: PersonId): Flow<PersonDetail?> = ledger.read { it.person(id) }
 
     override suspend fun createPerson(draft: PersonDraft, basis: LedgerGeneration) =
         ledger.write { PeopleOps.createPerson(it, draft, basis) }
@@ -100,9 +100,9 @@ class FakePeopleApi(private val ledger: InMemoryLedger) : PeopleApi {
 
 class FakeGroupsApi(private val ledger: InMemoryLedger) : GroupsApi {
     override fun observeGroups(includeArchived: Boolean, includeDeleted: Boolean): Flow<List<GroupSummary>> =
-        ledger.ready.map { it.groups(includeArchived, includeDeleted) }.distinctUntilChanged()
+        ledger.read { it.groups(includeArchived, includeDeleted) }
 
-    override fun observeGroup(id: GroupId): Flow<GroupDetail?> = ledger.ready.map { it.group(id) }.distinctUntilChanged()
+    override fun observeGroup(id: GroupId): Flow<GroupDetail?> = ledger.read { it.group(id) }
 
     override suspend fun createGroup(draft: GroupDraft, members: List<PersonId>, basis: LedgerGeneration): LedgerResult<GroupId> =
         ledger.write { GroupOps.createGroup(it, draft, members, basis) }
@@ -125,12 +125,12 @@ class FakeGroupsApi(private val ledger: InMemoryLedger) : GroupsApi {
 }
 
 class FakeLedgerApi(private val ledger: InMemoryLedger) : LedgerApi {
-    override fun observeOverview(): Flow<Overview> = ledger.ready.map { it.overview() }.distinctUntilChanged()
+    override fun observeOverview(): Flow<Overview> = ledger.read { it.overview() }
 
     override fun observeActivity(filter: ActivityFilter): Flow<List<ActivityItem>> =
-        ledger.ready.map { it.activity(filter) }.distinctUntilChanged()
+        ledger.read { it.activity(filter) }
 
-    override fun observeEntry(id: EntryId): Flow<EntryDetail?> = ledger.ready.map { it.entry(id) }.distinctUntilChanged()
+    override fun observeEntry(id: EntryId): Flow<EntryDetail?> = ledger.read { it.entry(id) }
 
     override suspend fun saveTransfer(draft: TransferDraft, mode: SaveMode): LedgerResult<EntryId> =
         ledger.write { EntryOps.saveTransfer(it, draft, mode) }

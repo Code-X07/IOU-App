@@ -84,7 +84,7 @@ class FakeBackupApi(private val ledger: InMemoryLedger) : BackupApi {
         val stored = passphrases[source.uri] ?: return LedgerResult.Err(LedgerError.CorruptFile("No IOU backup at ${source.uri}"))
         if (stored != passphrase?.concatToString().orEmpty()) return LedgerResult.Err(LedgerError.WrongPassphraseOrDamagedFile)
         ledger.update {
-            it.copy(generation = ledger.newGeneration(), ledgerSeq = it.ledgerSeq + 1, preRestore = it.state to it.revisions)
+            it.copy(generation = ledger.newGeneration(), ledgerSeq = it.ledgerSeq + 1, preRestore = it.restorePoint())
         }
         return LedgerResult.Ok(Unit)
     }
@@ -96,9 +96,8 @@ class FakeBackupApi(private val ledger: InMemoryLedger) : BackupApi {
         ledger.update { snapshot ->
             val previous = snapshot.preRestore ?: return@update snapshot
             undone = true
-            snapshot.copy(
-                state = previous.first, revisions = previous.second, preRestore = snapshot.state to snapshot.revisions,
-                generation = ledger.newGeneration(), ledgerSeq = snapshot.ledgerSeq + 1,
+            snapshot.replacedBy(previous).copy(
+                preRestore = snapshot.restorePoint(), generation = ledger.newGeneration(), ledgerSeq = snapshot.ledgerSeq + 1,
             )
         }
         return if (undone) LedgerResult.Ok(Unit) else LedgerResult.Err(LedgerError.NotFound("restore"))
@@ -162,10 +161,10 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
         return result
     }
 
-    override fun observeImportBatches(): Flow<List<ImportBatchView>> = ledger.snapshot.map { snapshot ->
+    override fun observeImportBatches(): Flow<List<ImportBatchView>> = ledger.readSnapshot { snapshot ->
         snapshot.importBatches.sortedByDescending { it.importedAt }
             .map { ImportBatchView(it.id, it.fileName, it.importedAt, it.rowCount, it.undoneAt) }
-    }.distinctUntilChanged()
+    }
 
     override suspend fun undoImport(id: ImportBatchId): LedgerResult<UndoImportResult> {
         var found = false
@@ -212,7 +211,7 @@ class FakeImportExportApi(private val ledger: InMemoryLedger) : ImportExportApi 
 class FakeSettingsApi(private val ledger: InMemoryLedger) : SettingsApi {
     private val lockRequired = MutableStateFlow(ledger.snapshot.value.settings.appLockEnabled)
 
-    override fun observeSettings(): Flow<Settings> = ledger.snapshot.map { it.settings }.distinctUntilChanged()
+    override fun observeSettings(): Flow<Settings> = ledger.readSnapshot { it.settings }
 
     override suspend fun setHomeCurrency(currency: CurrencyCode) = change { it.copy(homeCurrency = currency) }
 

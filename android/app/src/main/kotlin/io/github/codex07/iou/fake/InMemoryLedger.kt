@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 
@@ -36,7 +37,27 @@ data class FakeSnapshot(
     val settings: Settings,
     val importBatches: List<ImportBatch> = emptyList(),
     val lastBackupAt: Instant? = null,
-    val preRestore: Pair<LedgerState, List<EntryRevision>>? = null,
+    val preRestore: RestorePoint? = null,
+) {
+    /** The ledger-scoped part a restore replaces. */
+    fun restorePoint() = RestorePoint(state, revisions, importBatches, settings.homeCurrency, settings.backupEncryptionDefault)
+
+    /** This snapshot with [point]'s ledger in place; device-local settings and the last backup time stay. */
+    fun replacedBy(point: RestorePoint) = copy(
+        state = point.state,
+        revisions = point.revisions,
+        importBatches = point.importBatches,
+        settings = settings.copy(homeCurrency = point.homeCurrency, backupEncryptionDefault = point.backupEncryptionDefault),
+    )
+}
+
+/** What a restore swaps (spec §3.3, §7.1): the ledger with its import history and ledger settings. */
+data class RestorePoint(
+    val state: LedgerState,
+    val revisions: List<EntryRevision>,
+    val importBatches: List<ImportBatch>,
+    val homeCurrency: CurrencyCode,
+    val backupEncryptionDefault: Boolean,
 )
 
 /** The fake's store: applies validated plans from `ledger.ops` and publishes snapshots. */
@@ -57,6 +78,12 @@ class InMemoryLedger(
 
     /** Views once setup has run; ledger-data reads observe this. */
     val ready: Flow<LedgerViews> = views.filter { it.state.meOrNull != null }
+
+    /** A read of the set-up ledger. It re-emits after every replacement, even when its value compares equal (spec §6.2). */
+    fun <T> read(project: (LedgerViews) -> T): Flow<T> = ready.perGeneration({ it.generation }, project)
+
+    /** A read of other replaced state (import history, ledger settings); it re-emits the same way. */
+    fun <T> readSnapshot(project: (FakeSnapshot) -> T): Flow<T> = snapshot.perGeneration({ it.generation }, project)
 
     fun currentViews(): LedgerViews = viewsOf(current.value)
 
@@ -104,6 +131,9 @@ class InMemoryLedger(
         val home = snapshot.settings.homeCurrency
         return LedgerViews(snapshot.state, snapshot.revisions, snapshot.generation, home) { FakeRates.rate(it, home) }
     }
+
+    private fun <S, T> Flow<S>.perGeneration(generation: (S) -> LedgerGeneration, project: (S) -> T): Flow<T> =
+        map { generation(it) to project(it) }.distinctUntilChanged().map { it.second }
 
     companion object {
         val DefaultSettings = Settings(
