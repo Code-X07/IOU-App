@@ -24,3 +24,12 @@ val LightNegative = Color(0xFFBC5948)
 val LightOnBackground = Color(0xFF172024)
 val LightOnSurfaceVariant = Color(0xFF687572)
 val LightOutline = Color(0xFFD8E0DA)
+
+// Additional Prototype 2 tokens. Keep these explicit rather than using wallpaper colours.
+val DarkSurface2 = Color(0xFF243135)
+val DarkSurface3 = Color(0xFF2C3B40)
+val DarkOnPrimary = Color(0xFF05271C)
+val DarkWarning = Color(0xFFF2C76B)
+val LightSurface2 = Color(0xFFEEF1EC)
+val LightSurface3 = Color(0xFFE4E9E3)
+val LightWarning = Color(0xFF8A6418)
