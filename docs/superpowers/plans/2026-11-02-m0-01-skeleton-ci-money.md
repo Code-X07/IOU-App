@@ -923,11 +923,16 @@ class DomainPurityTest {
             "val h = 1E-3",
             "val i = \"\${amount.toDouble()}\"",
             "val j = \"total: \${total * 1.5} EUR\"",
+            "val k = \"\${amounts.sumOf { it.toDouble() }}\"",
+            "val l = \"\${xs.map { \"\${it.toFloat()}\" }}\"",
+            "val m = \"\${f(\"}\")} \${2.5}\"",
         ).forEach { SourceScan.usesFloatingPoint(it) shouldBe true }
 
         listOf(
             "val s = \"12.34 Double\"",
             "val t = \"\${amount} is 1.5 Double\"",
+            "val u = \"\${xs.joinToString { \"1.5 Double\" }}\"",
+            "val v = \"a \\\" 1.5 Double\" // 2.5",
             "// 1.5 Double",
             " * Float in KDoc",
             "/* 2f */",
@@ -963,8 +968,6 @@ class DomainPurityTest {
 internal object SourceScan {
 
     private val androidImport = Regex("""^\s*import\s+(android|androidx)\.""")
-    private val stringLiteral = Regex("\"(?:\\\\.|[^\"\\\\])*\"")
-    private val interpolation = Regex("""\$\{([^{}]*)\}""")
     private val floatingPoint = Regex(
         """\b(Double|Float)(Array)?\b""" +
             """|\bto(Double|Float)(OrNull)?\b""" +
@@ -978,11 +981,54 @@ internal object SourceScan {
     fun usesFloatingPoint(line: String): Boolean {
         val trimmed = line.trimStart()
         if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) return false
-        // A string's text is ignored, but the expressions interpolated into it run, so they stay in the scan.
-        val code = line.replace(stringLiteral) { literal ->
-            "\"\"" + interpolation.findAll(literal.value).joinToString("") { " " + it.groupValues[1] }
-        }.substringBefore("//")
-        return floatingPoint.containsMatchIn(code)
+        return floatingPoint.containsMatchIn(code(line))
+    }
+
+    /**
+     * The line without string text and trailing comments. Expressions interpolated into strings run, so they
+     * stay, braces and nested strings included (a regex cannot balance those).
+     */
+    private fun code(line: String): String {
+        val out = StringBuilder()
+        var i = 0
+        while (i < line.length && !line.startsWith("//", i)) {
+            if (line[i] == '"') {
+                i = afterString(line, i + 1, out)
+            } else {
+                out.append(line[i++])
+            }
+        }
+        return out.toString()
+    }
+
+    /** Skips the string whose text starts at [start], appending its interpolated code; returns the index after it. */
+    private fun afterString(line: String, start: Int, out: StringBuilder): Int {
+        var i = start
+        while (i < line.length) {
+            when {
+                line[i] == '\\' -> i += 2
+                line[i] == '"' -> return i + 1
+                line.startsWith("\${", i) -> i = afterInterpolation(line, i + 2, out)
+                else -> i++
+            }
+        }
+        return i
+    }
+
+    /** Appends the expression starting at [start] up to its closing brace; returns the index after that brace. */
+    private fun afterInterpolation(line: String, start: Int, out: StringBuilder): Int {
+        out.append(' ')
+        var depth = 1
+        var i = start
+        while (i < line.length) {
+            when (line[i]) {
+                '"' -> i = afterString(line, i + 1, out)
+                '{' -> { depth++; out.append(line[i++]) }
+                '}' -> if (--depth == 0) return i + 1 else out.append(line[i++])
+                else -> out.append(line[i++])
+            }
+        }
+        return i
     }
 }
 ```
