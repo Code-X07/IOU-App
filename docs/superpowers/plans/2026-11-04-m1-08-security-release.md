@@ -977,7 +977,7 @@ with:
 - [ ] **Step 8: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 364 tests per flavor.
+Expected: PASS, 366 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 33 warnings per flavor; the new one is the "newer version available" notice for `lifecycle-process`.
@@ -1187,7 +1187,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 367 tests per flavor.
+Expected: PASS, 369 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The `DataExtractionRules` warning (a Part 1 carryover) is gone.
@@ -1331,7 +1331,7 @@ class KdfTimingReceiver : BroadcastReceiver() {
 - [ ] **Step 2: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 367 tests per flavor (no new tests).
+Expected: PASS, 369 tests per flavor (no new tests).
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The release merged manifest has no `KdfTimingReceiver`.
@@ -1702,7 +1702,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 368 tests per flavor, 0 failures and 0 skipped.
+Expected: PASS, 370 tests per flavor, 0 failures and 0 skipped.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor; describe it that way, not as warning-free.
@@ -1720,15 +1720,15 @@ Every M1 criterion (index, ACs 1–21) has tests that prove it. Each criterion's
 | 5 | `LedgerApiContract` "delete removes the effect at once and restore brings it back" |
 | 6 | `PeopleApiContract` "merge combines balances and unmerge splits them again"; `MergeOpsTest` "unmerging a middle record takes its own aliases along" |
 | 7 | `RealBackupTest` "backup, wipe and restore give back the same ledger, and the device ID stays the installation's own"; `BackupFormatTest` |
-| 8 | `RealBackupTest` "a wrong passphrase or an invalid ledger writes nothing", "a failure before the new ledger is published keeps the database and the ledger settings", "a pointer that can't be written abandons the restore", "undo brings back the state before the restore …", "an undo that fails before the earlier ledger is published changes nothing"; `BackupFormatTest` "cached rates that don't map or aren't valid are rejected"; `BackupApiContract` "a wrong passphrase changes nothing" |
+| 8 | `RealBackupTest` "a wrong passphrase or an invalid ledger writes nothing", "a failure before the commit point keeps the database and the ledger settings", "a pointer that can't be written abandons the restore", "undo brings back the state before the restore …", "an undo that fails before the commit point changes nothing"; `BackupFormatTest` "cached rates that don't map or aren't valid are rejected"; `BackupApiContract` "a wrong passphrase changes nothing" |
 | 9 | `ImportReaderTest` "text a spreadsheet would run comes back exactly"; `TextEscapingTest` |
 | 10 | `RealImportTest` "a conflict shows its diff …" and "a transfer deleted in the export shows active to deleted …" |
 | 11 | `RealImportTest` "an export from another install is mapped to the local me after confirmation"; `ImportExportApiContract` "a foreign export needs confirmation and declining rejects it" |
-| 12 | `RestoreCrashTest` (both tests); `RealBackendTest` "a restore cut off before its commit point is reported once …"; `RestoreRecoveryTest` |
+| 12 | `RestoreCrashTest` (both tests); `RealBackupTest` "a restore that fails after the commit point is complete and is not rolled back" and "an undo that fails after the commit point is complete and is not rolled back"; `RealBackendTest` "a restore cut off before its commit point is reported once …"; `RestoreRecoveryTest` |
 | 13 | `RealBackupTest` "the reminder is due after 30 days without a manual backup"; `BackupApiContract` "the reminder is due until a backup is made" |
 | 14 | `RealContractTests.kt`: all eight suites against the real backend, `groups` tests included (index, locked decision 6) |
 | 15 | `BackupApiContract` "a restore and its undo each change the generation, and older tokens and bases stay invalid"; `ImportExportApiContract` "confirming a foreign preview parsed before a restore is refused" |
-| 16 | `RealImportTest` "deleted people merged into each other are invalid rows" and "a person deleted together with the transfers involving them is one valid change" |
+| 16 | `RealImportTest` "deleted people merged into each other are invalid rows", "a person deleted together with the transfers involving them is one valid change", "a new person is not blamed for an invalid deletion that leaving them out would hide" and "a deleted transfer naming an unknown person does not hide an invalid deletion" |
 | 17 | `EntryOpsTest` "changing the paid currency while keeping the old snapshot is refused" |
 | 18 | `EntryOpsTest` "a cross-currency repayment settles SEK with EUR and keeps or drops its snapshot on edit"; `LedgerApiContract` "a cross-currency settlement asks for a rate, then settles the other currency" |
 | 19 | `EntryOpsTest` "a bank-actual charge is kept on note and date edits and refused when the paid amount changes" |
