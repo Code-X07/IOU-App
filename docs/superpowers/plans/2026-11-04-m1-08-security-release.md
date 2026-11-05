@@ -983,7 +983,7 @@ with:
 - [ ] **Step 8: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 370 tests per flavor.
+Expected: PASS, 372 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 33 warnings per flavor; the new one is the "newer version available" notice for `lifecycle-process`.
@@ -1193,7 +1193,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 373 tests per flavor.
+Expected: PASS, 375 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The `DataExtractionRules` warning (a Part 1 carryover) is gone.
@@ -1337,7 +1337,7 @@ class KdfTimingReceiver : BroadcastReceiver() {
 - [ ] **Step 2: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 373 tests per flavor (no new tests).
+Expected: PASS, 375 tests per flavor (no new tests).
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The release merged manifest has no `KdfTimingReceiver`.
@@ -1708,7 +1708,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 374 tests per flavor, 0 failures and 0 skipped.
+Expected: PASS, 376 tests per flavor, 0 failures and 0 skipped.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor; describe it that way, not as warning-free.

@@ -10,17 +10,30 @@ import io.github.codex07.iou.testutil.FakeFrankfurter
 import io.github.codex07.iou.testutil.SEK
 import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.USD
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.headersOf
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
+import java.io.IOException
 import java.time.Clock
 import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class FxServiceTest {
 
     private class InMemoryRateCache(initial: List<CachedRate> = emptyList()) : RateCache {
@@ -43,6 +56,55 @@ class FxServiceTest {
     private fun ecb(from: CurrencyCode, to: CurrencyCode, rate: String, date: LocalDate, stale: Boolean = false) =
         LedgerResult.Ok(FxQuote(from, to, rate, date, FxSource.ECB_FRANKFURTER, isStale = stale))
 
+    @Test
+    fun `a fetched quote survives cache failure while cancellation and refresh errors propagate`() = runTest {
+        frankfurter.publish(friday, "SEK" to "10")
+        var failure: Exception = IOException("disk full")
+        val cache = object : RateCache {
+            override suspend fun load() = emptyList<CachedRate>()
+            override suspend fun save(rates: List<CachedRate>) { throw failure }
+        }
+        val fx = service(cache).apply { load() }
+        fx.quote(friday, EUR, SEK) shouldBe ecb(EUR, SEK, "10", friday)
+        fx.lookup.value.rate(EUR, SEK) shouldBe null
+        assertThrows<IOException> { fx.refresh(setOf(EUR, SEK)) }
+        failure = CancellationException("cancelled")
+        assertThrows<CancellationException> { fx.quote(friday, EUR, SEK) }
+    }
+
+    @Test
+    fun `a load overlapping a refresh cannot publish an older cache snapshot`() = runTest {
+        frankfurter.publish(friday, "SEK" to "10")
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val cache = object : RateCache {
+            var rows = emptyList<CachedRate>()
+            var pause = false
+            override suspend fun load(): List<CachedRate> {
+                val snapshot = rows
+                if (pause) { entered.complete(Unit); release.await() }
+                return snapshot
+            }
+            override suspend fun save(rates: List<CachedRate>) { rows = rows + rates }
+        }
+        val client = FrankfurterClient(HttpClient(MockEngine) {
+            engine {
+                dispatcher = Dispatchers.Unconfined
+                addHandler { respond("""{"amount":1,"base":"EUR","date":"2026-10-30","rates":{"SEK":10}}""", headers = headersOf(HttpHeaders.ContentType, "application/json")) }
+            }
+        })
+        val fx = FxService(cache, client, Clock.fixed(T0, ZoneOffset.UTC)).apply { load() }
+        cache.pause = true
+        val loading = async(UnconfinedTestDispatcher(testScheduler)) { fx.load() }
+        entered.await()
+        val refreshing = async(UnconfinedTestDispatcher(testScheduler)) { fx.refresh(setOf(EUR, SEK)) }
+        runCurrent()
+        release.complete(Unit)
+        loading.await()
+        refreshing.await() shouldBe true
+        fx.lookup.value.rate(EUR, SEK) shouldBe "10"
+        fx.quote(friday, EUR, SEK) shouldBe ecb(EUR, SEK, "10", friday)
+    }
     @Test
     fun `a rate cached for the date needs no network`() = runTest {
         val fx = service(InMemoryRateCache(eurRates(friday, SEK to "10", USD to "1.25")))
