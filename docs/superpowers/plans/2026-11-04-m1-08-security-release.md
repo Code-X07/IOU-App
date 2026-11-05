@@ -261,6 +261,10 @@ with:
             file.writeText(text)
             FileDeviceSettings(file).settings.first() shouldBe DeviceSettings()
         }
+
+        val directory = File(requireNotNull(file.parentFile), "device-settings-directory")
+        directory.mkdir()
+        FileDeviceSettings(directory).settings.first() shouldBe DeviceSettings()
     }
 
     @Test
@@ -419,6 +423,7 @@ with:
 ```kotlin
 import io.github.codex07.iou.store.DeviceSettingsStore
 import java.io.File
+import java.io.IOException
 import java.time.DateTimeException
 import java.time.Instant
 import kotlinx.coroutines.CoroutineDispatcher
@@ -493,6 +498,8 @@ with:
     } catch (_: IllegalArgumentException) { // includes SerializationException
         DeviceSettings()
     } catch (_: DateTimeException) {
+        DeviceSettings()
+    } catch (_: IOException) {
         DeviceSettings()
     }
 
@@ -983,7 +990,7 @@ with:
 - [ ] **Step 8: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 375 tests per flavor.
+Expected: PASS, 376 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 33 warnings per flavor; the new one is the "newer version available" notice for `lifecycle-process`.
@@ -1193,7 +1200,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 378 tests per flavor.
+Expected: PASS, 379 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The `DataExtractionRules` warning (a Part 1 carryover) is gone.
@@ -1337,7 +1344,7 @@ class KdfTimingReceiver : BroadcastReceiver() {
 - [ ] **Step 2: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 378 tests per flavor (no new tests).
+Expected: PASS, 379 tests per flavor (no new tests).
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The release merged manifest has no `KdfTimingReceiver`.
@@ -1620,8 +1627,9 @@ there. That refusal is the check that unencrypted backups are off:
 - [ ] Run `./gradlew testFakeDebugUnitTest --tests "*ExportSamplesTest"`. It writes `normalized.zip`,
   `normalized-excel.zip`, `report.csv` and `report-excel.csv` to `app/build/export-samples/`.
 - [ ] Open each CSV, and `people.csv` from each zip, in Excel and in LibreOffice Calc:
-  - the plain files are comma-separated UTF-8, and the Excel-friendly ones (BOM, `;`) open in Excel with
-    their columns split;
+  - import plain files as comma-separated UTF-8 and Excel-friendly files as UTF-8 with BOM and `;` delimiters;
+    if Excel opens semicolon files with incorrect columns on your locale, use Data > From Text/CSV and select
+    semicolon. Confirm the columns split correctly in both apps;
   - the person `=HYPERLINK("http://evil","x")` shows as text, not as a link or a formula. The leading `'` is
     the reversible escape; Excel may hide it;
   - amounts read as plain decimals.

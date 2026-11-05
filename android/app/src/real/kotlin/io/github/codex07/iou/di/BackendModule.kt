@@ -9,6 +9,8 @@ import dagger.hilt.components.SingletonComponent
 import io.github.codex07.iou.api.Apis
 import io.github.codex07.iou.data.RateRefreshWorker
 import io.github.codex07.iou.data.RealBackend
+import io.github.codex07.iou.store.DeviceSettingsStore
+import io.github.codex07.iou.store.TimedLockGate
 import javax.inject.Singleton
 
 /** real flavor: the shared store persisted in Room (ADR-0010), with the daily rate refresh scheduled. */
@@ -23,4 +25,10 @@ object BackendModule {
     @Provides
     @Singleton
     fun apis(backend: RealBackend): Apis = backend.apis
+
+    @Provides
+    fun device(backend: RealBackend): DeviceSettingsStore = backend.device
+
+    @Provides
+    fun lock(backend: RealBackend): TimedLockGate = backend.lock
 }

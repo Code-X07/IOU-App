@@ -4,12 +4,14 @@ import io.github.codex07.iou.api.LockTimeout
 import io.github.codex07.iou.store.DeviceSettings
 import io.github.codex07.iou.store.DeviceSettingsStore
 import java.io.File
+import java.io.IOException
+import java.time.DateTimeException
 import java.time.Instant
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -19,7 +21,9 @@ import kotlinx.serialization.json.Json
 
 /**
  * Device-local settings (spec §3.3) as a small JSON file. The app keeps it in `noBackupFilesDir`, so it never
- * leaves the device (spec §9). Read once at construction; every update replaces the file atomically.
+ * leaves the device (spec §9). Read once at construction; every update replaces the file atomically. An
+ * unreadable file counts as the defaults: it is read as the app starts (`AppSecurity`), and a device setting
+ * must not crash-loop the app.
  */
 class FileDeviceSettings(
     private val file: File,
@@ -28,7 +32,7 @@ class FileDeviceSettings(
     private val lock = Mutex()
     private val state = MutableStateFlow(read())
 
-    override val settings: Flow<DeviceSettings> = state.asStateFlow()
+    override val settings: StateFlow<DeviceSettings> = state.asStateFlow()
 
     override suspend fun update(transform: (DeviceSettings) -> DeviceSettings) = lock.withLock {
         val next = transform(state.value)
@@ -41,8 +45,15 @@ class FileDeviceSettings(
         }
     }
 
-    private fun read(): DeviceSettings =
-        if (file.exists()) json.decodeFromString(Stored.serializer(), file.readText()).toSettings() else DeviceSettings()
+    private fun read(): DeviceSettings = if (!file.exists()) DeviceSettings() else try {
+        json.decodeFromString(Stored.serializer(), file.readText()).toSettings()
+    } catch (_: IllegalArgumentException) { // includes SerializationException
+        DeviceSettings()
+    } catch (_: DateTimeException) {
+        DeviceSettings()
+    } catch (_: IOException) {
+        DeviceSettings()
+    }
 
     @Serializable
     private data class Stored(

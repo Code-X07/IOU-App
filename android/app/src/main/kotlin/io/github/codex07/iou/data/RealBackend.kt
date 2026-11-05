@@ -1,6 +1,7 @@
 package io.github.codex07.iou.data
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import io.github.codex07.iou.BuildConfig
 import io.github.codex07.iou.api.Apis
@@ -12,15 +13,18 @@ import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.money.CurrencyCode
 import io.github.codex07.iou.store.DocumentStore
 import io.github.codex07.iou.store.LedgerStore
-import io.github.codex07.iou.store.SimpleLockGate
 import io.github.codex07.iou.store.StoreFxApi
 import io.github.codex07.iou.store.StoreGroupsApi
 import io.github.codex07.iou.store.StoreLedgerApi
 import io.github.codex07.iou.store.StorePeopleApi
 import io.github.codex07.iou.store.StoreSettingsApi
 import io.github.codex07.iou.store.StoreSetupApi
+import io.github.codex07.iou.store.TimedLockGate
 import java.io.File
 import java.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,6 +55,7 @@ class RealBackend(
     backupFormat: BackupFormat = BackupFormat(),
     appVersion: String = "",
     restoreHook: RestoreHook = RestoreHook.None,
+    elapsed: () -> Duration = { System.nanoTime().nanoseconds },
 ) {
     val files = DbFiles(databaseDir)
     val databases = LedgerDatabases(files, openDatabase, ids)
@@ -58,6 +63,9 @@ class RealBackend(
     val fx = FxService(RoomRateCache(databases), frankfurter, clock)
     val store = LedgerStore(clock, ids, DeviceIdFile.read(deviceIdFile, ids), RoomJournal(databases), fx.lookup)
     val restores = RestoreProcedure(store, files, databases, fx, ids, restoreHook)
+
+    /** The app-lock policy; `security.AppSecurity` feeds it the process lifecycle. */
+    val lock = TimedLockGate(device, elapsed)
 
     /** Set once [start] has run recovery. */
     @Volatile var recovery: RestoreRecovery.Result? = null
@@ -73,7 +81,7 @@ class RealBackend(
         fx = StoreFxApi(fx),
         backup = RealBackupApi(store, device, documents, backupFormat, fx, restores, interrupted, appVersion),
         importExport = RealImportExportApi(store, documents, LedgerExport(appVersion)),
-        settings = StoreSettingsApi(store, device, SimpleLockGate()),
+        settings = StoreSettingsApi(store, device, lock),
     )
 
     private val started: Job = scope.launch { start() }
@@ -126,6 +134,7 @@ class RealBackend(
                 ids = IdGenerator.Random,
                 scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
                 appVersion = BuildConfig.VERSION_NAME,
+                elapsed = { SystemClock.elapsedRealtime().milliseconds },
             )
         }
     }

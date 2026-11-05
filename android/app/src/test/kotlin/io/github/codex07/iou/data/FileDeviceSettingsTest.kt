@@ -37,6 +37,18 @@ class FileDeviceSettingsTest {
     }
 
     @Test
+    fun `an unreadable file counts as the defaults`() = runTest {
+        for (text in listOf("{appLockEnabled:true}", """{"lastManualBackupAt":"yesterday"}""")) {
+            file.writeText(text)
+            FileDeviceSettings(file).settings.first() shouldBe DeviceSettings()
+        }
+
+        val directory = File(requireNotNull(file.parentFile), "device-settings-directory")
+        directory.mkdir()
+        FileDeviceSettings(directory).settings.first() shouldBe DeviceSettings()
+    }
+
+    @Test
     fun `an update whose caller is cancelled once the file is written still updates memory`() = runTest {
         val caller = Job()
         val writes = mutableListOf<Runnable>()

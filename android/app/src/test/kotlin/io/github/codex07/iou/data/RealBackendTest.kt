@@ -71,6 +71,19 @@ class RealBackendTest {
     }
 
     @Test
+    fun `with app lock on, the next start is locked until unlocked`() = runTest {
+        val first = harness.start()
+        first.apis.settings.setAppLockEnabled(true).orFail()
+        first.apis.settings.observeLockRequired().first() shouldBe false
+        harness.stop()
+
+        val second = harness.start()
+        second.apis.settings.observeLockRequired().first() shouldBe true
+        second.apis.settings.markUnlocked()
+        second.apis.settings.observeLockRequired().first() shouldBe false
+    }
+
+    @Test
     fun `a restore cut off before its commit point is reported once and its file is gone`() = runTest {
         harness.start().apis.setup.completeSetup("Me", SEK).orFail()
         harness.stop()
