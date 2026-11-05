@@ -13,7 +13,11 @@ class TextEscapingTest {
     fun `values that a spreadsheet would run get one quote, and so does a leading quote`() {
         TextEscaping.escape("=SUM(1)") shouldBe "'=SUM(1)"
         TextEscaping.escape("=HYPERLINK(\"http://evil\",\"x\")") shouldBe "'=HYPERLINK(\"http://evil\",\"x\")"
-        for (start in listOf("+", "-", "@", "\t", "\r")) TextEscaping.escape("${start}x") shouldBe "'${start}x"
+        for (start in listOf("+", "-", "@", "\t", "\r", "\n", "＝", "＋", "－", "＠")) {
+            val original = "${start}x"
+            TextEscaping.escape(original) shouldBe "'$original"
+            TextEscaping.unescape(TextEscaping.escape(original)) shouldBe original
+        }
         TextEscaping.escape("'quoted") shouldBe "''quoted"
         TextEscaping.escape("plain = text") shouldBe "plain = text"
         TextEscaping.escape("") shouldBe ""

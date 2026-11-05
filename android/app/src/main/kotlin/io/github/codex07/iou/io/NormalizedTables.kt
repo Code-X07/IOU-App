@@ -12,7 +12,7 @@ import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.money.Money
 
-/** One column: its header, whether it holds free text (escaped, spec §7.2), and its value for a record. */
+/** One column: its header, whether it holds escaped string text, including opaque IDs (spec §7.2), and its value for a record. */
 class Column<in T>(val name: String, val text: Boolean = false, val value: (T) -> String?)
 
 /** One CSV file of the normalized export: `<name>.csv` with [columns] as its header. */
@@ -41,7 +41,7 @@ object NormalizedTables {
         Column("version") { it.meta.version.toString() },
         Column("created_at") { it.meta.createdAt.toString() },
         Column("updated_at") { it.meta.updatedAt.toString() },
-        Column("author_id") { it.meta.authorId.value },
+        Column("author_id", text = true) { it.meta.authorId.value },
         Column("deleted_at") { it.meta.deletedAt?.toString() },
     )
 
@@ -54,21 +54,21 @@ object NormalizedTables {
     val people = CsvTable(
         "people",
         listOf<Column<Person>>(
-            Column("id") { it.id.value },
+            Column("id", text = true) { it.id.value },
             Column("display_name", text = true) { it.displayName },
             Column("is_me") { it.isMe.toString() },
             Column("note", text = true) { it.note },
             Column("default_currency") { it.defaultCurrency?.code },
             Column("archived_at") { it.archivedAt?.toString() },
-            Column("merged_into_id") { it.mergedIntoId?.value },
+            Column("merged_into_id", text = true) { it.mergedIntoId?.value },
         ) + sync(),
     ) { it.people.values.toList() }
 
     val paymentHandles = CsvTable(
         "payment_handles",
         listOf<Column<PaymentHandle>>(
-            Column("id") { it.id.value },
-            Column("person_id") { it.personId.value },
+            Column("id", text = true) { it.id.value },
+            Column("person_id", text = true) { it.personId.value },
             Column("type") { it.type.name },
             Column("value", text = true) { it.value },
             Column("holder_name", text = true) { it.holderName },
@@ -81,7 +81,7 @@ object NormalizedTables {
     val groups = CsvTable(
         "groups",
         listOf<Column<Group>>(
-            Column("id") { it.id.value },
+            Column("id", text = true) { it.id.value },
             Column("name", text = true) { it.name },
             Column("default_currency") { it.defaultCurrency.code },
             Column("fx_mode") { it.fxMode.name },
@@ -92,9 +92,9 @@ object NormalizedTables {
     val groupMembers = CsvTable(
         "group_members",
         listOf<Column<GroupMember>>(
-            Column("id") { it.id.value },
-            Column("group_id") { it.groupId.value },
-            Column("person_id") { it.personId.value },
+            Column("id", text = true) { it.id.value },
+            Column("group_id", text = true) { it.groupId.value },
+            Column("person_id", text = true) { it.personId.value },
             Column("joined_at") { it.joinedAt.toString() },
             Column("removed_at") { it.removedAt?.toString() },
         ) + sync(),
@@ -103,15 +103,15 @@ object NormalizedTables {
     val transfers = CsvTable(
         "transfers",
         listOf<Column<Transfer>>(
-            Column("id") { it.id.value },
-            Column("from_person_id") { it.fromPersonId.value },
-            Column("to_person_id") { it.toPersonId.value },
+            Column("id", text = true) { it.id.value },
+            Column("from_person_id", text = true) { it.fromPersonId.value },
+            Column("to_person_id", text = true) { it.toPersonId.value },
         ) + money("amount", "currency") { it.amount } + money("effect_amount", "effect_currency") { it.effectAmount } + listOf(
-            Column("fx_snapshot_id") { it.fxSnapshotId?.value },
+            Column("fx_snapshot_id", text = true) { it.fxSnapshotId?.value },
             Column("kind") { it.kind.name },
             Column("method") { it.method.name },
             Column("account_label", text = true) { it.accountLabel },
-            Column("group_id") { it.groupId?.value },
+            Column("group_id", text = true) { it.groupId?.value },
             Column("occurred_on") { it.occurredOn.toString() },
             Column("note", text = true) { it.note },
         ) + sync(),
@@ -120,13 +120,13 @@ object NormalizedTables {
     val expenses = CsvTable(
         "expenses",
         listOf<Column<Expense>>(
-            Column("id") { it.id.value },
-            Column("group_id") { it.groupId?.value },
-            Column("payer_person_id") { it.payerPersonId.value },
+            Column("id", text = true) { it.id.value },
+            Column("group_id", text = true) { it.groupId?.value },
+            Column("payer_person_id", text = true) { it.payerPersonId.value },
             Column("description", text = true) { it.description },
             Column("category") { it.category?.name },
         ) + money("total", "currency") { it.total } + money("effect_total", "effect_currency") { it.effectTotal } + listOf(
-            Column("fx_snapshot_id") { it.fxSnapshotId?.value },
+            Column("fx_snapshot_id", text = true) { it.fxSnapshotId?.value },
             Column("split_type") { it.splitType.name },
             Column("occurred_on") { it.occurredOn.toString() },
             Column("note", text = true) { it.note },
@@ -136,9 +136,9 @@ object NormalizedTables {
     val expenseShares = CsvTable(
         "expense_shares",
         listOf<Column<ShareLine>>(
-            Column("expense_id") { it.expense.id.value },
+            Column("expense_id", text = true) { it.expense.id.value },
             Column("position") { it.position.toString() },
-            Column("person_id") { it.share.personId.value },
+            Column("person_id", text = true) { it.share.personId.value },
             Column("share_minor") { it.share.shareMinor.toString() },
             Column("share") { Money(it.share.shareMinor, it.expense.effectTotal.currency).toPlainString() },
             Column("input_value") { it.share.inputValue?.toString() },
@@ -148,7 +148,7 @@ object NormalizedTables {
     val fxSnapshots = CsvTable(
         "fx_snapshots",
         listOf<Column<FxSnapshot>>(
-            Column("id") { it.id.value },
+            Column("id", text = true) { it.id.value },
             Column("base_currency") { it.baseCurrency.code },
             Column("quote_currency") { it.quoteCurrency.code },
             Column("rate") { it.rate },

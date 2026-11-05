@@ -1,6 +1,7 @@
 package io.github.codex07.iou.io
 
 import io.github.codex07.iou.ledger.model.EntryId
+import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.testutil.ME
 import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.TestLedger
@@ -12,6 +13,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipInputStream
 import kotlinx.serialization.json.Json
+import org.apache.commons.csv.CSVFormat
 import org.junit.jupiter.api.Test
 
 class NormalizedExportTest {
@@ -76,6 +78,30 @@ class NormalizedExportTest {
             "\"'=HYPERLINK(\"\"http://evil\"\",\"\"x\"\")\",1,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z,person-0-me,\r\n" +
             "transfer-b,person-x,person-0-me,500,5.00,EUR,500,5.00,EUR,,LOAN,BANK,,,2026-01-01,,1,2026-01-01T00:00:00Z," +
             "2026-01-01T00:00:00Z,person-0-me,2026-01-01T00:00:00Z\r\n"
+
+        val original = state.transfers.getValue(transfer)
+        val risky = original.copy(
+            id = EntryId("=entry"), fromPersonId = PersonId("'person"),
+            toPersonId = PersonId("＋person"), meta = original.meta.copy(authorId = PersonId("@author")),
+        )
+        for (excelFriendly in listOf(false, true)) {
+            val out = ByteArrayOutputStream()
+            export.normalized(state.with(risky), T0, excelFriendly, out)
+            val entriesWithIds = linkedMapOf<String, String>()
+            ZipInputStream(ByteArrayInputStream(out.toByteArray())).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    entriesWithIds[entry.name] = zip.readBytes().toString(Charsets.UTF_8)
+                }
+            }
+            val csv = entriesWithIds.getValue("transfers.csv").removePrefix("\uFEFF")
+            val format = CSVFormat.RFC4180.builder().setDelimiter(if (excelFriendly) ';' else ',').get()
+            val row = format.parse(csv.reader()).records.single { it[0] == "'=entry" }
+            listOf(row[0], row[1], row[2], row[3], row[4], row[19]) shouldBe
+                listOf("'=entry", "''person", "'＋person", "1000", "10.00", "'@author")
+            listOf(row[0], row[1], row[2], row[19]).map(TextEscaping::unescape) shouldBe
+                listOf("=entry", "'person", "＋person", "@author")
+        }
     }
 
     @Test
