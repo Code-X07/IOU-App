@@ -9,7 +9,6 @@ import io.github.codex07.iou.api.ExportRequest
 import io.github.codex07.iou.api.ExportScope
 import io.github.codex07.iou.api.ExportShape
 import io.github.codex07.iou.api.FxApi
-import io.github.codex07.iou.api.FxQuote
 import io.github.codex07.iou.api.ImportBatchView
 import io.github.codex07.iou.api.ImportChoices
 import io.github.codex07.iou.api.ImportCounts
@@ -23,47 +22,29 @@ import io.github.codex07.iou.api.InvalidRow
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.UndoImportResult
-import io.github.codex07.iou.api.map
-import io.github.codex07.iou.ledger.engine.FxConverter
 import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.FieldChange
-import io.github.codex07.iou.ledger.model.FxSource
 import io.github.codex07.iou.ledger.model.ImportBatch
 import io.github.codex07.iou.ledger.model.ImportBatchId
 import io.github.codex07.iou.ledger.model.ImportSource
 import io.github.codex07.iou.ledger.model.LedgerGeneration
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.ops.WritePlan
-import io.github.codex07.iou.money.CurrencyCode
-import io.github.codex07.iou.money.Money
 import io.github.codex07.iou.store.DeviceSettingsStore
 import io.github.codex07.iou.store.LedgerContent
 import io.github.codex07.iou.store.LedgerStore
+import io.github.codex07.iou.store.StoreFxApi
 import io.github.codex07.iou.store.StoreSnapshot
 import io.github.codex07.iou.store.StoreWrite
 import java.time.Duration
-import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-class FakeFxApi : FxApi {
-    override suspend fun quote(date: LocalDate, from: CurrencyCode, to: CurrencyCode): LedgerResult<FxQuote> {
-        val rate = FakeRates.rate(from, to) ?: return LedgerResult.Err(LedgerError.RateRequired(from, to))
-        return LedgerResult.Ok(FxQuote(from, to, rate, date, FxSource.ECB_FRANKFURTER, isStale = false))
-    }
-
-    override fun userRate(date: LocalDate, from: CurrencyCode, to: CurrencyCode, rate: String): LedgerResult<FxQuote> =
-        FxConverter.validateRate(rate).map { FxQuote(from, to, rate.trim(), date, FxSource.USER_ENTERED, isStale = false) }
-
-    override fun rateFromCharged(date: LocalDate, paid: Money, charged: Money): LedgerResult<FxQuote> {
-        if (paid.amountMinor <= 0 || charged.amountMinor <= 0) return LedgerResult.Err(LedgerError.InvalidAmount)
-        val rate = FxConverter.deriveRate(paid, charged)
-        return LedgerResult.Ok(FxQuote(paid.currency, charged.currency, rate, date, FxSource.BANK_ACTUAL, isStale = false))
-    }
-}
+/** FX on the fixed demo rates ([FakeRates.quote]). */
+class FakeFxApi : FxApi by StoreFxApi({ date, from, to -> FakeRates.quote(date, from, to) })
 
 /** Simulated backups (spec §6.3): restoring brings back the current data under a fresh generation. */
 class FakeBackupApi(private val store: LedgerStore, private val device: DeviceSettingsStore) : BackupApi {
