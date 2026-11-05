@@ -13,6 +13,7 @@
 - The pointer is only ever replaced atomically: write `db-state.json.tmp`, fsync, rename over `db-state.json`, fsync the directory (spec §7.1). First launch creates the first database and the pointer.
 - The ledger generation lives in the pointer and changes only when a pointer is committed (spec §5.1, ADR-0007): an app restart keeps it.
 - On every start, before Room opens a database, recovery deletes every `iou-*.db` (with its side files) and any `db-state.json.tmp` the pointer does not name. With a marker present it reports "interrupted" exactly when the pointer's `current` is not the marker's `target`, then deletes the marker (spec §7.1, "Crash recovery").
+- The marker is written like the pointer (temp file, fsync, rename), so a crash never leaves half of one. A marker that can't be read anyway counts as none: it only chooses a message, so start-up never fails on it.
 - The device ID is generated once per installation in `noBackupFilesDir` and never backed up, restored or exported (spec §3.1).
 - Device-local settings never leave the device (spec §3.3, §9).
 - The real flavor's start-up does no disk work on the caller's thread: construction returns at once, and reads and writes wait for the load.
@@ -22,6 +23,7 @@
 
 - **Device settings are a JSON file, not DataStore.** `FileDeviceSettings` keeps them in `noBackupFilesDir/device-settings.json`: read once at start, replaced atomically on every change. DataStore saves with `File.renameTo`, which on Windows can't replace an existing file, so its second write failed in local JVM tests. A file in `noBackupFilesDir` is also outside Auto Backup by location, whatever the backup rules say (spec §9).
 - **All ledger files live in the app's database directory**, which is the parent of `getDatabasePath("db-state.json")`: databases, pointer, temp pointer and marker. Part 8's backup rules include that directory and exclude the temp pointer and the marker.
+- **An unreadable marker is dropped without a report.** The pointer alone decides what is live, so nothing is lost; claiming "nothing changed" without knowing the target could be wrong. `deleteMarker` also deletes `restore-marker.json.tmp`, which a crash while writing the marker can leave.
 - **Room opens databases by absolute path** (`DbFiles.database(name)`), the same on the device and in JVM tests.
 - **No demo rates in the `real` flavor:** its approximate home-currency totals stay `null` (`RateLookup.None`) until Part 4 fills the rate cache.
 - **Tests simulate an app restart** by closing a `RealBackend` and starting a new one on the same directory (`RealHarness`). `close()` waits for the start-up, cancels the backend's scope and closes the database.
@@ -99,6 +101,7 @@ class DbFilesTest {
     fun `the marker is written, read and deleted`() {
         files.writeMarker(RestoreMarker("restore", "iou-new.db"))
         files.readMarker() shouldBe RestoreMarker("restore", "iou-new.db")
+        File(dir, "${DbFiles.MARKER}.tmp").exists() shouldBe false
         files.deleteMarker()
         files.readMarker() shouldBe null
     }
@@ -181,6 +184,17 @@ class RestoreRecoveryTest {
         RestoreRecovery.run(files) shouldBe RestoreRecovery.Result(interrupted = false)
         files.readMarker() shouldBe null
     }
+
+    @Test
+    fun `a marker cut off while it was written is dropped without a report`() {
+        files.commitPointer(DbPointer(current = "iou-live.db", generation = "g"))
+        touch("iou-live.db")
+        File(dir, DbFiles.MARKER).writeText("""{"op":"rest""")
+        File(dir, "${DbFiles.MARKER}.tmp").writeText("""{"op":""")
+
+        RestoreRecovery.run(files) shouldBe RestoreRecovery.Result(interrupted = false)
+        present() shouldContainExactlyInAnyOrder listOf(DbFiles.POINTER, "iou-live.db")
+    }
 }
 ```
 
@@ -222,6 +236,7 @@ class DbFiles(val dir: File) {
     val pointerFile = File(dir, POINTER)
     private val tempPointer = File(dir, "$POINTER.tmp")
     private val markerFile = File(dir, MARKER)
+    private val tempMarker = File(dir, "$MARKER.tmp")
 
     init {
         dir.mkdirs()
@@ -239,15 +254,25 @@ class DbFiles(val dir: File) {
         syncDirectory()
     }
 
-    fun readMarker(): RestoreMarker? = markerFile.takeIf { it.exists() }?.let { json.decodeFromString(RestoreMarker.serializer(), it.readText()) }
+    /** The marker, or null. One that can't be read counts as none: it only chooses a message. */
+    fun readMarker(): RestoreMarker? = markerFile.takeIf { it.exists() }?.let {
+        try {
+            json.decodeFromString(RestoreMarker.serializer(), it.readText())
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
 
+    /** Written like the pointer (temp file, rename), so a crash never leaves half a marker. */
     fun writeMarker(marker: RestoreMarker) {
-        writeSynced(markerFile, json.encodeToString(RestoreMarker.serializer(), marker))
+        markerFile.writeAtomically(json.encodeToString(RestoreMarker.serializer(), marker))
         syncDirectory()
     }
 
+    /** Deletes the marker and any temp file a crash left while writing it. */
     fun deleteMarker() {
         markerFile.delete()
+        tempMarker.delete()
     }
 
     fun deleteTempPointer() {
@@ -263,13 +288,6 @@ class DbFiles(val dir: File) {
     fun deleteDatabase(name: String) {
         File(dir, name).delete()
         for (suffix in SIDE_FILES) File(dir, name + suffix).delete()
-    }
-
-    private fun writeSynced(file: File, text: String) {
-        file.outputStream().use { out ->
-            out.write(text.toByteArray(Charsets.UTF_8))
-            out.fd.sync()
-        }
     }
 
     /** Makes a rename durable. Directories can't be opened for sync on every platform (Windows); there it's skipped. */
@@ -309,7 +327,8 @@ package io.github.codex07.iou.data
 
 /**
  * Runs on every start before Room opens a database (spec §7.1, "Crash recovery"). It deletes every
- * ledger database the pointer does not name, plus a leftover temp pointer, and reads the restore marker.
+ * ledger database the pointer does not name, plus a leftover temp pointer, and reads and deletes the restore
+ * marker (one it can't read is dropped: it only chooses a message).
  * Nothing is rolled back or inferred from which files exist: the pointer alone says what is live.
  */
 object RestoreRecovery {
@@ -324,10 +343,9 @@ object RestoreRecovery {
         for ((database, members) in files.ledgerFiles()) {
             if (database !in keep) members.forEach { it.delete() }
         }
-        val marker = files.readMarker() ?: return Result(interrupted = false)
-        val interrupted = pointer?.current != marker.target
+        val marker = files.readMarker()
         files.deleteMarker()
-        return Result(interrupted)
+        return Result(interrupted = marker != null && pointer?.current != marker.target)
     }
 }
 ```
@@ -335,7 +353,7 @@ object RestoreRecovery {
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.data.DbFilesTest" --tests "io.github.codex07.iou.data.RestoreRecoveryTest"`
-Expected: PASS, 8 tests (3 + 5).
+Expected: PASS, 9 tests (3 + 6).
 
 - [ ] **Step 6: Commit**
 
@@ -849,7 +867,7 @@ Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.data.*"
 Expected: PASS. `RealContractTests` adds 24 tests (setup 1, people 7, groups 5, ledger 9, settings 2), `RealBackendTest` 3 and `FileDeviceSettingsTest` 1.
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 258 tests per flavor.
+Expected: PASS, 260 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL; lint reports no errors.

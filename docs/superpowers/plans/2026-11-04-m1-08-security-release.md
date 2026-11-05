@@ -24,7 +24,7 @@
 
 - **App lock** (spec §9): `BiometricPrompt` with `BIOMETRIC_STRONG or DEVICE_CREDENTIAL` is the UI's (the friend's). The core's policy, `SettingsApi.observeLockRequired()`, requires an unlock on a cold start and after a configurable time in the background (immediately, 1, 5 or 15 min; default 1 min), tracked with `ProcessLifecycleOwner`. App lock can only be enabled when the device has a secure lock screen; the UI checks.
 - **Screen protection** (spec §9): a toggle, default off, that sets `FLAG_SECURE` on the single activity.
-- **Auto Backup** (spec §9): enabled only for the ledger databases (the `iou-*.db` files, the pre-restore copy included) and their pointer `db-state.json`. Excluded: device-local settings, `noBackupFilesDir` (device ID), `db-state.json.tmp` and `restore-marker.json`. `RestoreRecovery` deletes any unreferenced database that arrives with a system restore. A restored phone keeps the me identity and gets a new device ID, and its device-local settings start at their defaults.
+- **Auto Backup** (spec §9): enabled only for the ledger databases (the `iou-*.db` files, the pre-restore copy included) and their pointer `db-state.json`. Excluded: device-local settings, `noBackupFilesDir` (device ID), `db-state.json.tmp`, `restore-marker.json` and `restore-marker.json.tmp`. `RestoreRecovery` deletes any unreferenced database that arrives with a system restore. A restored phone keeps the me identity and gets a new device ID, and its device-local settings start at their defaults.
 - **Permissions** (spec §9): no runtime permissions. Install-time normal permissions only: `INTERNET`, `USE_BIOMETRIC` (from `androidx.biometric`, once the UI adds it) and WorkManager's scheduling permissions. The merged manifest is reviewed before each release; unexpected entries are removed with `tools:node="remove"` where safe.
 - **Network:** cleartext traffic is disabled; release builds never log amounts, names or payment handles.
 - **Spec §14:** item 2 (Frankfurter parameters), item 3 (Argon2id at 64 MiB on a low-end device; lower the memory if a backup takes more than about 2 s), item 4 (merged permissions) and item 5 (both rule files exclude everything §9 lists).
@@ -977,7 +977,7 @@ with:
 - [ ] **Step 8: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 355 tests per flavor.
+Expected: PASS, 364 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 33 warnings per flavor; the new one is the "newer version available" notice for `lifecycle-process`.
@@ -1032,7 +1032,7 @@ Tell the friend: the lock policy runs in both flavors, so the fake now locks on 
 - Test: `test/.../data/AutoBackupRulesTest.kt`
 
 **Interfaces:**
-- Consumes: Part 3's `DbFiles.POINTER` and `DbFiles.MARKER` (the temp pointer is `"${DbFiles.POINTER}.tmp"`).
+- Consumes: Part 3's `DbFiles.POINTER` and `DbFiles.MARKER` (the temp files are `"${DbFiles.POINTER}.tmp"` and `"${DbFiles.MARKER}.tmp"`).
 - Produces: the two rule files, and the manifest attributes `allowBackup="true"`, `dataExtractionRules`, `fullBackupContent`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1057,6 +1057,7 @@ class AutoBackupRulesTest {
         Rule("include", "database", "."),
         Rule("exclude", "database", "${DbFiles.POINTER}.tmp"),
         Rule("exclude", "database", DbFiles.MARKER),
+        Rule("exclude", "database", "${DbFiles.MARKER}.tmp"),
     )
 
     private fun xml(name: String): Element =
@@ -1118,6 +1119,7 @@ Expected: FAIL, 3 tests. The two rule tests fail with `FileNotFoundException`; t
     <include domain="database" path="." requireFlags="deviceToDeviceTransfer" />
     <exclude domain="database" path="db-state.json.tmp" />
     <exclude domain="database" path="restore-marker.json" />
+    <exclude domain="database" path="restore-marker.json.tmp" />
 </full-backup-content>
 ```
 
@@ -1132,11 +1134,13 @@ Expected: FAIL, 3 tests. The two rule tests fail with `FileNotFoundException`; t
         <include domain="database" path="." />
         <exclude domain="database" path="db-state.json.tmp" />
         <exclude domain="database" path="restore-marker.json" />
+        <exclude domain="database" path="restore-marker.json.tmp" />
     </cloud-backup>
     <device-transfer>
         <include domain="database" path="." />
         <exclude domain="database" path="db-state.json.tmp" />
         <exclude domain="database" path="restore-marker.json" />
+        <exclude domain="database" path="restore-marker.json.tmp" />
     </device-transfer>
 </data-extraction-rules>
 ```
@@ -1183,7 +1187,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 358 tests per flavor.
+Expected: PASS, 367 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The `DataExtractionRules` warning (a Part 1 carryover) is gone.
@@ -1327,7 +1331,7 @@ class KdfTimingReceiver : BroadcastReceiver() {
 - [ ] **Step 2: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 358 tests per flavor (no new tests).
+Expected: PASS, 367 tests per flavor (no new tests).
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The release merged manifest has no `KdfTimingReceiver`.
@@ -1698,7 +1702,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 359 tests per flavor, 0 failures and 0 skipped.
+Expected: PASS, 368 tests per flavor, 0 failures and 0 skipped.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor; describe it that way, not as warning-free.
@@ -1716,7 +1720,7 @@ Every M1 criterion (index, ACs 1–21) has tests that prove it. Each criterion's
 | 5 | `LedgerApiContract` "delete removes the effect at once and restore brings it back" |
 | 6 | `PeopleApiContract` "merge combines balances and unmerge splits them again"; `MergeOpsTest` "unmerging a middle record takes its own aliases along" |
 | 7 | `RealBackupTest` "backup, wipe and restore give back the same ledger, and the device ID stays the installation's own"; `BackupFormatTest` |
-| 8 | `RealBackupTest` "a wrong passphrase or an invalid ledger writes nothing", "a failure before the commit point keeps the database and the ledger settings", "undo brings back the state before the restore …"; `BackupApiContract` "a wrong passphrase changes nothing" |
+| 8 | `RealBackupTest` "a wrong passphrase or an invalid ledger writes nothing", "a failure before the new ledger is published keeps the database and the ledger settings", "a pointer that can't be written abandons the restore", "undo brings back the state before the restore …", "an undo that fails before the earlier ledger is published changes nothing"; `BackupFormatTest` "cached rates that don't map or aren't valid are rejected"; `BackupApiContract` "a wrong passphrase changes nothing" |
 | 9 | `ImportReaderTest` "text a spreadsheet would run comes back exactly"; `TextEscapingTest` |
 | 10 | `RealImportTest` "a conflict shows its diff …" and "a transfer deleted in the export shows active to deleted …" |
 | 11 | `RealImportTest` "an export from another install is mapped to the local me after confirmation"; `ImportExportApiContract` "a foreign export needs confirmation and declining rejects it" |
@@ -1724,12 +1728,12 @@ Every M1 criterion (index, ACs 1–21) has tests that prove it. Each criterion's
 | 13 | `RealBackupTest` "the reminder is due after 30 days without a manual backup"; `BackupApiContract` "the reminder is due until a backup is made" |
 | 14 | `RealContractTests.kt`: all eight suites against the real backend, `groups` tests included (index, locked decision 6) |
 | 15 | `BackupApiContract` "a restore and its undo each change the generation, and older tokens and bases stay invalid"; `ImportExportApiContract` "confirming a foreign preview parsed before a restore is refused" |
-| 16 | `RealImportTest` "deleted people merged into each other are invalid rows" |
+| 16 | `RealImportTest` "deleted people merged into each other are invalid rows" and "a person deleted together with the transfers involving them is one valid change" |
 | 17 | `EntryOpsTest` "changing the paid currency while keeping the old snapshot is refused" |
 | 18 | `EntryOpsTest` "a cross-currency repayment settles SEK with EUR and keeps or drops its snapshot on edit"; `LedgerApiContract` "a cross-currency settlement asks for a rate, then settles the other currency" |
 | 19 | `EntryOpsTest` "a bank-actual charge is kept on note and date edits and refused when the paid amount changes" |
 | 20 | `RealImportTest` "effects that their FX snapshot doesn't explain are invalid rows" |
-| 21 | `RealImportTest` "a handle added after the preview makes the commit stale, and the refresh shows it in the cascade" |
+| 21 | `RealImportTest` "a handle added after the preview makes the commit stale, and the refresh shows it in the cascade" and "a handle the export shows deleted before its person stays deleted when the person is restored" |
 
 On the device, Tasks 1–3 checked what the placeholder can show. Backup, export and import have no screens yet, so on-device runs of ACs 7–13 and 15–21 wait for the friend's screens (owner's decision, 2026-11-05).
 
