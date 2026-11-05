@@ -9,6 +9,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.codex07.iou.api.*
+import io.github.codex07.iou.ledger.model.EntityType
+import io.github.codex07.iou.ui.forms.restoreAction
 import io.github.codex07.iou.ui.components.*
 import io.github.codex07.iou.ui.viewmodel.*
 
@@ -31,7 +33,7 @@ fun PeopleScreen(state: BrowseState<List<PersonSummary>>, hidden: Boolean, retry
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium) }
             if (visible.isEmpty()) item { Notice("No people found", "Try another name or filter. Contacts added later will appear here.") }
             items(visible, key = { it.person.id.value }) { person ->
-                IouCard { Column {
+                IouCard(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = androidx.compose.animation.core.tween(IouMotion.placement))) { Column {
                     if (person.deleted) Text("Deleted · history kept", Modifier.padding(16.dp))
                     PersonPreview(person, hidden) { open(person.person.id.value) }
 
@@ -44,7 +46,8 @@ fun PeopleScreen(state: BrowseState<List<PersonSummary>>, hidden: Boolean, retry
 @Composable
 fun PersonDetailScreen(state: BrowseState<PersonPage>, hidden: Boolean, retry: () -> Unit,
                        openGroup: (String) -> Unit, openEntry: (String) -> Unit, onEdit: () -> Unit = {},
-                       onAddHandle: () -> Unit = {}, onEditHandle: (String) -> Unit = {}) {
+                       onAddHandle: () -> Unit = {}, onEditHandle: (String) -> Unit = {}, request: (AdvancedAction) -> Unit = {},
+                       onMerge: () -> Unit = {}, onRecordPlan: (PlanItem) -> Unit = {}) {
     var history by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberLazyListState()
     BrowseContent(state, retry) { page ->
@@ -55,6 +58,12 @@ fun PersonDetailScreen(state: BrowseState<PersonPage>, hidden: Boolean, retry: (
                 person.archived -> "Archived · balances retained"
                 else -> "Personal account"
             }) }
+            item { LifecycleActions(EntityRef(EntityType.PERSON, person.person.id.value), person.token, person.person.displayName, person.deleted, person.archived, request) }
+            if (person.archived && person.balances.any { it.amountMinor != 0L }) item { Notice("Archived with open balances", "These personal amounts still count in your totals. Archiving does not settle them.") }
+            if (!person.deleted) item { TextButton(onClick = onMerge) { Text("Merge contact") } }
+            items(person.aliases, key = { "alias:${it.person.id.value}" }) { alias ->
+                TextButton(onClick = { request(AdvancedAction.Unmerge(alias)) }) { Text("Unmerge ${alias.person.displayName}") }
+            }
             if (!person.deleted) item { TextButton(onClick = onEdit) { Text("Edit person") } }
             person.note?.let { item { InfoLine("Note", if (hidden) "Hidden" else it) } }
             person.defaultCurrency?.let { item { InfoLine("Preferred currency", it.code) } }
@@ -74,6 +83,7 @@ fun PersonDetailScreen(state: BrowseState<PersonPage>, hidden: Boolean, retry: (
                     handle.holderName?.let { InfoLine("Holder", it) }
                     handle.bic?.let { InfoLine("BIC", if (hidden) "Hidden" else it) }
                     InfoLine("Owner", handle.owner.displayName)
+                    if (!person.deleted) LifecycleActions(EntityRef(EntityType.PAYMENT_HANDLE, handle.id.value), handle.token, "payment handle", false, null, request)
                     if (!person.deleted) TextButton(onClick = { onEditHandle(handle.id.value) }) { Text("Edit payment handle") }
                 } }
             }
@@ -87,12 +97,12 @@ fun PersonDetailScreen(state: BrowseState<PersonPage>, hidden: Boolean, retry: (
             if (person.inGroups.isNotEmpty()) item { BrowseHeading("Group suggestions · separate from personal") }
             person.inGroups.forEach { suggestion ->
                 item { TextButton(onClick = { openGroup(suggestion.group.id.value) }) { Text(suggestion.group.name) } }
-                items(suggestion.items) { SettlementSuggestion(it, hidden) }
+                items(suggestion.items, key = { "plan:${it.group?.id?.value}:${it.from.id.value}:${it.to.id.value}:${it.amount.currency.code}" }) { plan -> SettlementSuggestion(plan, hidden, { onRecordPlan(plan) }) }
             }
             item { BrowseHeading("Personal activity") }
             activityRows(person.activity.filter { it.group == null }, hidden, openEntry)
-            item { TextButton(onClick = { history = !history }) { Text(if (history) "Hide history" else "Contact & payment-handle history") } }
-            if (history) revisionRows(person.history, hidden)
+            item { HistoryToggle("Contact & payment-handle history", history, person.history.size) { history = !history } }
+            if (history) revisionRows(person.history, hidden, { person.restoreAction(it)?.let(request) }, { person.restoreAction(it) != null })
         }
     }
 }

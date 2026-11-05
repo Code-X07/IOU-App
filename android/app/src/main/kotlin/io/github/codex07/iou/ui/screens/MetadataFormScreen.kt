@@ -25,6 +25,7 @@ fun MetadataFormScreen(vm: MetadataFormViewModel, state: MetadataState, status: 
     }
     FormScaffold(title, status, vm::requestLeave, vm::keepEditing, vm::discard, vm::save, hidden, close) {
         if (status.error is LedgerError.StaleVersion) TextButton(onClick = { reload = true }) { Text("Review latest version") }
+        if (state.fromHistory) Notice("Historical version as draft", "Review and correct these fields. Saving updates the existing record with its captured current edit token.")
         when (state.kind) {
             MetadataKind.PERSON -> {
                 FormTextField("Display name", fields.name, { vm.change { f -> f.copy(name = it) } }, enabled,
@@ -61,6 +62,7 @@ fun MetadataFormScreen(vm: MetadataFormViewModel, state: MetadataState, status: 
                 ChoiceField("Currency handling", fields.fxMode.name, listOf("CONVERT" to "Convert to default currency", "KEEP" to "Keep original currencies separate"),
                     { value -> vm.change { it.copy(fxMode = FxMode.valueOf(value)) } }, enabled && !state.locked)
                 Text(if (fields.fxMode == FxMode.CONVERT) "Foreign entry effects use a saved FX rate into ${fields.currency}." else "Each original currency has its own balance. No combined total.")
+                if (state.locked && state.fromHistory) TextButton(onClick = vm::useCurrentCurrencySettings, enabled = enabled) { Text("Use current locked currency settings") }
                 if (state.locked) Notice("Currency settings locked", "This group already has entries. Its currency mode and CONVERT currency cannot be changed.")
                 if (!state.editing) {
                     BrowseHeading("Members")
@@ -68,7 +70,7 @@ fun MetadataFormScreen(vm: MetadataFormViewModel, state: MetadataState, status: 
                     MemberSelector(state.people.map { it.person.id.value to it.person.displayName }, fields.members.map { it.value }.toSet(), { id ->
                         vm.change { it.copy(members = if (PersonId(id) in it.members) it.members - PersonId(id) else it.members + PersonId(id)) }
                     }, enabled)
-                } else Notice("Metadata only", "Member changes are a separate operation and will be available in Phase 4.")
+                } else Notice("Metadata only", "Manage members from Group Detail. Membership changes are separate from metadata edits.")
             }
         }
     }

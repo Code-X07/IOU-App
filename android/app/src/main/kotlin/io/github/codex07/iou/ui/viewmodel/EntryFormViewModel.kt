@@ -15,7 +15,7 @@ data class EntryFormState(
     val groups: List<GroupDetail> = emptyList(), val editing: Boolean = false,
     val preview: SplitPreview? = null, val previewError: LedgerError? = null, val previewBusy: Boolean = false,
     val quote: FxQuote? = null, val storedFx: FxSnapshotView? = null,
-    val remaining: List<Money>? = null, val remainingLabel: String? = null,
+    val remaining: List<Money>? = null, val remainingMembers: List<MemberView> = emptyList(), val remainingLabel: String? = null,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -26,6 +26,9 @@ class EntryFormViewModel @Inject constructor(
 ) : SafeFormViewModel(backup) {
     private val mutableState = MutableStateFlow(EntryFormState())
     val state = mutableState.asStateFlow()
+    private var recoveryFx: FxChoice? = null
+    private var recoveryPaid: Money? = null
+    private var settlementPrefill: SettleUpDraft? = null
     private var initial = EntryFields()
     private var id: EntryId? = null
     private var token: EditToken? = null
@@ -36,7 +39,30 @@ class EntryFormViewModel @Inject constructor(
     private val quotes = mutableMapOf<Triple<java.time.LocalDate, CurrencyCode, CurrencyCode>, FxQuote>()
 
     fun open(purpose: String = "expense", entryId: String? = null) { initialize { load(purpose, entryId) } }
+    fun openSettlement(draft: SettleUpDraft) {
+        initialize { settlementPrefill = draft; requireGeneration(EditToken(draft.basis, 0)); if (!status.value.invalidated) load("repayment", null) }
+    }
+    fun openRecovery(recovery: RecoveryDraft) = initialize {
+        val draft = (recovery.draft as? VersionDraft.OfEntry)?.draft ?: run { fail(LedgerError.InvalidField("entity")); return@initialize }
+        requireGeneration(recovery.token); if (status.value.invalidated) return@initialize
+        load("expense", recovery.entity.id)
+        if (status.value.error != null) return@initialize
+        token = recovery.token; requireGeneration(recovery.token)
+        recoveryFx = when (draft) { is ExpenseDraft -> draft.fx; is TransferDraft -> draft.fx }
+        recoveryPaid = when (draft) { is ExpenseDraft -> draft.total; is TransferDraft -> draft.amount }
+        val date = when (draft) { is ExpenseDraft -> draft.occurredOn; is TransferDraft -> draft.occurredOn }
+        val historicalSnapshot = when (val choice = recoveryFx) {
+            is FxChoice.Rate -> choice.quote.let { FxSnapshotView(it.base, it.quote, it.rate, it.rateDate, it.source, it.isStale, null, null) }
+            is FxChoice.BankActual -> fx.rateFromCharged(date, recoveryPaid!!, choice.charged).getOrNull()?.let {
+                FxSnapshotView(it.base, it.quote, it.rate, it.rateDate, it.source, it.isStale, recoveryPaid, choice.charged)
+            }
+            else -> null
+        }
+        mutableState.update { it.copy(fields = EntryInput.fromDraft(draft), storedFx = historicalSnapshot) }
+        if (!status.value.invalidated) changed(true)
+    }
     private suspend fun load(purpose: String, entryId: String?) {
+        recoveryFx = null; recoveryPaid = null
         id = entryId?.let(::EntryId)
         me = (setup.observeSetupState().first() as? SetupState.Ready)?.me
         if (me == null) { fail(LedgerError.InvalidField("participants")); return }
@@ -52,6 +78,7 @@ class EntryFormViewModel @Inject constructor(
             token = detail.token; requireGeneration(detail.token)
             fields = EntryInput.fromDraft(detail.editDraft); snapshot = detail.fx
         }
+        settlementPrefill?.let { fields = EntryInput.fromDraft(it.draft) }
         initial = fields
         mutableState.value = EntryFormState(fields, listOf(me!!) + contacts, allGroups, id != null, storedFx = snapshot)
         catalog?.cancel()
@@ -130,7 +157,8 @@ class EntryFormViewModel @Inject constructor(
             else if (draft is TransferDraft && draft.settlesCurrency != null) draft.settlesCurrency else paid.currency
         var displayQuote: FxQuote? = null
         val choice: LedgerResult<FxChoice?> = if (target == paid.currency) LedgerResult.Ok(null) else when (fields.fxMode) {
-            FxInputMode.SAVED -> if (state.value.storedFx == null) LedgerResult.Err(LedgerError.RateRequired(paid.currency, target)) else LedgerResult.Ok(FxChoice.KeepExisting)
+            FxInputMode.SAVED -> if (state.value.storedFx == null) LedgerResult.Err(LedgerError.RateRequired(paid.currency, target)) else if (recoveryFx is FxChoice.BankActual && paid != recoveryPaid) LedgerResult.Err(LedgerError.FxSnapshotMismatch(id))
+                else LedgerResult.Ok(recoveryFx ?: FxChoice.KeepExisting)
             FxInputMode.AUTO -> {
                 val key = Triple(date, paid.currency, target)
                 val quote = quotes[key]?.let { LedgerResult.Ok(it) } ?: fx.quote(date, paid.currency, target)
@@ -170,8 +198,8 @@ class EntryFormViewModel @Inject constructor(
                 try {
                     if (draft.groupId != null) {
                         val group = groups.observeGroup(draft.groupId).first()
-                        mutableState.update { it.copy(remaining = group?.members?.firstOrNull { m -> m.person.isMe }?.nets,
-                            remainingLabel = "Your remaining group position") }
+                        mutableState.update { it.copy(remaining = null, remainingMembers = group?.members.orEmpty().filter { m -> m.person.id == draft.from || m.person.id == draft.to },
+                            remainingLabel = "Remaining group positions") }
                     } else {
                         val other = if (draft.from == me?.id) draft.to else draft.from
                         val person = people.observePerson(other).first()

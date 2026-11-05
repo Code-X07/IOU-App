@@ -22,7 +22,7 @@ import io.github.codex07.iou.ui.forms.*
 @Composable
 fun FormScaffold(title: String, status: FormStatus, leave: () -> Unit, keep: () -> Unit, discard: () -> Unit,
                  save: () -> Unit, hidden: Boolean, onExit: () -> Unit, done: (() -> Unit)? = null,
-                 currency: io.github.codex07.iou.money.CurrencyCode? = null,
+                 currency: io.github.codex07.iou.money.CurrencyCode? = null, saveLabel: String = "Save", canSubmit: Boolean = true,
                  content: @Composable ColumnScope.() -> Unit) {
     BackHandler { leave() }
     LaunchedEffect(status.exit) { if (status.exit) onExit() }
@@ -34,9 +34,9 @@ fun FormScaffold(title: String, status: FormStatus, leave: () -> Unit, keep: () 
                 Row(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick = leave, enabled = !status.busy, modifier = Modifier.weight(1f)) { Text(if (status.completedId != null || status.invalidated) "Close" else "Cancel") }
                     Button(onClick = { if (status.completedId != null) done?.invoke() else if (status.invalidated) leave() else save() },
-                        enabled = !status.loading && !status.busy && status.error !is LedgerError.StaleVersion && status.error !is LedgerError.NotFound, modifier = Modifier.weight(1f)) {
+                        enabled = !status.loading && !status.busy && (canSubmit || status.invalidated || status.completedId != null) && status.error !is LedgerError.StaleVersion && status.error !is LedgerError.NotFound, modifier = Modifier.weight(1f)) {
                         if (status.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Text(when { status.completedId != null -> "Done"; status.invalidated -> "Close"; else -> "Save" })
+                        else Text(when { status.completedId != null -> "Done"; status.invalidated -> "Close"; else -> saveLabel })
                     }
                 }
             }

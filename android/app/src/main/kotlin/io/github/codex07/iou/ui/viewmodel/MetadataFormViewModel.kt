@@ -16,7 +16,7 @@ data class MetadataFields(
 )
 data class MetadataState(
     val kind: MetadataKind = MetadataKind.PERSON, val fields: MetadataFields = MetadataFields(),
-    val people: List<PersonSummary> = emptyList(), val locked: Boolean = false, val editing: Boolean = false,
+    val people: List<PersonSummary> = emptyList(), val locked: Boolean = false, val editing: Boolean = false, val fromHistory: Boolean = false,
 )
 
 @HiltViewModel
@@ -34,6 +34,22 @@ class MetadataFormViewModel @Inject constructor(
     fun open(kind: MetadataKind, id: String? = null, owner: String? = null, members: Set<PersonId> = emptySet()) {
         initialize { load(kind, id, owner, members) }
     }
+    fun openRecovery(recovery: RecoveryDraft) = initialize {
+        val kind = when (recovery.draft) { is VersionDraft.OfPerson -> MetadataKind.PERSON; is VersionDraft.OfHandle -> MetadataKind.HANDLE; is VersionDraft.OfGroup -> MetadataKind.GROUP; else -> { fail(LedgerError.InvalidField("entity")); return@initialize } }
+        requireGeneration(recovery.token); if (status.value.invalidated) return@initialize
+        load(kind, recovery.entity.id, recovery.owner?.value, emptySet())
+        if (status.value.error != null) return@initialize
+        entityId = recovery.entity.id; token = recovery.token; requireGeneration(recovery.token)
+        val fields = when (val draft = recovery.draft) {
+            is VersionDraft.OfPerson -> state.value.fields.copy(name = draft.draft.displayName, note = draft.draft.note.orEmpty(), currency = draft.draft.defaultCurrency?.code.orEmpty())
+            is VersionDraft.OfGroup -> state.value.fields.copy(name = draft.draft.name, currency = draft.draft.defaultCurrency.code, fxMode = draft.draft.fxMode)
+            is VersionDraft.OfHandle -> draft.draft.let { state.value.fields.copy(handleType = it.type, value = it.value, label = it.label, holder = it.holderName.orEmpty(), bic = it.bic.orEmpty(), defaultHandle = it.isDefault) }
+            else -> state.value.fields
+        }
+        mutableState.update { it.copy(fields = fields, fromHistory = true) }
+        if (!status.value.invalidated) changed(true)
+    }
+    fun useCurrentCurrencySettings() = change { it.copy(currency = initial.currency, fxMode = initial.fxMode) }
     private suspend fun load(kind: MetadataKind, id: String?, owner: String?, members: Set<PersonId>) {
         entityId = id; ownerId = owner; preset = members; token = null
         var fields = MetadataFields(currency = if (kind == MetadataKind.GROUP) ledger.observeOverview().first().homeCurrency.code else "", members = members)

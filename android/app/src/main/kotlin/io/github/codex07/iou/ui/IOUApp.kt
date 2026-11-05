@@ -11,6 +11,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import io.github.codex07.iou.ui.screens.*
 import io.github.codex07.iou.ui.viewmodel.*
+import io.github.codex07.iou.ui.components.PageEntrance
+import io.github.codex07.iou.ui.navigation.NavigationScene
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -23,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.codex07.iou.R
+import io.github.codex07.iou.ui.components.AdvancedDialog
+import io.github.codex07.iou.api.VersionDraft
 import io.github.codex07.iou.ui.components.Avatar
 import io.github.codex07.iou.ui.components.IouIcons
 import io.github.codex07.iou.ui.navigation.Destination
@@ -32,7 +36,8 @@ import io.github.codex07.iou.ui.viewmodel.OverviewViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
+fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSettingsViewModel = hiltViewModel(),
+           security: SecurityViewModel = hiltViewModel(), requestAuthentication: (AuthPurpose) -> Unit = {}, ledgerGeneration: io.github.codex07.iou.ledger.model.LedgerGeneration? = null) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var selectedName by rememberSaveable { mutableStateOf(Destination.Overview.name) }
     val selected = Destination.valueOf(selectedName)
@@ -48,16 +53,24 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
     val addPerson: () -> Unit = { stack = stack + formRoute("person") }
     val addGroup: () -> Unit = { stack = stack + formRoute("group") }
     val addEntry: (String) -> Unit = { purpose -> stack = stack + formRoute("entry", purpose) }
+    val advanced: AdvancedViewModel = hiltViewModel()
+    val advancedState by advanced.state.collectAsStateWithLifecycle()
+    LaunchedEffect(advancedState.openRoute) {
+        advancedState.openRoute?.let { stack = stack + it; advanced.consumeRoute() }
+    }
     val session: BrowseSessionViewModel = hiltViewModel()
-    val generation by session.generation.collectAsStateWithLifecycle()
+    val observedGeneration by session.generation.collectAsStateWithLifecycle()
+    val generation = ledgerGeneration ?: observedGeneration
     var lastGeneration by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(generation) {
         generation?.let {
-            if (lastGeneration != null && lastGeneration != it.value) {
+            val replaced = lastGeneration != null && lastGeneration != it.value
+            lastGeneration = it.value
+            if (replaced) {
                 stack = emptyList(); selectedName = Destination.Overview.name
                 snackbar.showSnackbar("Your ledger was replaced. Unfinished forms were closed. Reopen records from the current ledger.")
             }
-            lastGeneration = it.value
+
         }
     }
     val openPerson: (String) -> Unit = { stack = stack + "person:$it" }
@@ -72,9 +85,15 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
     val addPersonLabel = stringResource(R.string.add_person)
     val createGroupLabel = stringResource(R.string.create_group)
     val addExpenseLabel = stringResource(R.string.add_expense)
+    val backupControlsLabel = stringResource(R.string.backup_controls)
+    val scene = NavigationScene(selectedName, stack, generation?.value)
     val profile = (state as? OverviewUiState.Ready)?.displayName.orEmpty()
     BackHandler(enabled = stack.isEmpty() && selected != Destination.Overview && unfinished == null && !addMenu) {
         selectedName = Destination.Overview.name
+    }
+    if (generation != null && lastGeneration != null && generation.value != lastGeneration) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        return
     }
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -82,8 +101,8 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
         topBar = { if (!activeForm) {
             TopAppBar(
                 title = {
-                    Text(if (stack.isNotEmpty()) when (stack.last().substringBefore(":")) { "person" -> "Person details"; "group" -> "Group details"; else -> "Transaction details" } else if (selected == Destination.Overview) stringResource(R.string.brand) else stringResource(selected.title),
-                        style = MaterialTheme.typography.headlineSmall)
+                    Text(if (stack.isNotEmpty()) when (stack.last().substringBefore(":")) { "settings" -> "Settings"; "person" -> "Person details"; "group" -> "Group details"; "members" -> "Manage members"; else -> "Transaction details" } else if (selected == Destination.Overview) stringResource(R.string.brand) else stringResource(selected.title),
+                        style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 navigationIcon = { if (stack.isNotEmpty()) IconButton(onClick = { stack = stack.dropLast(1) }) { Icon(IouIcons.Back, "Back") } },
                 actions = {
@@ -91,14 +110,14 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
                         Icon(if (hidden) IouIcons.EyeOff else IouIcons.Eye,
                             stringResource(if (hidden) R.string.show_balances else R.string.hide_balances))
                     }
-                    IconButton(onClick = { unfinished = settings }, modifier = Modifier.semantics {
+                    if (!scene.isSettings) IconButton(onClick = { if (stack.lastOrNull() != "settings:") stack = stack + "settings:" }, modifier = Modifier.semantics {
                         contentDescription = settings
                     }) { Avatar(profile, Modifier.size(32.dp)) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         } },
-        bottomBar = { if (!activeForm) {
+        bottomBar = { if (scene.showBottomBar) {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                 Destination.entries.forEach { destination ->
                     NavigationBarItem(
@@ -116,7 +135,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
             }
         } },
         floatingActionButton = {
-            if (stack.isEmpty()) ExtendedFloatingActionButton(
+            if (scene.showAdd) ExtendedFloatingActionButton(
                 onClick = { addMenu = true }, icon = { Icon(IouIcons.Add, null) }, text = { Text(add) },
                 containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
             )
@@ -124,90 +143,166 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
     ) { insets ->
         Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
             val route = stack.lastOrNull()
-            holder.SaveableStateProvider(route ?: selected.name) {
-                if (route != null) {
-                    val id = route.substringAfter(':')
-                    when (route.substringBefore(':')) {
-                        "form-person", "form-handle", "form-group" -> {
-                            val parts = route.split(':')
-                            val vm: MetadataFormViewModel = hiltViewModel(key = route)
-                            val kind = when (parts[0]) { "form-person" -> MetadataKind.PERSON; "form-handle" -> MetadataKind.HANDLE; else -> MetadataKind.GROUP }
-                            val entity = if (kind == MetadataKind.HANDLE) parts.getOrNull(3)?.takeIf { it.isNotBlank() } else parts.getOrNull(2)?.takeIf { it.isNotBlank() }
-                            val owner = if (kind == MetadataKind.HANDLE) parts.getOrNull(2) else null
-                            val members = if (kind == MetadataKind.GROUP) parts.getOrNull(3).orEmpty().split(',').filter { it.isNotBlank() }.map(::PersonId).toSet() else emptySet()
-                            val parent = stack.dropLast(1).lastOrNull()?.takeIf { it.startsWith("form-entry:") || it.startsWith("form-entryedit:") }
-                            val parentVm: EntryFormViewModel? = if (parent != null) hiltViewModel(key = parent) else null
-                            LaunchedEffect(route) { vm.open(kind, entity, owner, members) }
-                            val form by vm.state.collectAsStateWithLifecycle()
-                            val status by vm.status.collectAsStateWithLifecycle()
-                            MetadataFormScreen(vm, form, status, hidden,
-                                close = { vm.end(); stack = stack.dropLast(1) },
-                                saved = { savedId ->
-                                    vm.end()
-                                    if (kind == MetadataKind.GROUP && parentVm != null) {
-                                        parentVm.useCreatedGroup(savedId); stack = stack.dropLast(1)
-                                    } else {
-                                        stack = stack.dropLast(1)
-                                        if (entity == null && kind != MetadataKind.HANDLE) stack = stack + "${if (kind == MetadataKind.PERSON) "person" else "group"}:$savedId"
+            CompositionLocalProvider(LocalReserveAddSpace provides scene.showAdd) {
+            PageEntrance(scene) {
+                    holder.SaveableStateProvider((route ?: selected.name) + "@" + generation?.value.orEmpty()) {
+                        if (route != null) {
+                            val id = route.substringAfter(':')
+                            when (route.substringBefore(':')) {
+                                "form-data" -> {
+                                    val vm: DataManagementViewModel = hiltViewModel(key = route)
+                                    LaunchedEffect(route) { vm.open(route.split(':').getOrNull(2) ?: "backup") }
+                                    DataManagementScreen(vm, hidden) { stack = stack.dropLast(1) }
+                                }
+                                "settings" -> {
+                                    SettingsScreen(settingsModel, security, hidden, requestAuthentication,
+                                        openData = { page -> stack = stack + formRoute("data", page) })
+                                }
+                                "form-prepared" -> {
+                                    val key = route.substringAfter(':')
+                                    when (val prepared = advanced.form(key)) {
+                                        is PreparedForm.Repayment -> {
+                                            val vm: EntryFormViewModel = hiltViewModel(key = route)
+                                            LaunchedEffect(route) { vm.openSettlement(prepared.draft) }
+                                            val form by vm.state.collectAsStateWithLifecycle()
+                                            val status by vm.status.collectAsStateWithLifecycle()
+                                            EntryFormScreen(vm, form, status, hidden,
+                                                close = { vm.finish(); advanced.forget(key); stack = stack.dropLast(1) },
+                                                saved = { savedId -> vm.finish(); advanced.forget(key); stack = stack.dropLast(1) + "entry:$savedId" },
+                                                createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
+                                        }
+                                        is PreparedForm.Recovery -> {
+                                            if (prepared.draft.draft is VersionDraft.OfEntry) {
+                                                val vm: EntryFormViewModel = hiltViewModel(key = route)
+                                                LaunchedEffect(route) { vm.openRecovery(prepared.draft) }
+                                                val form by vm.state.collectAsStateWithLifecycle()
+                                                val status by vm.status.collectAsStateWithLifecycle()
+                                                EntryFormScreen(vm, form, status, hidden,
+                                                    close = { vm.finish(); advanced.forget(key); stack = stack.dropLast(1) },
+                                                    saved = { savedId -> vm.finish(); advanced.forget(key); stack = stack.dropLast(1); if (stack.lastOrNull() != "entry:$savedId") stack = stack + "entry:$savedId" },
+                                                    createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
+                                            } else {
+                                                val vm: MetadataFormViewModel = hiltViewModel(key = route)
+                                                LaunchedEffect(route) { vm.openRecovery(prepared.draft) }
+                                                val form by vm.state.collectAsStateWithLifecycle()
+                                                val status by vm.status.collectAsStateWithLifecycle()
+                                                MetadataFormScreen(vm, form, status, hidden,
+                                                    close = { vm.end(); advanced.forget(key); stack = stack.dropLast(1) },
+                                                    saved = { vm.end(); advanced.forget(key); stack = stack.dropLast(1); scope.launch { snackbar.showSnackbar("Historical draft saved as a new revision") } })
+                                            }
+                                        }
+                                        null -> {
+                                            BackHandler { stack = stack.dropLast(1) }
+                                            Column(Modifier.padding(20.dp)) {
+                                                Text("This prepared draft is unavailable. Return to the current ledger and prepare it again.")
+                                                TextButton(onClick = { stack = stack.dropLast(1) }) { Text("Back") }
+                                            }
+                                        }
                                     }
-                                    scope.launch { snackbar.showSnackbar(if (entity == null) "Saved" else "Changes saved") }
-                                })
-                        }
-                        "form-entry", "form-entryedit" -> {
-                            val parts = route.split(':')
-                            val vm: EntryFormViewModel = hiltViewModel(key = route)
-                            LaunchedEffect(route) { vm.open(parts.getOrNull(2) ?: "expense", if (parts[0] == "form-entryedit") parts.getOrNull(2) else null) }
-                            val form by vm.state.collectAsStateWithLifecycle()
-                            val status by vm.status.collectAsStateWithLifecycle()
-                            EntryFormScreen(vm, form, status, hidden,
-                                close = { vm.finish(); stack = stack.dropLast(1) },
-                                saved = { savedId ->
-                                    vm.finish(); stack = stack.dropLast(1)
-                                    if (stack.lastOrNull() != "entry:$savedId") stack = stack + "entry:$savedId"
-                                }, createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
-                        }
-                        "group" -> {
-                            val vm: GroupDetailViewModel = hiltViewModel(key = route)
-                            LaunchedEffect(id) { vm.open(id) }
-                            val detail by vm.state.collectAsStateWithLifecycle()
-                            GroupDetailScreen(detail, hidden, vm::retry, openPerson, openEntry, onEdit = { stack = stack + formRoute("group", id) })
-                        }
-                        "entry" -> {
-                            val vm: EntryDetailViewModel = hiltViewModel(key = route)
-                            LaunchedEffect(id) { vm.open(id) }
-                            val detail by vm.state.collectAsStateWithLifecycle()
-                            EntryDetailScreen(detail, hidden, vm::retry, openPerson, openGroup, onEdit = { stack = stack + formRoute("entryedit", id) })
-                        }
-                        "person" -> {
-                            val vm: PersonDetailViewModel = hiltViewModel(key = route)
-                            LaunchedEffect(id) { vm.open(id) }
-                            val detail by vm.state.collectAsStateWithLifecycle()
-                            PersonDetailScreen(detail, hidden, vm::retry, openGroup, openEntry,
-                                onEdit = { stack = stack + formRoute("person", id) },
-                                onAddHandle = { stack = stack + formRoute("handle", id) },
-                                onEditHandle = { handle -> stack = stack + formRoute("handle", "$id:$handle") })
+                                }
+                                "form-merge" -> {
+                                    val vm: MergeViewModel = hiltViewModel(key = route)
+                                    LaunchedEffect(route) { vm.open(route.split(':').getOrNull(2).orEmpty()) }
+                                    val form by vm.state.collectAsStateWithLifecycle()
+                                    val status by vm.status.collectAsStateWithLifecycle()
+                                    MergeScreen(vm, form, status, hidden,
+                                        close = { vm.end(); stack = stack.dropLast(1) },
+                                        merged = { canonical -> vm.end(); stack = stack.dropLast(1); if (stack.lastOrNull()?.startsWith("person:") == true) stack = stack.dropLast(1); stack = stack + "person:$canonical" })
+                                }
+                                "members" -> {
+                                    val vm: MembersViewModel = hiltViewModel(key = route)
+                                    LaunchedEffect(id) { vm.open(id) }
+                                    val members by vm.state.collectAsStateWithLifecycle()
+                                    MembersScreen(members, hidden, vm::retry, advanced::request)
+                                }
+                                "form-person", "form-handle", "form-group" -> {
+                                    val parts = route.split(':')
+                                    val vm: MetadataFormViewModel = hiltViewModel(key = route)
+                                    val kind = when (parts[0]) { "form-person" -> MetadataKind.PERSON; "form-handle" -> MetadataKind.HANDLE; else -> MetadataKind.GROUP }
+                                    val entity = if (kind == MetadataKind.HANDLE) parts.getOrNull(3)?.takeIf { it.isNotBlank() } else parts.getOrNull(2)?.takeIf { it.isNotBlank() }
+                                    val owner = if (kind == MetadataKind.HANDLE) parts.getOrNull(2) else null
+                                    val members = if (kind == MetadataKind.GROUP) parts.getOrNull(3).orEmpty().split(',').filter { it.isNotBlank() }.map(::PersonId).toSet() else emptySet()
+                                    val parent = stack.dropLast(1).lastOrNull()?.takeIf { it.startsWith("form-entry:") || it.startsWith("form-entryedit:") || it.startsWith("form-prepared:") }
+                                    val parentVm: EntryFormViewModel? = if (parent != null) hiltViewModel(key = parent) else null
+                                    LaunchedEffect(route) { vm.open(kind, entity, owner, members) }
+                                    val form by vm.state.collectAsStateWithLifecycle()
+                                    val status by vm.status.collectAsStateWithLifecycle()
+                                    MetadataFormScreen(vm, form, status, hidden,
+                                        close = { vm.end(); stack = stack.dropLast(1) },
+                                        saved = { savedId ->
+                                            vm.end()
+                                            if (kind == MetadataKind.GROUP && parentVm != null) {
+                                                parentVm.useCreatedGroup(savedId); stack = stack.dropLast(1)
+                                            } else {
+                                                stack = stack.dropLast(1)
+                                                if (entity == null && kind != MetadataKind.HANDLE) stack = stack + "${if (kind == MetadataKind.PERSON) "person" else "group"}:$savedId"
+                                            }
+                                            scope.launch { snackbar.showSnackbar(if (entity == null) "Saved" else "Changes saved") }
+                                        })
+                                }
+                                "form-entry", "form-entryedit" -> {
+                                    val parts = route.split(':')
+                                    val vm: EntryFormViewModel = hiltViewModel(key = route)
+                                    LaunchedEffect(route) { vm.open(parts.getOrNull(2) ?: "expense", if (parts[0] == "form-entryedit") parts.getOrNull(2) else null) }
+                                    val form by vm.state.collectAsStateWithLifecycle()
+                                    val status by vm.status.collectAsStateWithLifecycle()
+                                    EntryFormScreen(vm, form, status, hidden,
+                                        close = { vm.finish(); stack = stack.dropLast(1) },
+                                        saved = { savedId ->
+                                            vm.finish(); stack = stack.dropLast(1)
+                                            if (stack.lastOrNull() != "entry:$savedId") stack = stack + "entry:$savedId"
+                                        }, createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
+                                }
+                                "group" -> {
+                                    val vm: GroupDetailViewModel = hiltViewModel(key = route)
+                                    LaunchedEffect(id) { vm.open(id) }
+                                    val detail by vm.state.collectAsStateWithLifecycle()
+                                    GroupDetailScreen(detail, hidden, vm::retry, openPerson, openEntry, onEdit = { stack = stack + formRoute("group", id) }, request = advanced::request,
+                                        onMembers = { stack = stack + "members:$id" }, onRecordPlan = advanced::preparePlan)
+                                }
+                                "entry" -> {
+                                    val vm: EntryDetailViewModel = hiltViewModel(key = route)
+                                    LaunchedEffect(id) { vm.open(id) }
+                                    val detail by vm.state.collectAsStateWithLifecycle()
+                                    EntryDetailScreen(detail, hidden, vm::retry, openPerson, openGroup, onEdit = { stack = stack + formRoute("entryedit", id) }, request = advanced::request)
+                                }
+                                "person" -> {
+                                    val vm: PersonDetailViewModel = hiltViewModel(key = route)
+                                    LaunchedEffect(id) { vm.open(id) }
+                                    val detail by vm.state.collectAsStateWithLifecycle()
+                                    PersonDetailScreen(detail, hidden, vm::retry, openGroup, openEntry,
+                                        onEdit = { stack = stack + formRoute("person", id) },
+                                        onAddHandle = { stack = stack + formRoute("handle", id) },
+                                        onEditHandle = { handle -> stack = stack + formRoute("handle", "$id:$handle") },
+                                        request = advanced::request, onMerge = { stack = stack + formRoute("merge", id) }, onRecordPlan = advanced::preparePlan)
+                                }
+                            }
+                        } else when (selected) {
+                            Destination.Overview -> OverviewScreen(state, hidden,
+                                onNavigate = { selectedName = it.name }, onFeature = { feature -> when (feature) { addPersonLabel -> addPerson(); createGroupLabel -> addGroup(); addExpenseLabel -> addEntry("expense"); else -> if (feature == backupControlsLabel) stack = stack + formRoute("data", "backup") else unfinished = feature } }, onRetry = viewModel::retry,
+                                onPerson = openPerson, onGroup = openGroup, onEntry = openEntry)
+                            Destination.Groups -> {
+                                val vm: GroupsViewModel = hiltViewModel()
+                                val groups by vm.state.collectAsStateWithLifecycle()
+                                GroupsScreen(groups, hidden, vm::retry, openGroup, onAdd = addGroup)
+                            }
+                            Destination.Activity -> {
+                                val vm: ActivityViewModel = hiltViewModel()
+                                val activity by vm.state.collectAsStateWithLifecycle()
+                                ActivityScreen(activity, hidden, vm::retry, vm::filter, openEntry)
+                            }
+                            Destination.People -> {
+                                val vm: PeopleViewModel = hiltViewModel()
+                                val people by vm.state.collectAsStateWithLifecycle()
+                                PeopleScreen(people, hidden, vm::retry, openPerson, onAdd = addPerson)
+                            }
+                            Destination.Settlements -> {
+                                val vm: SettlementsViewModel = hiltViewModel()
+                                val settlements by vm.state.collectAsStateWithLifecycle()
+                                SettlementsScreen(settlements, hidden, vm::retry, advanced::preparePersonal, advanced::preparePlan, openGroup)
+                            }
                         }
                     }
-                } else when (selected) {
-                    Destination.Overview -> OverviewScreen(state, hidden,
-                        onNavigate = { selectedName = it.name }, onFeature = { feature -> when (feature) { addPersonLabel -> addPerson(); createGroupLabel -> addGroup(); addExpenseLabel -> addEntry("expense"); else -> unfinished = feature } }, onRetry = viewModel::retry,
-                        onPerson = openPerson, onGroup = openGroup, onEntry = openEntry)
-                    Destination.Groups -> {
-                        val vm: GroupsViewModel = hiltViewModel()
-                        val groups by vm.state.collectAsStateWithLifecycle()
-                        GroupsScreen(groups, hidden, vm::retry, openGroup, onAdd = addGroup)
-                    }
-                    Destination.Activity -> {
-                        val vm: ActivityViewModel = hiltViewModel()
-                        val activity by vm.state.collectAsStateWithLifecycle()
-                        ActivityScreen(activity, hidden, vm::retry, vm::filter, openEntry)
-                    }
-                    Destination.People -> {
-                        val vm: PeopleViewModel = hiltViewModel()
-                        val people by vm.state.collectAsStateWithLifecycle()
-                        PeopleScreen(people, hidden, vm::retry, openPerson, onAdd = addPerson)
-                    }
-                    else -> UnfinishedDestination(stringResource(selected.title)) { selectedName = Destination.Overview.name }
                 }
             }
         }
@@ -225,6 +320,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel()) {
             }
         }
     }
+    AdvancedDialog(advanced, advancedState, hidden)
     if (unfinished != null) AlertDialog(
         onDismissRequest = { unfinished = null },
         icon = { Icon(IouIcons.Info, null) },
@@ -240,16 +336,4 @@ private fun Destination.icon(): ImageVector = when (this) {
     Destination.Groups -> IouIcons.Groups
     Destination.Activity -> IouIcons.Activity
     Destination.Settlements -> IouIcons.Settle
-}
-
-@Composable
-private fun UnfinishedDestination(title: String, onBack: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(IouIcons.Info, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(title, style = MaterialTheme.typography.headlineMedium)
-        Text(stringResource(R.string.not_implemented), color = MaterialTheme.colorScheme.primary)
-        Text("Settlement recording is planned for a later phase.", style = MaterialTheme.typography.bodyLarge)
-        FilledTonalButton(onClick = onBack) { Text(stringResource(R.string.back_overview)) }
-    }
 }

@@ -25,8 +25,8 @@ val IouTypography = Typography(
     titleLarge = style(20, 26, FontWeight.SemiBold),
     titleMedium = style(16, 22, FontWeight.SemiBold),
     titleSmall = style(14, 20, FontWeight.Medium),
-    bodyLarge = style(16, 24), bodyMedium = style(15, 22), bodySmall = style(13, 19),
+    bodyLarge = style(16, 24), bodyMedium = style(15, 22), bodySmall = style(14, 20),
     labelLarge = style(15, 20, FontWeight.SemiBold),
-    labelMedium = style(12, 16, FontWeight.Medium), labelSmall = style(11, 15, FontWeight.Medium),
+    labelMedium = style(13, 18, FontWeight.Medium), labelSmall = style(12, 17, FontWeight.Medium),
 )
 val MoneyFeatures = TextStyle(fontFeatureSettings = "tnum")

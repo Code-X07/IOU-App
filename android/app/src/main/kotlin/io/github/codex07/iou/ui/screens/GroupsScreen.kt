@@ -10,6 +10,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.codex07.iou.api.*
 import io.github.codex07.iou.ledger.model.FxMode
+import io.github.codex07.iou.ledger.model.EntityType
+import io.github.codex07.iou.ui.forms.restoreAction
 import io.github.codex07.iou.ui.components.*
 import io.github.codex07.iou.ui.viewmodel.*
 
@@ -28,7 +30,7 @@ fun GroupsScreen(state: BrowseState<List<GroupSummary>>, hidden: Boolean, retry:
             item { BrowseChips(listOf("Active", "Archived", "Deleted"), filter, { filter = it }) }
             if (visible.isEmpty()) item { Notice("No groups here", "Groups in this category will appear here with their original currency balances.") }
             items(visible, key = { it.group.id.value }) { group ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = androidx.compose.animation.core.tween(IouMotion.placement)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (group.deleted) Text("Deleted · history kept")
                     GroupPreview(group, hidden, { open(group.group.id.value) }, Modifier.fillMaxWidth())
                     Text("Default currency · ${group.defaultCurrency.code}", style = MaterialTheme.typography.bodySmall)
@@ -40,7 +42,8 @@ fun GroupsScreen(state: BrowseState<List<GroupSummary>>, hidden: Boolean, retry:
 
 @Composable
 fun GroupDetailScreen(state: BrowseState<GroupDetail>, hidden: Boolean, retry: () -> Unit,
-                      openPerson: (String) -> Unit, openEntry: (String) -> Unit, onEdit: () -> Unit = {}) {
+                      openPerson: (String) -> Unit, openEntry: (String) -> Unit, onEdit: () -> Unit = {},
+                      request: (AdvancedAction) -> Unit = {}, onMembers: () -> Unit = {}, onRecordPlan: (PlanItem) -> Unit = {}) {
     var tab by rememberSaveable { mutableStateOf("Overview") }
     val scroll = rememberLazyListState()
     BrowseContent(state, retry) { group ->
@@ -50,6 +53,9 @@ fun GroupDetailScreen(state: BrowseState<GroupDetail>, hidden: Boolean, retry: (
                 group.archived -> "Archived"
                 else -> "${group.members.count { it.active }} active members · ${group.defaultCurrency.code}"
             }) }
+            item { LifecycleActions(EntityRef(EntityType.GROUP, group.group.id.value), group.token, group.group.name, group.deleted, group.archived, request) }
+            if (group.archived) item { Notice("Archived group", "Outstanding positions remain in the ledger and in your totals.") }
+            if (!group.deleted) item { TextButton(onClick = onMembers) { Text("Manage members") } }
             if (!group.deleted) item { TextButton(onClick = onEdit) { Text("Edit group") } }
             item { BrowseChips(listOf("Overview", "Expenses", "Members", "Balances", "Suggestions", "Activity", "History"), tab, { tab = it }) }
             when (tab) {
@@ -80,29 +86,30 @@ fun GroupDetailScreen(state: BrowseState<GroupDetail>, hidden: Boolean, retry: (
                                     Text(if (member.active) "Active member" else "Former member", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-                            BalancePanel(member.nets, hidden, group = true)
+                            BalancePanel(member.nets, hidden, group = true, framed = false)
                             if (!member.person.isMe) TextButton(onClick = { openPerson(member.person.id.value) }) { Text("View person") }
                         } }
                     }
                 }
                 "Suggestions" -> {
-                    item { Notice("Suggested transfers", "These suggestions come from the ledger. No payment has been recorded. Settlement recording is planned for a later phase.") }
+                    item { Notice("Suggested transfers", "These suggestions come from the ledger. No payment has been recorded. Choose Record repayment to review a prefilled entry, including partial amounts.") }
                     if (group.settlePlan.isEmpty()) item { Text("No settlement suggestions available.") }
-                    items(group.settlePlan) { plan -> SettlementSuggestion(plan, hidden) }
+                    items(group.settlePlan, key = { "plan:${it.group?.id?.value}:${it.from.id.value}:${it.to.id.value}:${it.amount.currency.code}" }) { plan -> SettlementSuggestion(plan, hidden, { onRecordPlan(plan) }) }
                 }
-                "History" -> revisionRows(group.history, hidden)
+                "History" -> revisionRows(group.history, hidden, { group.restoreAction(it)?.let(request) }, { group.restoreAction(it) != null }, onMembers)
             }
         }
     }
 }
 
 @Composable
-fun SettlementSuggestion(plan: PlanItem, hidden: Boolean) {
+fun SettlementSuggestion(plan: PlanItem, hidden: Boolean, record: (() -> Unit)? = null) {
     IouCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("${plan.from.displayName} → ${plan.to.displayName}", style = MaterialTheme.typography.titleMedium)
             Text("Suggested · ${plan.from.displayName} pays ${plan.to.displayName}", style = MaterialTheme.typography.bodySmall)
             MoneyText(plan.amount, hidden)
+            if (record != null) TextButton(onClick = record) { Text("Record repayment") }
         }
     }
 }

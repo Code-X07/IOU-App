@@ -191,7 +191,7 @@ private fun FinancialHero(overview: Overview, hidden: Boolean, onSettle: () -> U
                 HorizontalDivider(color = extra.heroText.copy(alpha = .12f))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     FilledTonalButton(onClick = onSettle, colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = Color.White.copy(alpha = .12f), contentColor = extra.heroText)) {
+                        containerColor = extra.heroText, contentColor = extra.heroEnd)) {
                         Icon(IouIcons.Settle, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.nav_settle))
@@ -237,7 +237,7 @@ private fun BalanceCard(overview: Overview, owed: Boolean, hidden: Boolean, onCl
                 Modifier.size(28.dp).background(tint.copy(alpha = .1f), MaterialTheme.shapes.small).padding(4.dp), tint = tint)
             Text(stringResource(if (owed) R.string.owed_to_you else R.string.you_owe),
                 style = MaterialTheme.typography.titleSmall, color = colors.onSurfaceVariant)
-            MoneyLines(amounts, hidden, color = tint)
+            MoneyLines(amounts, hidden, Modifier.fillMaxWidth(), color = tint)
             if (amounts.any { it.currency != overview.homeCurrency }) {
                 Text(if (approximate != null) stringResource(R.string.approximate_total,
                     MoneyFormatter.format(approximate, hidden)) else stringResource(R.string.conversion_unavailable),

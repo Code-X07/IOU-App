@@ -27,7 +27,7 @@ private val DarkColors = darkColorScheme(
 )
 private val LightColors = lightColorScheme(
     primary = LightPrimary, onPrimary = LightSurface,
-    primaryContainer = LightPrimary.copy(alpha = .11f), onPrimaryContainer = LightPrimary,
+    primaryContainer = LightPrimary.copy(alpha = .11f), onPrimaryContainer = LightOnPrimaryContainer,
     secondary = LightSecondary, onSecondary = LightSurface,
     secondaryContainer = LightSecondary.copy(alpha = .12f), onSecondaryContainer = LightSecondary,
     tertiary = LightNegative, onTertiary = LightSurface,
@@ -48,7 +48,7 @@ data class IouExtraColors(
 private val DarkExtras = IouExtraColors(Color(0xFF1B5243), Color(0xFF183A33), DarkSurface,
     DarkOnBackground, Color(0xFFB7C6C2), DarkWarning)
 private val LightExtras = IouExtraColors(LightPrimary, Color(0xFF11654B), Color(0xFF0E5640),
-    LightBackground, LightBackground.copy(alpha = .78f), LightWarning)
+    LightBackground, LightBackground, LightWarning)
 val LocalIouColors = staticCompositionLocalOf { DarkExtras }
 
 @Composable

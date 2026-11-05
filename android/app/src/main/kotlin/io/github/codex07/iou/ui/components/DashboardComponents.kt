@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -76,10 +77,11 @@ fun SectionHeader(title: String, onAll: () -> Unit) {
 @Composable
 fun Avatar(name: String, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    val background = listOf(colors.primaryContainer, colors.secondaryContainer,
-        colors.error.copy(alpha = .12f))[Math.floorMod(name.hashCode(), 3)]
-    val initials = name.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.take(2)
-        .joinToString("") { it.take(1).uppercase() }.ifEmpty { "?" }
+    val background = when (Math.floorMod(name.hashCode(), 3)) {
+        0 -> colors.primaryContainer; 1 -> colors.secondaryContainer; else -> colors.error.copy(alpha = .12f)
+    }
+    val initials = androidx.compose.runtime.remember(name) { name.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.take(2)
+        .joinToString("") { it.take(1).uppercase() }.ifEmpty { "?" } }
     Box(modifier.size(42.dp).background(background, CircleShape), contentAlignment = Alignment.Center) {
         Text(initials, color = colors.onSurface, style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.clearAndSetSemantics { })
@@ -90,12 +92,12 @@ fun Avatar(name: String, modifier: Modifier = Modifier) {
 fun Notice(title: String, body: String, icon: ImageVector = IouIcons.Info,
            action: String? = null, onAction: () -> Unit = {}) {
     val colors = MaterialTheme.colorScheme
-    Surface(shape = MaterialTheme.shapes.medium, color = colors.secondaryContainer.copy(alpha = .6f)) {
+    Surface(shape = MaterialTheme.shapes.medium, color = colors.secondaryContainer.copy(alpha = colors.secondaryContainer.alpha * .6f)) {
         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(icon, null, tint = colors.secondary, modifier = Modifier.size(22.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(body, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                Text(body, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
                 if (action != null) TextButton(onClick = onAction) { Text(action) }
             }
         }
@@ -126,33 +128,45 @@ private fun balanceLabel(amounts: List<Money>, group: Boolean = false): String =
 }
 
 @Composable
+private fun FinancialPreviewRow(onClick: () -> Unit, leading: @Composable () -> Unit,
+                                main: @Composable () -> Unit, amounts: @Composable () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 76.dp).iouClickable(onClick = onClick)
+        .padding(horizontal = 16.dp, vertical = 12.dp)) {
+        val stacked = io.github.codex07.iou.ui.theme.AdaptiveLayout.stackFinancialRow(maxWidth.value, androidx.compose.ui.platform.LocalDensity.current.fontScale)
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                leading()
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) { main() }
+                if (!stacked) Column(Modifier.weight(.9f), horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) { amounts() }
+                Icon(IouIcons.Chevron, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (stacked) Column(Modifier.fillMaxWidth().padding(start = 54.dp), horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)) { amounts() }
+        }
+    }
+}
+
+@Composable
 fun PersonPreview(person: PersonSummary, hidden: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val status = balanceLabel(person.balances)
-    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clickable(role = Role.Button, onClick = onClick)
-        .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Avatar(person.person.displayName)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(person.person.displayName, style = MaterialTheme.typography.titleMedium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(if (person.archived) stringResource(R.string.archived_status, status) else status,
-                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+    FinancialPreviewRow(onClick, leading = { Avatar(person.person.displayName) }, main = {
+        Text(person.person.displayName, style = MaterialTheme.typography.titleMedium,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(if (person.archived) stringResource(R.string.archived_status, status) else status,
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+    }, amounts = {
+        if (person.balances.isEmpty()) Text(stringResource(R.string.all_settled), style = MaterialTheme.typography.bodySmall)
+        person.balances.forEach { money ->
+            MoneyText(money, hidden, magnitude = true, color = if (money.amountMinor < 0) colors.error else colors.primary)
+            if (person.balances.size > 1) Text(stringResource(when {
+                money.amountMinor > 0 -> R.string.owes_you
+                money.amountMinor < 0 -> R.string.you_owe_person
+                else -> R.string.all_settled
+            }), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         }
-        Column(Modifier.weight(.85f), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (person.balances.isEmpty()) Text(stringResource(R.string.all_settled), style = MaterialTheme.typography.bodySmall)
-            person.balances.forEach { money ->
-                MoneyText(money, hidden, magnitude = true,
-                    color = if (money.amountMinor < 0) colors.error else colors.primary)
-                if (person.balances.size > 1) Text(stringResource(when {
-                    money.amountMinor > 0 -> R.string.owes_you
-                    money.amountMinor < 0 -> R.string.you_owe_person
-                    else -> R.string.all_settled
-                }), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-            }
-        }
-        Icon(IouIcons.Chevron, null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
-    }
+    })
 }
 
 @Composable
@@ -193,11 +207,8 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
         null -> R.string.transfer_title
     })
     val payer = if (item.paidBy.isMe) stringResource(R.string.you) else item.paidBy.displayName
-    Row(Modifier.fillMaxWidth().heightIn(min = 76.dp).clickable(role = Role.Button, onClick = onClick)
-        .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Box(Modifier.size(40.dp).background(colors.primaryContainer, MaterialTheme.shapes.small),
-            contentAlignment = Alignment.Center) {
+    FinancialPreviewRow(onClick, leading = {
+        Box(Modifier.size(40.dp).background(colors.primaryContainer, MaterialTheme.shapes.small), contentAlignment = Alignment.Center) {
             Icon(when {
                 item.kind == io.github.codex07.iou.api.EntryKind.EXPENSE -> IouIcons.Activity
                 item.transferKind == TransferKind.LOAN -> IouIcons.People
@@ -205,28 +216,25 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
                 else -> IouIcons.UpRight
             }, null, tint = colors.primary)
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(when {
-                item.kind == io.github.codex07.iou.api.EntryKind.EXPENSE -> "Shared expense"
-                item.transferKind == TransferKind.LOAN -> "Personal loan"
-                item.transferKind == TransferKind.REPAYMENT -> "Recorded repayment"
-                else -> "Transfer"
-            }, style = MaterialTheme.typography.bodySmall, color = colors.secondary)
-            Text(stringResource(R.string.paid_context, payer,
-                item.group?.name ?: stringResource(R.string.personal_context)),
-                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-            item.receiver?.let { Text("To ${it.displayName}", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
-            Text(item.occurredOn.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)),
-                style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+    }, main = {
+        Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(when {
+            item.kind == io.github.codex07.iou.api.EntryKind.EXPENSE -> "Shared expense"
+            item.transferKind == TransferKind.LOAN -> "Personal loan"
+            item.transferKind == TransferKind.REPAYMENT -> "Recorded repayment"
+            else -> "Transfer"
+        }, style = MaterialTheme.typography.bodySmall, color = colors.secondary)
+        Text(stringResource(R.string.paid_context, payer, item.group?.name ?: stringResource(R.string.personal_context)),
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+        item.receiver?.let { Text("To ${it.displayName}", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
+        Text(item.occurredOn.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)),
+            style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+    }, amounts = {
+        Text("Paid amount", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+        MoneyText(item.paid, hidden)
+        item.myBalanceEffect?.takeIf { it.amountMinor != 0L }?.let {
+            Text("Your position", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            MoneyText(it, hidden, signed = true, color = if (it.amountMinor > 0) colors.primary else colors.error)
         }
-        Column(Modifier.weight(.8f), horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            MoneyText(item.paid, hidden)
-            item.myBalanceEffect?.takeIf { it.amountMinor != 0L }?.let {
-                Text("Your position", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-                MoneyText(it, hidden, signed = true, color = if (it.amountMinor > 0) colors.primary else colors.error)
-            }
-        }
-    }
+    })
 }

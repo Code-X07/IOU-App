@@ -9,6 +9,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.codex07.iou.api.*
+import io.github.codex07.iou.ui.forms.restoreAction
 import io.github.codex07.iou.ledger.model.*
 import io.github.codex07.iou.ui.components.*
 import io.github.codex07.iou.ui.viewmodel.*
@@ -35,7 +36,7 @@ fun ActivityScreen(state: BrowseState<ActivityPage>, hidden: Boolean, retry: () 
             item { BrowseChips(ActivityType.entries.map { it.label }, ActivityType.valueOf(type).label,
                 { label -> type = ActivityType.entries.first { it.label == label }.name }) }
             item {
-                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterStrip("Activity date, person and group filters") {
                     item { AssistChip(onClick = { picker = "date" }, label = { Text(period) }) }
                     item { AssistChip(onClick = { picker = "person" }, label = {
                         Text(page.people.firstOrNull { it.person.id.value == person }?.person?.displayName ?: "Person · All")
@@ -82,13 +83,14 @@ fun ActivityItem.typeLabel(): String = when {
 
 @Composable
 fun EntryDetailScreen(state: BrowseState<EntryDetail>, hidden: Boolean, retry: () -> Unit,
-                      openPerson: (String) -> Unit, openGroup: (String) -> Unit, onEdit: () -> Unit = {}) {
+                      openPerson: (String) -> Unit, openGroup: (String) -> Unit, onEdit: () -> Unit = {}, request: (AdvancedAction) -> Unit = {}) {
     var history by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberLazyListState()
     BrowseContent(state, retry) { entry ->
         val item = entry.item
         BrowseList(scroll) {
             item { DetailHeader(item.description ?: item.typeLabel(), item.typeLabel()) }
+            item { LifecycleActions(EntityRef(if (item.kind == EntryKind.EXPENSE) EntityType.EXPENSE else EntityType.TRANSFER, item.entryId.value), entry.token, "transaction", item.deleted, null, request) }
             if (!item.deleted) item { FilledTonalButton(onClick = onEdit) { Text("Edit transaction") } }
             if (item.deleted) item { Notice("Deleted transaction", "This record is kept for history. It no longer affects current balances.") }
             item { IouCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -138,9 +140,9 @@ fun EntryDetailScreen(state: BrowseState<EntryDetail>, hidden: Boolean, retry: (
                     Text("Ledger effect"); MoneyText(item.effect, hidden)
                 } } }
             }
-            item { TextButton(onClick = { history = !history }) { Text(if (history) "Hide revision history" else "Revision history · ${entry.history.size}") } }
-            if (history) revisionRows(entry.history, hidden)
-            item { Notice("Recorded transaction", "You can edit this record. Deletion and revision restoration remain planned for Phase 4.") }
+            item { HistoryToggle("Revision history", history, entry.history.size) { history = !history } }
+            if (history) revisionRows(entry.history, hidden, { entry.restoreAction(it)?.let(request) }, { entry.restoreAction(it) != null })
+            item { Notice("Recorded transaction", "You can edit this record. Delete, restore and historical-version recovery use current ledger rules.") }
         }
     }
 }

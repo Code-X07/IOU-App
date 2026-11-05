@@ -33,6 +33,7 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
             Text("Recorded in your ledger. IOU did not move any money.")
             state.remainingLabel?.let { BrowseHeading(it) }
             state.remaining?.let { BalancePanel(it, hidden, group = fields.group != null) }
+            state.remainingMembers.forEach { member -> Text(member.person.displayName, style = MaterialTheme.typography.titleMedium); BalancePanel(member.nets, hidden, group = true) }
         } else {
             if (status.error is LedgerError.StaleVersion) TextButton(onClick = { reload = true }) { Text("Review latest version") }
             if (hidden) Notice("Balances hidden", "Reveal individual inputs deliberately to edit them. Other balances and previews remain hidden.")

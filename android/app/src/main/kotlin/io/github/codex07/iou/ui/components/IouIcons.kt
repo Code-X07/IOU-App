@@ -30,5 +30,6 @@ object IouIcons {
     val Backup = icon("Backup", "M5 19H18C24 18 22 10 18 10C18 2 6 2 5 10C0 10 0 18 5 19M12 16V9M9 12L12 9L15 12")
     val Home = icon("Group", "M3 11L12 3L21 11M5 10V21H19V10M10 21V15H14V21")
     val Info = icon("Information", "M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12M12 11V17M12 7V7.1")
+    val Search = icon("Search", "M16 10A6 6 0 1 1 4 10A6 6 0 1 1 16 10M15 15L21 21")
     val Close = icon("Close", "M6 6L18 18M6 18L18 6")
 }
