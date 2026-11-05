@@ -69,6 +69,7 @@
 
 | File | Responsibility |
 |---|---|
+| `main/.../store/StoreApis.kt` | Reconcile the lock gate with committed device settings on cancellation or error |
 | `main/.../store/DeviceSettingsStore.kt` | `DeviceSettingsStore.settings` as `StateFlow`; `LockGate`; `TimedLockGate` (replaces `SimpleLockGate`) |
 | `main/.../data/FileDeviceSettings.kt` | `StateFlow` settings; an unreadable file counts as the defaults |
 | `main/.../data/RealBackend.kt`, `main/.../fake/FakeApis.kt` | Both flavors on `TimedLockGate` |
@@ -89,7 +90,7 @@
 
 **Files:**
 - Modify: `android/gradle/libs.versions.toml`, `android/app/build.gradle.kts`
-- Modify: `main/.../store/DeviceSettingsStore.kt` (whole file below), `main/.../data/FileDeviceSettings.kt`, `main/.../data/RealBackend.kt`, `main/.../fake/FakeApis.kt`, `main/.../MainActivity.kt`
+- Modify: `main/.../store/DeviceSettingsStore.kt` (whole file below), `main/.../store/StoreApis.kt`, `main/.../data/FileDeviceSettings.kt`, `main/.../data/RealBackend.kt`, `main/.../fake/FakeApis.kt`, `main/.../MainActivity.kt`
 - Modify: `main/.../IouApplication.kt`, `real/.../di/BackendModule.kt`, `fake/.../di/BackendModule.kt` (whole files below)
 - Create: `main/.../security/AppSecurity.kt`
 - Test: `test/.../store/TimedLockGateTest.kt`; modify `test/.../data/FileDeviceSettingsTest.kt`, `test/.../data/RealBackendTest.kt`
@@ -244,6 +245,40 @@ class TimedLockGateTest {
 Replace:
 
 ```kotlin
+
+import io.github.codex07.iou.api.LockTimeout
+import io.github.codex07.iou.store.DeviceSettings
+import io.github.codex07.iou.testutil.T0
+import io.kotest.matchers.shouldBe
+import java.io.File
+import kotlin.coroutines.CoroutineContext
+import kotlin.io.path.createTempDirectory
+```
+
+with:
+
+```kotlin
+
+import io.github.codex07.iou.api.LockTimeout
+import io.github.codex07.iou.ledger.model.DeviceId
+import io.github.codex07.iou.store.DeviceSettings
+import io.github.codex07.iou.store.LedgerContent
+import io.github.codex07.iou.store.LedgerStore
+import io.github.codex07.iou.store.StoreSettingsApi
+import io.github.codex07.iou.store.TimedLockGate
+import io.github.codex07.iou.testutil.SequentialIds
+import io.github.codex07.iou.testutil.T0
+import io.kotest.matchers.shouldBe
+import java.io.File
+import java.time.Clock
+import java.time.ZoneOffset
+import kotlin.coroutines.CoroutineContext
+import kotlin.io.path.createTempDirectory
+```
+
+Replace:
+
+```kotlin
     }
 
     @Test
@@ -269,6 +304,56 @@ with:
 
     @Test
     fun `an update whose caller is cancelled once the file is written still updates memory`() = runTest {
+```
+
+Replace:
+
+```kotlin
+            }
+        }
+        val store = FileDeviceSettings(file, io)
+        val update = launch(caller) { store.update { it.copy(appLockEnabled = true) } }
+        runCurrent()
+        // The write completes, then the caller is cancelled before it resumes, as leaving a settings screen could.
+```
+
+with:
+
+```kotlin
+            }
+        }
+        FileDeviceSettings(file).update { it.copy(appLockEnabled = true) }
+        val store = FileDeviceSettings(file, io)
+        val gate = TimedLockGate(store)
+        val ledger = LedgerStore(Clock.fixed(T0, ZoneOffset.UTC), SequentialIds("store"), DeviceId("device-1"), initial = LedgerContent())
+        val api = StoreSettingsApi(ledger, store, gate)
+        gate.required.value shouldBe true
+        val update = launch(caller) { api.setAppLockEnabled(false) }
+        runCurrent()
+        // The write completes, then the caller is cancelled before it resumes, as leaving a settings screen could.
+```
+
+Replace:
+
+```kotlin
+        update.join()
+
+        store.settings.first().appLockEnabled shouldBe true
+        FileDeviceSettings(file).settings.first().appLockEnabled shouldBe true
+    }
+}
+```
+
+with:
+
+```kotlin
+        update.join()
+
+        store.settings.first().appLockEnabled shouldBe false
+        FileDeviceSettings(file).settings.first().appLockEnabled shouldBe false
+        gate.required.value shouldBe false
+    }
+}
 ```
 
 `test/.../data/RealBackendTest.kt` adds a test:
@@ -504,6 +589,33 @@ with:
     }
 
     @Serializable
+```
+
+Reconcile the gate with the actual committed setting even when the update exits by cancellation or error. A failed disable must not clear a required gate; enabling mid-session must not lock it.
+
+`main/.../store/StoreApis.kt`:
+
+Replace:
+
+```kotlin
+
+    override suspend fun setAppLockEnabled(enabled: Boolean) = ok {
+        device.update { it.copy(appLockEnabled = enabled) }
+        lock.lockEnabledChanged(enabled)
+    }
+```
+
+with:
+
+```kotlin
+
+    override suspend fun setAppLockEnabled(enabled: Boolean) = ok {
+        try {
+            device.update { it.copy(appLockEnabled = enabled) }
+        } finally {
+            lock.lockEnabledChanged(device.settings.value.appLockEnabled)
+        }
+    }
 ```
 
 - [ ] **Step 5: Put both flavors on it**
@@ -1226,7 +1338,7 @@ The application element has `allowBackup="true"`, both rule files and `usesClear
 
 - [ ] **Step 6: Check Auto Backup on the emulator**
 
-Install and start the real debug build, then press Home: `bmgr` skips a force-stopped app. Note the transport marked `*` in `adb shell bmgr list transports`. Then:
+Install and start the real debug build, then press Home: `bmgr` skips a force-stopped app. Record the initial enabled state with `adb shell bmgr enabled` and note the transport marked `*` in `adb shell bmgr list transports` before changing either. Then:
 
 ```bash
 adb shell bmgr enable true
@@ -1234,7 +1346,7 @@ adb shell bmgr transport com.android.localtransport/.LocalTransport
 adb shell bmgr backupnow io.github.codex07.iou
 ```
 
-Expected: `Package io.github.codex07.iou with result: Backup is not allowed`. The local transport reports no end-to-end encryption, so the cloud rules refuse.
+Historical shell output was `Package io.github.codex07.iou with result: Backup is not allowed`. The currently verified emulator instead reports `Transport rejected package` (`-1002`). A generic transport error alone is not proof: verify the installed strict APK contains the exact approved encryption-required XML resources, then perform the single-attribute A/B below on the same disposable image and transport. The strict run must reject and the otherwise identical relaxed run must succeed.
 
 Use a separate fresh disposable test image and task-generated synthetic ledger data for this check. To check the contents, save the exact approved XML bytes and their hash, then use a local build only (never commit it): remove `disableIfNoEncryptionCapabilities="true"` from `data_extraction_rules.xml`, run `installRealDebug`, start the app and press Home. Then, only on that disposable image:
 

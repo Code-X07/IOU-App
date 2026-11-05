@@ -181,8 +181,11 @@ class StoreSettingsApi(
     override suspend fun setHomeCurrency(currency: CurrencyCode) = ok { store.updateSettings { it.copy(homeCurrency = currency) } }
 
     override suspend fun setAppLockEnabled(enabled: Boolean) = ok {
-        device.update { it.copy(appLockEnabled = enabled) }
-        lock.lockEnabledChanged(enabled)
+        try {
+            device.update { it.copy(appLockEnabled = enabled) }
+        } finally {
+            lock.lockEnabledChanged(device.settings.value.appLockEnabled)
+        }
     }
 
     override suspend fun setLockTimeout(timeout: LockTimeout) = ok { device.update { it.copy(lockTimeout = timeout) } }

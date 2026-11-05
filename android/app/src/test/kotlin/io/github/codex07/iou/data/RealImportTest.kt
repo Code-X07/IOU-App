@@ -121,7 +121,7 @@ class RealImportTest {
     /** Exports [backend], lets [edit] change the zip, and stores it where [harness] reads documents. */
     private suspend fun exported(backend: RealBackend, from: RealHarness = harness, edit: (ByteArray) -> ByteArray = { it }): DocumentRef {
         val bytes = edit(backend.apis.exportTo(from.documents, "raw.zip").readBytes())
-        harness.documents.file(file).also { it.parentFile.mkdirs() }.writeBytes(bytes)
+        harness.documents.file(file).also { requireNotNull(it.parentFile).mkdirs() }.writeBytes(bytes)
         return file
     }
 

@@ -1,10 +1,18 @@
 package io.github.codex07.iou.data
 
 import io.github.codex07.iou.api.LockTimeout
+import io.github.codex07.iou.ledger.model.DeviceId
 import io.github.codex07.iou.store.DeviceSettings
+import io.github.codex07.iou.store.LedgerContent
+import io.github.codex07.iou.store.LedgerStore
+import io.github.codex07.iou.store.StoreSettingsApi
+import io.github.codex07.iou.store.TimedLockGate
+import io.github.codex07.iou.testutil.SequentialIds
 import io.github.codex07.iou.testutil.T0
 import io.kotest.matchers.shouldBe
 import java.io.File
+import java.time.Clock
+import java.time.ZoneOffset
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.path.createTempDirectory
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -57,15 +65,21 @@ class FileDeviceSettingsTest {
                 writes += block
             }
         }
+        FileDeviceSettings(file).update { it.copy(appLockEnabled = true) }
         val store = FileDeviceSettings(file, io)
-        val update = launch(caller) { store.update { it.copy(appLockEnabled = true) } }
+        val gate = TimedLockGate(store)
+        val ledger = LedgerStore(Clock.fixed(T0, ZoneOffset.UTC), SequentialIds("store"), DeviceId("device-1"), initial = LedgerContent())
+        val api = StoreSettingsApi(ledger, store, gate)
+        gate.required.value shouldBe true
+        val update = launch(caller) { api.setAppLockEnabled(false) }
         runCurrent()
         // The write completes, then the caller is cancelled before it resumes, as leaving a settings screen could.
         writes.single().run()
         caller.cancel()
         update.join()
 
-        store.settings.first().appLockEnabled shouldBe true
-        FileDeviceSettings(file).settings.first().appLockEnabled shouldBe true
+        store.settings.first().appLockEnabled shouldBe false
+        FileDeviceSettings(file).settings.first().appLockEnabled shouldBe false
+        gate.required.value shouldBe false
     }
 }
