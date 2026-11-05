@@ -69,14 +69,20 @@ class FxService(
     }
 
     /**
-     * Caches the latest EUR rates for [currencies] (the daily refresh). True when they were fetched or there
-     * is nothing to fetch; false when Frankfurter was unavailable, so the caller can retry later.
+     * Caches the latest EUR rates for [currencies] (the daily refresh), requesting each currency separately.
+     * True when at least one rate was fetched or there is nothing to fetch; false when none was available.
      */
     suspend fun refresh(currencies: Set<CurrencyCode>): Boolean {
-        if (currencies.all { it == FrankfurterClient.EUR }) return true
-        val published = frankfurter.eurRates(null, currencies) ?: return false
-        add(rows(published))
-        return true
+        val requested = currencies - FrankfurterClient.EUR
+        if (requested.isEmpty()) return true
+        var fetched = false
+        for (currency in requested) {
+            val published = frankfurter.eurRates(null, setOf(currency)) ?: continue
+            if (currency !in published.perEur) continue
+            add(rows(published))
+            fetched = true
+        }
+        return fetched
     }
 
     private fun rows(published: PublishedRates): List<CachedRate> {

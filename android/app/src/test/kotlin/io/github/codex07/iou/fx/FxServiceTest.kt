@@ -160,6 +160,21 @@ class FxServiceTest {
     }
 
     @Test
+    fun `refresh keeps supported rates when a currency is unavailable`() = runTest {
+        frankfurter.publish(friday, "SEK" to "10", "USD" to "1.25")
+        val unsupported = CurrencyCode("ISK")
+        val cache = InMemoryRateCache()
+        val fx = service(cache).apply { load() }
+
+        fx.refresh(setOf(EUR, SEK, unsupported, USD)) shouldBe true
+        cache.rows shouldContainExactlyInAnyOrder eurRates(friday, SEK to "10", USD to "1.25")
+        fx.lookup.value.rate(EUR, SEK) shouldBe "10"
+        fx.lookup.value.rate(EUR, USD) shouldBe "1.25"
+        fx.lookup.value.rate(SEK, USD) shouldBe "0.125"
+        fx.lookup.value.rate(EUR, unsupported) shouldBe null
+    }
+
+    @Test
     fun `the refresh caches the latest rates and updates the lookup`() = runTest {
         frankfurter.publish(friday, "SEK" to "10", "USD" to "1.25")
         val cache = InMemoryRateCache()
@@ -172,7 +187,7 @@ class FxServiceTest {
         cache.rows shouldContainExactlyInAnyOrder eurRates(friday, SEK to "10", USD to "1.25")
 
         fx.refresh(setOf(EUR)) shouldBe true
-        frankfurter.requests.size shouldBe 1
+        frankfurter.requests.size shouldBe 2
         frankfurter.online = false
         fx.refresh(setOf(EUR, SEK)) shouldBe false
     }
