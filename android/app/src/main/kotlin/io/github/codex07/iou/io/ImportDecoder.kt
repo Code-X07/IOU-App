@@ -57,6 +57,8 @@ object ImportDecoder {
 
     private class RowError(val reason: String, val error: LedgerError?) : Exception(reason)
 
+    private class ShareErrors(val rows: List<InvalidRow>) : Exception()
+
     fun decode(file: ImportFile): DecodedImport {
         val invalid = mutableListOf<InvalidRow>()
 
@@ -68,6 +70,9 @@ object ImportDecoder {
                     val rowId = id(row)
                     if (!seen.add(rowId)) throw RowError("duplicate id $rowId", LedgerError.CorruptData("duplicate id $rowId"))
                     Incoming(table.name, row.number, reader.decode(), reader.sourceVersion())
+                } catch (e: ShareErrors) {
+                    invalid += e.rows
+                    null
                 } catch (e: RowError) {
                     invalid += InvalidRow(table.name, row.number, e.reason, e.error)
                     null
@@ -231,20 +236,22 @@ object ImportDecoder {
         fun expense(shareRows: List<CsvRow>): Expense {
             noGroup()
             val effectTotal = money("effect_total", "effect_currency")
-            val shares = shareRows
-                .map { RowReader(it) }
-                .sortedBy { it.long("position") }
-                .map { share ->
-                    try {
-                        ExpenseShare(
-                            personId = PersonId(share.required("person_id")),
-                            shareMinor = share.amount("share", share.required("share"), effectTotal.currency, share.long("share_minor")).amountMinor,
-                            inputValue = share.optionalLong("input_value"),
-                        )
-                    } catch (e: RowError) {
-                        throw RowError("expense_shares row ${shareRows[shareRows.indexOfFirst { it.cells == share.cells }].number}: ${e.reason}", e.error)
-                    }
+            val errors = mutableListOf<InvalidRow>()
+            val shares = shareRows.mapNotNull { row ->
+                val share = RowReader(row)
+                try {
+                    val position = share.long("position")
+                    position to ExpenseShare(
+                        personId = PersonId(share.required("person_id")),
+                        shareMinor = share.amount("share", share.required("share"), effectTotal.currency, share.long("share_minor")).amountMinor,
+                        inputValue = share.optionalLong("input_value"),
+                    )
+                } catch (e: RowError) {
+                    errors += InvalidRow(NormalizedTables.expenseShares.name, row.number, e.reason, e.error)
+                    null
                 }
+            }
+            if (errors.isNotEmpty()) throw ShareErrors(errors)
             return Expense(
                 id = EntryId(required("id")),
                 payerPersonId = PersonId(required("payer_person_id")),
@@ -254,7 +261,7 @@ object ImportDecoder {
                 effectTotal = effectTotal,
                 fxSnapshotId = optional("fx_snapshot_id")?.let(::FxSnapshotId),
                 splitType = enum<SplitType>("split_type"),
-                shares = shares,
+                shares = shares.sortedBy { it.first }.map { it.second },
                 occurredOn = date("occurred_on"),
                 note = optional("note"),
                 meta = meta(),

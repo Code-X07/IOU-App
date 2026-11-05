@@ -133,6 +133,27 @@ class ImportReaderTest {
                 entries["people.csv"] = entries.getValue("people.csv").let { it + it.lines()[2] + "\r\n" }
             },
         )
+        val parsed = (reader.read(file) as LedgerResult.Ok).value
+        val shares = parsed.rows(NormalizedTables.expenseShares)
+        fun withShares(rows: List<CsvRow>) = parsed.copy(tables = parsed.tables + (NormalizedTables.expenseShares.name to rows))
+        fun changed(row: CsvRow, column: String, value: String) = row.copy(cells = row.cells + (column to value))
+        for (position in listOf("", "bad")) {
+            val result = ImportDecoder.decode(withShares(listOf(changed(shares.first(), "position", position))))
+            result.ledger.expenses shouldBe emptyList()
+            result.invalid shouldBe listOf(
+                InvalidRow("expense_shares", 2, if (position.isEmpty()) "position: missing" else "position: not a whole number", LedgerError.InvalidField("position")),
+            )
+        }
+        val badShares = ImportDecoder.decode(withShares(listOf(
+            changed(shares[0], "position", "bad"),
+            changed(shares[1], "person_id", ""),
+        )))
+        badShares.ledger.expenses shouldBe emptyList()
+        badShares.invalid shouldContainExactlyInAnyOrder listOf(
+            InvalidRow("expense_shares", 2, "position: not a whole number", LedgerError.InvalidField("position")),
+            InvalidRow("expense_shares", 3, "person_id: missing", LedgerError.InvalidField("person_id")),
+        )
+
         decode(edited).invalid shouldContainExactlyInAnyOrder listOf(
             InvalidRow("transfers", 2, "amount: invalid amount 10.001", LedgerError.TooManyDecimals(2)),
             InvalidRow("transfers", 3, "amount: 20.00 doesn't match amount_minor 2001", LedgerError.CorruptData("amount mismatch")),
