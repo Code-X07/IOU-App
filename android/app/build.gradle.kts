@@ -112,6 +112,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
+    "realImplementation"(libs.androidx.work.runtime)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

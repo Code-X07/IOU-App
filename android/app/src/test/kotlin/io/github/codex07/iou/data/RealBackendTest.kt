@@ -1,13 +1,23 @@
 package io.github.codex07.iou.data
 
+import io.github.codex07.iou.api.FxQuote
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.LockTimeout
 import io.github.codex07.iou.api.PersonDraft
+import io.github.codex07.iou.api.SaveMode
 import io.github.codex07.iou.api.SetupState
+import io.github.codex07.iou.api.TransferDraft
+import io.github.codex07.iou.fake.FakeRates
+import io.github.codex07.iou.ledger.model.FxSource
+import io.github.codex07.iou.testutil.D0
+import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.RealHarness
 import io.github.codex07.iou.testutil.SEK
 import io.github.codex07.iou.testutil.SequentialIds
 import io.github.codex07.iou.testutil.T0
+import io.github.codex07.iou.testutil.eur
+import io.github.codex07.iou.testutil.sek
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import java.io.File
@@ -73,5 +83,34 @@ class RealBackendTest {
         backend.recovery shouldBe RestoreRecovery.Result(interrupted = true)
         File(harness.databaseDir, "iou-half-built.db").exists() shouldBe false
         files.readMarker() shouldBe null
+    }
+
+    @Test
+    fun `fetched rates are kept in the database and serve quotes after a restart`() = runTest {
+        val quote = harness.start().apis.fx.quote(D0, SEK, EUR).orFail()
+        quote shouldBe FxQuote(SEK, EUR, FakeRates.rate(SEK, EUR)!!, RealHarness.RATES_DATE, FxSource.ECB_FRANKFURTER, isStale = false)
+        harness.stop()
+
+        harness.frankfurter.online = false
+        val restarted = harness.start()
+        restarted.apis.fx.quote(RealHarness.RATES_DATE, SEK, EUR).orFail() shouldBe quote
+        restarted.apis.fx.quote(D0, SEK, EUR).orFail() shouldBe quote.copy(isStale = true)
+    }
+
+    @Test
+    fun `the rate refresh fetches the home and in-use currencies and fills the approximate totals`() = runTest {
+        val backend = harness.start()
+        backend.refreshRates() shouldBe true
+        harness.frankfurter.requests.shouldBeEmpty()
+
+        val me = backend.apis.setup.completeSetup("Me", EUR).orFail()
+        val basis = backend.apis.backup.observeLedgerGeneration().first()
+        val x = backend.apis.people.createPerson(PersonDraft("X"), basis).orFail()
+        backend.apis.ledger.saveTransfer(TransferDraft(me, x, sek(11_500), occurredOn = D0), SaveMode.Create(basis)).orFail()
+        backend.apis.ledger.observeOverview().first().approxOwedToMe shouldBe null
+
+        backend.refreshRates() shouldBe true
+        harness.frankfurter.requests.single().parameters["symbols"] shouldBe "SEK"
+        backend.apis.ledger.observeOverview().first { it.approxOwedToMe != null }.approxOwedToMe shouldBe eur(1_000)
     }
 }
