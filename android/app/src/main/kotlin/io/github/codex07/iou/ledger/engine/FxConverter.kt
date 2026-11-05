@@ -9,7 +9,6 @@ import io.github.codex07.iou.money.Money
 import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
-import kotlin.math.abs
 
 /** Exact currency conversion (spec §4.5). A rate is quote major units per one base major unit. */
 object FxConverter {
@@ -20,11 +19,13 @@ object FxConverter {
     const val MAX_RATE_SCALE = 64
 
     fun validateRate(rate: String): LedgerResult<BigDecimal> {
-        val parsed = runCatching { BigDecimal(rate.trim()) }.getOrNull()
-        val stripped = parsed?.stripTrailingZeros()
-        val valid = parsed != null && parsed.signum() > 0 &&
-            stripped!!.precision() <= MAX_RATE_DIGITS && abs(stripped.scale()) <= MAX_RATE_SCALE
-        return if (valid) LedgerResult.Ok(parsed!!) else LedgerResult.Err(LedgerError.InvalidRate(rate))
+        val (parsed, stripped) = runCatching {
+            val value = BigDecimal(rate.trim())
+            value to value.stripTrailingZeros()
+        }.getOrElse { return LedgerResult.Err(LedgerError.InvalidRate(rate)) }
+        val valid = parsed.signum() > 0 &&
+            stripped.precision() <= MAX_RATE_DIGITS && stripped.scale() in -MAX_RATE_SCALE..MAX_RATE_SCALE
+        return if (valid) LedgerResult.Ok(parsed) else LedgerResult.Err(LedgerError.InvalidRate(rate))
     }
 
     /** `HALF_EVEN(amountMinor × rate × 10^(fd(to) − fd(from)))`, exact up to that one rounding. */

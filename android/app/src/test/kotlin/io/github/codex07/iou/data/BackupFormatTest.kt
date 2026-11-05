@@ -84,7 +84,7 @@ class BackupFormatTest {
     @Test
     fun `cached rates that don't map or aren't valid are rejected`() {
         val rate = rows.rates.single()
-        for (bad in listOf(rate.copy(rateDate = "not a date"), rate.copy(base = "ZZZ"), rate.copy(rate = "0"))) {
+        for (bad in listOf(rate.copy(rateDate = "not a date"), rate.copy(base = "ZZZ"), rate.copy(rate = "0"), rate.copy(rate = "10E+2147483647"), rate.copy(rate = "100E+2147483647"))) {
             val backup = format.write(rows.copy(rates = listOf(bad)), "0.1.0", T0, null)
             format.read(backup, null).error()::class shouldBe LedgerError.CorruptFile::class
         }

@@ -33,7 +33,7 @@ class FileDeviceSettingsTest {
         second.settings.first() shouldBe DeviceSettings(true, LockTimeout.IMMEDIATELY, true, T0)
         second.update { it.copy(lastManualBackupAt = null) }
         FileDeviceSettings(file).settings.first().lastManualBackupAt shouldBe null
-        file.parentFile.list()!!.toList() shouldBe listOf("device-settings.json")
+        requireNotNull(file.parentFile).list()!!.toList() shouldBe listOf("device-settings.json")
     }
 
     @Test
