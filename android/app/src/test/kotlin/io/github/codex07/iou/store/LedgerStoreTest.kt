@@ -16,6 +16,7 @@ import io.kotest.matchers.shouldBe
 import java.time.Clock
 import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -23,6 +24,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class LedgerStoreTest {
 
     /** Records every entry; fails the next append when [failNext] is set. */
@@ -158,6 +160,9 @@ class LedgerStoreTest {
     fun `an unloaded store serves nothing until a ledger is published`() = runTest {
         val store = store(initial = null)
         val write = async { store.setUp() }
+        runCurrent()
+        write.isCompleted shouldBe false
+        journal.entries shouldBe emptyList()
         val generation = store.newGeneration()
 
         store.exclusive { live, publish ->
