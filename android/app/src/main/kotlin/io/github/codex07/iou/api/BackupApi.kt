@@ -9,16 +9,28 @@ interface BackupApi {
 
     fun observeBackupReminder(): Flow<BackupReminder>
 
-    /** Null [passphrase] writes an unencrypted backup (the UI warns first). */
+    /**
+     * Null [passphrase] writes an unencrypted backup (the UI warns first). Errors: `InvalidField("passphrase")`
+     * for a passphrase shorter than 8 characters (spec §9), `FileAccessFailed`.
+     */
     suspend fun createBackup(target: DocumentRef, passphrase: CharArray?): LedgerResult<BackupInfo>
 
     /**
      * Replaces the whole ledger, all or nothing. Errors: `WrongPassphraseOrDamagedFile`, `CorruptFile`,
-     * `SchemaTooNew`, `LimitsExceeded`.
+     * `SchemaTooNew`, `LimitsExceeded`, `FileAccessFailed`, `RestoreFailed`.
      */
     suspend fun restoreBackup(source: DocumentRef, passphrase: CharArray?): LedgerResult<Unit>
 
     fun observeUndoRestoreAvailable(): Flow<Boolean>
 
+    /** Errors: `NotFound("restore")` when there is nothing to undo, `RestoreFailed`. */
     suspend fun undoLastRestore(): LedgerResult<Unit>
+
+    /**
+     * True when the last restore or undo was cut off before its commit point (the app was killed): show "The
+     * last restore was interrupted, nothing changed" once, then call [dismissRestoreInterrupted] (spec §7.1).
+     */
+    fun observeRestoreInterrupted(): Flow<Boolean>
+
+    suspend fun dismissRestoreInterrupted()
 }

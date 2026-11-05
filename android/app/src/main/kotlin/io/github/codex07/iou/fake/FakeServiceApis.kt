@@ -30,13 +30,13 @@ import io.github.codex07.iou.ledger.model.ImportSource
 import io.github.codex07.iou.ledger.model.LedgerGeneration
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.ops.WritePlan
+import io.github.codex07.iou.store.BackupRules
 import io.github.codex07.iou.store.DeviceSettingsStore
 import io.github.codex07.iou.store.LedgerContent
 import io.github.codex07.iou.store.LedgerStore
 import io.github.codex07.iou.store.StoreFxApi
 import io.github.codex07.iou.store.StoreSnapshot
 import io.github.codex07.iou.store.StoreWrite
-import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,12 +53,10 @@ class FakeBackupApi(private val store: LedgerStore, private val device: DeviceSe
 
     override fun observeLedgerGeneration(): Flow<LedgerGeneration> = store.snapshot.map { it.generation }.distinctUntilChanged()
 
-    override fun observeBackupReminder(): Flow<BackupReminder> = device.settings.map { settings ->
-        val last = settings.lastManualBackupAt
-        BackupReminder(due = last == null || Duration.between(last, store.now()) > Duration.ofDays(30), lastBackupAt = last)
-    }.distinctUntilChanged()
+    override fun observeBackupReminder(): Flow<BackupReminder> = BackupRules.reminder(device, store::now)
 
     override suspend fun createBackup(target: DocumentRef, passphrase: CharArray?): LedgerResult<BackupInfo> {
+        BackupRules.checkPassphrase(passphrase)?.let { return LedgerResult.Err(it) }
         val now = store.now()
         passphrases[target.uri] = passphrase?.concatToString().orEmpty()
         device.update { it.copy(lastManualBackupAt = now) }
@@ -66,7 +64,7 @@ class FakeBackupApi(private val store: LedgerStore, private val device: DeviceSe
     }
 
     override suspend fun restoreBackup(source: DocumentRef, passphrase: CharArray?): LedgerResult<Unit> {
-        val stored = passphrases[source.uri] ?: return LedgerResult.Err(LedgerError.CorruptFile("No IOU backup at ${source.uri}"))
+        val stored = passphrases[source.uri] ?: return LedgerResult.Err(LedgerError.FileAccessFailed("No document at ${source.uri}"))
         if (stored != passphrase?.concatToString().orEmpty()) return LedgerResult.Err(LedgerError.WrongPassphraseOrDamagedFile)
         store.exclusive { live, publish ->
             val current = checkNotNull(live).content
@@ -84,6 +82,11 @@ class FakeBackupApi(private val store: LedgerStore, private val device: DeviceSe
         publish(previous, store.newGeneration())
         LedgerResult.Ok(Unit)
     }
+
+    /** The fake's restores can't be interrupted. */
+    override fun observeRestoreInterrupted(): Flow<Boolean> = MutableStateFlow(false)
+
+    override suspend fun dismissRestoreInterrupted() = Unit
 }
 
 /** Simulated import/export (M0 Part 7 "Decisions"): canned previews, real staleness checks. */

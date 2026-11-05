@@ -92,4 +92,27 @@ abstract class BackupApiContract : ApiContract() {
         apis.backup.restoreBackup(target, "wrong-pass".toCharArray()) shouldBe LedgerResult.Err(LedgerError.WrongPassphraseOrDamagedFile)
         basis() shouldBe before
     }
+
+    @Test
+    fun `a passphrase needs at least 8 characters`() = runTest {
+        setUpMe()
+        apis.backup.createBackup(backupTarget("f.iou"), "short".toCharArray()) shouldBe
+            LedgerResult.Err(LedgerError.InvalidField("passphrase"))
+        apis.backup.observeBackupReminder().first().due shouldBe true
+    }
+
+    @Test
+    fun `a document that doesn't exist can't be restored`() = runTest {
+        setUpMe()
+        val result = apis.backup.restoreBackup(backupTarget("missing.iou"), null)
+        (result as LedgerResult.Err).error::class shouldBe LedgerError.FileAccessFailed::class
+    }
+
+    @Test
+    fun `nothing is undone or reported before any restore`() = runTest {
+        setUpMe()
+        apis.backup.observeUndoRestoreAvailable().first() shouldBe false
+        apis.backup.undoLastRestore() shouldBe LedgerResult.Err(LedgerError.NotFound("restore"))
+        apis.backup.observeRestoreInterrupted().first() shouldBe false
+    }
 }

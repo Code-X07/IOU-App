@@ -71,6 +71,12 @@ sealed interface LedgerError {
     data class SchemaTooNew(val found: Int, val supported: Int) : LedgerError
     data object ForeignLedger : LedgerError
 
+    /** A picked document couldn't be opened, read or written (missing, revoked permission, full storage). */
+    data class FileAccessFailed(val detail: String) : LedgerError
+
+    /** A restore or undo failed before its commit point: "Restore failed, nothing changed" (spec §7.1). */
+    data class RestoreFailed(val detail: String) : LedgerError
+
     // Lookups
     data class NotFound(val id: String) : LedgerError
 }
