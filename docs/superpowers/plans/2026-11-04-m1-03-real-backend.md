@@ -22,6 +22,7 @@
 ## Decisions this part makes
 
 - **Device settings are a JSON file, not DataStore.** `FileDeviceSettings` keeps them in `noBackupFilesDir/device-settings.json`: read once at start, replaced atomically on every change. DataStore saves with `File.renameTo`, which on Windows can't replace an existing file, so its second write failed in local JVM tests. A file in `noBackupFilesDir` is also outside Auto Backup by location, whatever the backup rules say (spec §9).
+  - An update writes the file and then memory under `NonCancellable`. A caller cancelled once the file is written (a settings screen left mid-update) would otherwise skip the memory update, and the next update would write its change over stale settings. The IO dispatcher is a constructor parameter so a test can cancel at exactly that point.
 - **All ledger files live in the app's database directory**, which is the parent of `getDatabasePath("db-state.json")`: databases, pointer, temp pointer and marker. Part 8's backup rules include that directory and exclude the temp pointer and the marker.
 - **An unreadable marker is dropped without a report.** The pointer alone decides what is live, so nothing is lost; claiming "nothing changed" without knowing the target could be wrong. `deleteMarker` also deletes `restore-marker.json.tmp`, which a crash while writing the marker can leave.
 - **Room opens databases by absolute path** (`DbFiles.database(name)`), the same on the device and in JVM tests.
@@ -442,8 +443,14 @@ import io.github.codex07.iou.store.DeviceSettings
 import io.github.codex07.iou.testutil.T0
 import io.kotest.matchers.shouldBe
 import java.io.File
+import kotlin.coroutines.CoroutineContext
 import kotlin.io.path.createTempDirectory
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
@@ -463,6 +470,27 @@ class FileDeviceSettingsTest {
         second.update { it.copy(lastManualBackupAt = null) }
         FileDeviceSettings(file).settings.first().lastManualBackupAt shouldBe null
         file.parentFile.list()!!.toList() shouldBe listOf("device-settings.json")
+    }
+
+    @Test
+    fun `an update whose caller is cancelled once the file is written still updates memory`() = runTest {
+        val caller = Job()
+        val writes = mutableListOf<Runnable>()
+        val io = object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) {
+                writes += block
+            }
+        }
+        val store = FileDeviceSettings(file, io)
+        val update = launch(caller) { store.update { it.copy(appLockEnabled = true) } }
+        runCurrent()
+        // The write completes, then the caller is cancelled before it resumes, as leaving a settings screen could.
+        writes.single().run()
+        caller.cancel()
+        update.join()
+
+        store.settings.first().appLockEnabled shouldBe true
+        FileDeviceSettings(file).settings.first().appLockEnabled shouldBe true
     }
 }
 ```
@@ -673,7 +701,9 @@ import io.github.codex07.iou.store.DeviceSettings
 import io.github.codex07.iou.store.DeviceSettingsStore
 import java.io.File
 import java.time.Instant
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -687,7 +717,10 @@ import kotlinx.serialization.json.Json
  * Device-local settings (spec §3.3) as a small JSON file. The app keeps it in `noBackupFilesDir`, so it never
  * leaves the device (spec §9). Read once at construction; every update replaces the file atomically.
  */
-class FileDeviceSettings(private val file: File) : DeviceSettingsStore {
+class FileDeviceSettings(
+    private val file: File,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) : DeviceSettingsStore {
     private val lock = Mutex()
     private val state = MutableStateFlow(read())
 
@@ -696,8 +729,12 @@ class FileDeviceSettings(private val file: File) : DeviceSettingsStore {
     override suspend fun update(transform: (DeviceSettings) -> DeviceSettings) = lock.withLock {
         val next = transform(state.value)
         if (next == state.value) return@withLock
-        withContext(Dispatchers.IO) { file.writeAtomically(json.encodeToString(Stored.serializer(), Stored.of(next))) }
-        state.value = next
+        // Not cancellable: a caller cancelled once the file is written would otherwise skip the memory update,
+        // and the next update would then write its change over stale settings.
+        withContext(NonCancellable + io) {
+            file.writeAtomically(json.encodeToString(Stored.serializer(), Stored.of(next)))
+            state.value = next
+        }
     }
 
     private fun read(): DeviceSettings =
@@ -864,10 +901,10 @@ object BackendModule {
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.data.*"`
-Expected: PASS. `RealContractTests` adds 24 tests (setup 1, people 7, groups 5, ledger 9, settings 2), `RealBackendTest` 3 and `FileDeviceSettingsTest` 1.
+Expected: PASS. `RealContractTests` adds 24 tests (setup 1, people 7, groups 5, ledger 9, settings 2), `RealBackendTest` 3 and `FileDeviceSettingsTest` 2.
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 260 tests per flavor.
+Expected: PASS, 261 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL; lint reports no errors.

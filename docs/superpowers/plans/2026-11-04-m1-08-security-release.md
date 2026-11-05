@@ -244,15 +244,15 @@ class TimedLockGateTest {
 Replace:
 
 ```kotlin
-        file.parentFile.list()!!.toList() shouldBe listOf("device-settings.json")
     }
-}
+
+    @Test
+    fun `an update whose caller is cancelled once the file is written still updates memory`() = runTest {
 ```
 
 with:
 
 ```kotlin
-        file.parentFile.list()!!.toList() shouldBe listOf("device-settings.json")
     }
 
     @Test
@@ -262,7 +262,9 @@ with:
             FileDeviceSettings(file).settings.first() shouldBe DeviceSettings()
         }
     }
-}
+
+    @Test
+    fun `an update whose caller is cancelled once the file is written still updates memory`() = runTest {
 ```
 
 `test/.../data/RealBackendTest.kt` adds a test:
@@ -403,7 +405,9 @@ Replace:
 import io.github.codex07.iou.store.DeviceSettingsStore
 import java.io.File
 import java.time.Instant
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -417,7 +421,9 @@ import io.github.codex07.iou.store.DeviceSettingsStore
 import java.io.File
 import java.time.DateTimeException
 import java.time.Instant
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -431,7 +437,7 @@ Replace:
  * Device-local settings (spec §3.3) as a small JSON file. The app keeps it in `noBackupFilesDir`, so it never
  * leaves the device (spec §9). Read once at construction; every update replaces the file atomically.
  */
-class FileDeviceSettings(private val file: File) : DeviceSettingsStore {
+class FileDeviceSettings(
 ```
 
 with:
@@ -443,7 +449,7 @@ with:
  * unreadable file counts as the defaults: it is read as the app starts (`AppSecurity`), and a device setting
  * must not crash-loop the app.
  */
-class FileDeviceSettings(private val file: File) : DeviceSettingsStore {
+class FileDeviceSettings(
 ```
 
 Replace:
@@ -738,7 +744,7 @@ with:
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.store.*" --tests "io.github.codex07.iou.data.RealBackendTest" --tests "io.github.codex07.iou.data.FileDeviceSettingsTest" --tests "*SettingsApiContractTest"`
-Expected: PASS, 25 tests. New: `TimedLockGateTest` 5, `RealBackendTest` 1 (7 in all), `FileDeviceSettingsTest` 1 (2 in all). The settings contract still passes against both backends.
+Expected: PASS, 26 tests. New: `TimedLockGateTest` 5, `RealBackendTest` 1 (7 in all), `FileDeviceSettingsTest` 1 (3 in all). The settings contract still passes against both backends.
 
 - [ ] **Step 7: Install the policy on the device**
 
@@ -977,7 +983,7 @@ with:
 - [ ] **Step 8: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 366 tests per flavor.
+Expected: PASS, 369 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 33 warnings per flavor; the new one is the "newer version available" notice for `lifecycle-process`.
@@ -1187,7 +1193,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 369 tests per flavor.
+Expected: PASS, 372 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The `DataExtractionRules` warning (a Part 1 carryover) is gone.
@@ -1331,7 +1337,7 @@ class KdfTimingReceiver : BroadcastReceiver() {
 - [ ] **Step 2: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 369 tests per flavor (no new tests).
+Expected: PASS, 372 tests per flavor (no new tests).
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The release merged manifest has no `KdfTimingReceiver`.
@@ -1702,7 +1708,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 370 tests per flavor, 0 failures and 0 skipped.
+Expected: PASS, 373 tests per flavor, 0 failures and 0 skipped.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor; describe it that way, not as warning-free.
@@ -1733,7 +1739,7 @@ Every M1 criterion (index, ACs 1–21) has tests that prove it. Each criterion's
 | 18 | `EntryOpsTest` "a cross-currency repayment settles SEK with EUR and keeps or drops its snapshot on edit"; `LedgerApiContract` "a cross-currency settlement asks for a rate, then settles the other currency" |
 | 19 | `EntryOpsTest` "a bank-actual charge is kept on note and date edits and refused when the paid amount changes" |
 | 20 | `RealImportTest` "effects that their FX snapshot doesn't explain are invalid rows" |
-| 21 | `RealImportTest` "a handle added after the preview makes the commit stale, and the refresh shows it in the cascade" and "a handle the export shows deleted before its person stays deleted when the person is restored" |
+| 21 | `RealImportTest` "a handle added after the preview makes the commit stale, and the refresh shows it in the cascade", "a handle the export shows deleted before its person stays deleted when the person is restored" and "a new handle the export shows deleted apart from its locally deleted person stays deleted when the person is restored" |
 
 On the device, Tasks 1–3 checked what the placeholder can show. Backup, export and import have no screens yet, so on-device runs of ACs 7–13 and 15–21 wait for the friend's screens (owner's decision, 2026-11-05).
 
