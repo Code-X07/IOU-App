@@ -49,11 +49,15 @@ internal fun ResultScope.checkAmount(money: Money) {
 
 internal fun WriteContext.newMeta(): SyncMeta = SyncMeta(createdAt = now, updatedAt = now, authorId = meId)
 
-/** The entity's next version: `version + 1`, `updatedAt = now`, author me, and the given deleted state. */
+/**
+ * The entity's next version: `version + 1`, `updatedAt = now`, author me, and the given deleted state. The
+ * import batch is cleared: `importBatchId` names the batch that wrote the current version, so its revision is
+ * tagged with it and a later edit's isn't (import undo relies on that, spec §5.4).
+ */
 @Suppress("UNCHECKED_CAST")
 internal fun <E : LedgerEntity> WriteContext.touch(entity: E, deletedAt: Instant? = entity.meta.deletedAt): E =
     entity.withMeta(
-        entity.meta.copy(updatedAt = now, authorId = meId, version = entity.meta.version + 1, deletedAt = deletedAt),
+        entity.meta.copy(updatedAt = now, authorId = meId, version = entity.meta.version + 1, deletedAt = deletedAt, importBatchId = null),
     ) as E
 
 /** Runs the validator on the state [changes] would produce; the first violation becomes the error. */

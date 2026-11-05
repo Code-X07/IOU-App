@@ -1708,7 +1708,7 @@ with:
 - [ ] **Step 4: Run all checks**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 379 tests per flavor, 0 failures and 0 skipped.
+Expected: PASS, 380 tests per flavor, 0 failures and 0 skipped.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor; describe it that way, not as warning-free.

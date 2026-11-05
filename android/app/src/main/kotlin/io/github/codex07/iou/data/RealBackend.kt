@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import io.github.codex07.iou.BuildConfig
 import io.github.codex07.iou.api.Apis
-import io.github.codex07.iou.fake.FakeImportExportApi
 import io.github.codex07.iou.fx.FrankfurterClient
 import io.github.codex07.iou.fx.FxService
 import io.github.codex07.iou.io.LedgerExport
@@ -37,7 +36,7 @@ import kotlinx.coroutines.launch
  * returns at once; [start] runs recovery, opens the database the pointer names, loads the rate cache and
  * publishes the ledger, and reads and writes wait for that.
  *
- * Import is still the simulation from `fake`; Part 7 replaces it.
+ * Every api is real; nothing comes from `fake` any more.
  */
 class RealBackend(
     databaseDir: File,
@@ -73,7 +72,7 @@ class RealBackend(
         ledger = StoreLedgerApi(store),
         fx = StoreFxApi(fx),
         backup = RealBackupApi(store, device, documents, backupFormat, fx, restores, interrupted, appVersion),
-        importExport = RealImportExportApi(store, documents, LedgerExport(appVersion), FakeImportExportApi(store)),
+        importExport = RealImportExportApi(store, documents, LedgerExport(appVersion)),
         settings = StoreSettingsApi(store, device, SimpleLockGate()),
     )
 
