@@ -1202,7 +1202,7 @@ with:
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
 Expected: PASS, 379 tests per flavor.
 
-Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
+Run separately, in order: `.\gradlew.bat assembleFakeDebug assembleRealDebug assembleRealRelease`, then `.\gradlew.bat lintFakeDebug lintRealDebug`. Keeping release assembly separate avoids the observed cross-variant Hilt/lint generated-file race.
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The `DataExtractionRules` warning (a Part 1 carryover) is gone.
 
 - [ ] **Step 5: Review the merged release manifest**
@@ -1236,7 +1236,7 @@ adb shell bmgr backupnow io.github.codex07.iou
 
 Expected: `Package io.github.codex07.iou with result: Backup is not allowed`. The local transport reports no end-to-end encryption, so the cloud rules refuse.
 
-To check the contents, use a local build only (never commit it): remove `disableIfNoEncryptionCapabilities="true"` from `data_extraction_rules.xml`, run `installRealDebug`, start the app and press Home. Then:
+Use a separate fresh disposable test image and task-generated synthetic ledger data for this check. To check the contents, save the exact approved XML bytes and their hash, then use a local build only (never commit it): remove `disableIfNoEncryptionCapabilities="true"` from `data_extraction_rules.xml`, run `installRealDebug`, start the app and press Home. Then, only on that disposable image:
 
 ```bash
 adb shell "run-as io.github.codex07.iou sh -c 'echo {} > databases/restore-marker.json; echo x > files/other.txt'"
@@ -1253,7 +1253,7 @@ Expected:
 
 The next start shows `IOU (real): 0 balances` and creates a new `no_backup/device-id`.
 
-Put everything back: `git checkout -- android/app/src/main/res/xml/data_extraction_rules.xml`, then `adb shell bmgr transport <the noted transport>` and `adb shell bmgr enable false`.
+Restore the saved exact approved XML bytes and verify their hash, then rebuild and reinstall the strict APK. Do not use `git checkout` on an uncommitted approved rule file: it would restore the pre-task rules. Restore both the noted transport and initial enabled state (`bmgr enabled` records it before the test).
 
 - [ ] **Step 7: Commit**
 
@@ -1346,7 +1346,7 @@ class KdfTimingReceiver : BroadcastReceiver() {
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
 Expected: PASS, 379 tests per flavor (no new tests).
 
-Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
+Run separately, in order: `.\gradlew.bat assembleFakeDebug assembleRealDebug assembleRealRelease`, then `.\gradlew.bat lintFakeDebug lintRealDebug`. Keeping release assembly separate avoids the observed cross-variant Hilt/lint generated-file race.
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor. The release merged manifest has no `KdfTimingReceiver`.
 
 - [ ] **Step 3: Time Argon2id on the emulator (§14 item 3)**
@@ -1512,8 +1512,11 @@ backup service, timing on a phone, real spreadsheets and the signed APK. Use the
 `JAVA_HOME` set to JDK 21; `adb` is in the SDK's `platform-tools`. In Git Bash, set `MSYS_NO_PATHCONV=1`
 before `adb shell` commands with paths.
 
-The real debug and release builds share the application ID `io.github.codex07.iou` but not the signing key:
-uninstall one before installing the other.
+The real debug and release builds share the application ID `io.github.codex07.iou` but use different signing
+keys. Use separate fresh, disposable test images for debug checks and signed-release checks. Never uninstall,
+clear, restore or change the signing identity of an app profile containing user data. Any destructive backup
+or restore check must use task-generated synthetic data on a disposable image. Record the initial backup
+service state and transport, and restore both after testing.
 
 ## 1. Merged manifest (spec §9, §14 item 4)
 
@@ -1544,7 +1547,7 @@ uninstall one before installing the other.
 ## 2. App lock and screen protection (spec §9)
 
 Until the UI has a lock screen, the placeholder shows the lock state (", locked"). Set the device settings
-through the file:
+through the file on a fresh disposable image containing only test data:
 
 - [ ] Install realDebug (`./gradlew installRealDebug`) and start it once. Then write the settings and restart:
 
@@ -1557,7 +1560,7 @@ through the file:
   ```
 
   The screen shows `IOU (real): 0 balances, locked`. `adb shell dumpsys window windows | grep SECURE` finds
-  the window, and `adb shell screencap` gives a black image.
+  the window, and `adb shell screencap` gives a black app surface.
 - [ ] Delete `no_backup/device-settings.json` with `run-as` and restart: no lock, no `FLAG_SECURE`.
 - [ ] **On a real phone, once the UI's lock screen exists:** turn app lock on, and on return after the timeout
   `BiometricPrompt` (fingerprint or device credential) covers everything. Under the timeout there is no
@@ -1566,11 +1569,14 @@ through the file:
 
 ## 3. Auto Backup (spec §9, §14 item 5)
 
-The emulator's local transport doesn't report end-to-end encryption, so the real rules refuse cloud backup
-there. That refusal is the check that unencrypted backups are off:
+The strict rules allow cloud backup only when the transport provides the required client-side encryption.
+An unsuccessful `bmgr` result alone does not prove that policy worked: confirm the APK's rule resource and use
+the local-only A/B check below. On the Android 37 image checked on 2026-11-05, the strict attempt returned
+`Transport rejected package` (`-1002`), rather than the older plan's literal `Backup is not allowed`.
 
-- [ ] Start realDebug, then press Home. Note the current transport (`adb shell bmgr list transports`, marked
-  `*`), then:
+- [ ] Use a new disposable test image with task-generated synthetic ledger data. Before changing backup
+  settings, record `adb shell bmgr enabled` and the current transport from `adb shell bmgr list transports`
+  (marked `*`). Start realDebug, then press Home and run:
 
   ```bash
   adb shell bmgr enable true
@@ -1578,24 +1584,34 @@ there. That refusal is the check that unencrypted backups are off:
   adb shell bmgr backupnow io.github.codex07.iou
   ```
 
-  Expected: `Package io.github.codex07.iou with result: Backup is not allowed`. A force-stopped app also
-  gives this result, so start the app first.
-- [ ] Check what a backup contains with a local build only, never committed: remove
-  `disableIfNoEncryptionCapabilities="true"` from `data_extraction_rules.xml`, install, start, then press
-  Home. Then put a stray `restore-marker.json` and `files/other.txt` next to the ledger:
+  Confirm the strict APK's `data_extraction_rules` resource has
+  `disableIfNoEncryptionCapabilities="true"` with
+  `"$ANDROID_HOME/build-tools/<latest>/aapt2" dump xmltree app/build/outputs/apk/real/debug/app-real-debug.apk --file res/xml/data_extraction_rules.xml`.
+  Record the actual result and check
+  the backup log. The Android 37 result above was corroborated by a local-only A/B build: with only that
+  attribute removed, the same package and transport backed up successfully (185,344 bytes); `aapt2` dumps
+  confirmed the attribute was the only policy difference. A transport error by itself is not a pass.
+- [ ] Check backup contents with a local build only, never committed, on the disposable image and synthetic
+  data: save the approved XML and its hash,
+  remove `disableIfNoEncryptionCapabilities="true"` from `data_extraction_rules.xml`, build and install,
+  start the app, then press Home. Confirm with `aapt2` that only that attribute differs from the strict APK.
+  Put a stray `restore-marker.json` and `files/other.txt` next to the ledger:
 
   ```bash
   adb shell "run-as io.github.codex07.iou sh -c 'echo {} > databases/restore-marker.json; echo x > files/other.txt'"
-  adb shell bmgr backupnow io.github.codex07.iou      # result: Success
+  adb shell bmgr backupnow io.github.codex07.iou      # expected: Success
   adb shell pm clear io.github.codex07.iou
   adb shell bmgr restore 1 io.github.codex07.iou
   adb shell "run-as io.github.codex07.iou ls -R ."
   ```
 
   Only `databases/` comes back: the `iou-*.db` files and `db-state.json`, without `restore-marker.json`.
-  `files/` and `no_backup/` are empty. The next start shows the ledger and creates a new `device-id`, and
-  the device settings are at their defaults.
-- [ ] Undo the local edit, and put the emulator back: `bmgr transport <the noted transport>`, `bmgr enable false`.
+  `files/` and `no_backup/` are empty. The next start shows the ledger and creates a new `device-id`; device
+  settings start at their defaults. `pm clear` in this step is restricted to this task-generated synthetic
+  app data; never run it against an existing user profile.
+- [ ] Restore the exact approved XML bytes and verify their saved hash. Rebuild and reinstall the strict APK,
+  then restore the recorded state: `bmgr transport <the noted original transport>` and
+  `bmgr enable <the recorded enabled state>`.
 
 ## 4. Argon2id on the device (spec §14 item 3)
 
@@ -1606,11 +1622,12 @@ there. That refusal is the check that unencrypted backups are off:
   adb logcat -d -s IouKdf
   ```
 
-  Run it three times; the first run includes warm-up. On 2026-11-05 the emulator took 2.0 s for the first
-  encryption, then about 0.65 s per encryption or decryption.
-- [ ] **On the slowest real phone available:** the same broadcast. If an encryption takes more than about 2 s
-  after warm-up, lower `KdfParams.DEFAULT.memoryKiB`. Backups record their parameters in the header, so
-  older backups still open.
+  Run it three times; the first run includes warm-up. On the isolated Android 37 emulator checked on
+  2026-11-05, encryption/decryption times were 784/816 ms, 658/636 ms and 641/623 ms. These are emulator
+  measurements; record the current device's actual timings rather than reusing them.
+- [ ] **On the slowest real phone available:** run the same broadcast. If an encryption takes more than
+  about 2 s after warm-up, lower `KdfParams.DEFAULT.memoryKiB`. Backups record their parameters in the
+  header, so older backups still open.
 
 ## 5. Frankfurter (spec §14 item 2)
 
@@ -1619,8 +1636,7 @@ there. That refusal is the check that unencrypted backups are off:
 - [ ] `curl "https://api.frankfurter.dev/v1/2026-11-01?base=EUR&symbols=SEK"` (a Sunday) answers with
   `"date":"2026-10-30"`.
 - [ ] A future date (`/v1/2099-01-01?base=EUR&symbols=SEK`) answers 404 `{"message":"not found"}`. The app
-  treats any answer except 200, and any timeout, as unavailable (spec §4.5). On 2026-11-05 an unknown
-  currency (`symbols=XXX`) didn't answer within 40 s; earlier it had answered 404.
+  treats any answer except 200, and any timeout, as unavailable (spec §4.5).
 
 ## 6. Exports in spreadsheets (spec §7.2)
 
@@ -1628,11 +1644,16 @@ there. That refusal is the check that unencrypted backups are off:
   `normalized-excel.zip`, `report.csv` and `report-excel.csv` to `app/build/export-samples/`.
 - [ ] Open each CSV, and `people.csv` from each zip, in Excel and in LibreOffice Calc:
   - import plain files as comma-separated UTF-8 and Excel-friendly files as UTF-8 with BOM and `;` delimiters;
-    if Excel opens semicolon files with incorrect columns on your locale, use Data > From Text/CSV and select
-    semicolon. Confirm the columns split correctly in both apps;
+    confirm columns split correctly in both apps. Excel installations whose default separator is comma may
+    mis-split a semicolon CSV when opened directly; use **Data > From Text/CSV** and select semicolon;
   - the person `=HYPERLINK("http://evil","x")` shows as text, not as a link or a formula. The leading `'` is
     the reversible escape; Excel may hide it;
   - amounts read as plain decimals.
+
+  In the 2026-11-05 native checks, explicit imports in Excel 16 and LibreOffice Calc 26.8 split the columns
+  correctly, kept amounts numeric, and showed no formulas or hyperlinks. Excel 16's default open path did
+  not split the semicolon files correctly; use the explicit import procedure above. These results cover
+  those versions and the tested files.
 - [ ] XLSX export arrives in M2 (spec §7.3); check it then.
 
 ## 7. Signed release APK (spec §2.4, §10)
@@ -1640,12 +1661,34 @@ there. That refusal is the check that unencrypted backups are off:
 - [ ] After the release workflow, download the APK from the GitHub release and check its certificate:
   `apksigner verify --print-certs iou-vX.Y.Z.apk` shows `CN=IOU` and SHA-256
   `328199658371ad458470be6ec4970597e1763ac4b4921277161dbd79bdf7b1c5`.
-- [ ] Uninstall any debug build. Install the previous release's APK, start it, then
+- [ ] Use a separate fresh, empty disposable upgrade image. Install the previous release's APK and start it;
+  if checking persisted ledger data, seed only synthetic test data. Then run
   `adb install -r iou-vX.Y.Z.apk`. The upgrade succeeds without uninstalling, and the app starts and shows
-  the same ledger.
+  the same test ledger. Keep debug and signed-release builds on separate images because they use different
+  signing keys.
 ````
 
 `docs/ui-contributor-guide.md`:
+
+Replace:
+
+```markdown
+## Reads
+
+Every screen reads a `Flow` (`observeOverview()`, `observePerson(id)`, `observeGroup(id)`, `observeEntry(id)`, …). Flows re-emit after any write, so screens never refresh by hand. Read models are ready to render: balances are computed, people are canonical (merged duplicates appear once), amounts are `Money`.
+
+Signs: a person balance is `net(me, X)`. **Positive means they owe me.** A group net is `groupNet(member)`. **Positive means the group owes them.** Overview totals are positive magnitudes.
+```
+
+with:
+
+```markdown
+## Reads
+
+Every screen reads a `Flow` (`observeOverview()`, `observePerson(id)`, `observeGroup(id)`, `observeEntry(id)`, …). Read-model flows update automatically after writes that change what they observe, so screens never refresh by hand. Equal setup or settings values may be suppressed. Observe `BackupApi.observeLedgerGeneration()` separately to detect ledger replacement and invalidate drafts. Read models are ready to render: balances are computed, people are canonical (merged duplicates appear once), amounts are `Money`.
+
+Signs: a person balance is `net(me, X)`. **Positive means they owe me.** A group net is `groupNet(member)`. **Positive means the group owes them.** Overview totals are positive magnitudes.
+```
 
 Replace:
 
@@ -1689,7 +1732,7 @@ with:
 ```markdown
 An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" threads in WhatsApp with exact, auditable balances.
 
-> **Status:** Milestone 1 done: the real flavor is a working ledger on Room, with groups, history and revert, merges, FX, encrypted backups, CSV export and import, app lock and screen protection. The screens come from the UI contributor. Importing group rows and XLSX export come in Milestone 2.
+> **Status:** Milestone 1 implementation complete (v0.1.0). The real flavor is a working ledger on Room, with groups, history and revert, merges, FX, encrypted backups, CSV export and import, app lock and screen protection. The screens come from the UI contributor. Importing group rows and XLSX export come in Milestone 2.
 
 ## What it does (MVP)
 ```
@@ -1718,7 +1761,7 @@ with:
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
 Expected: PASS, 380 tests per flavor, 0 failures and 0 skipped.
 
-Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug assembleRealRelease`
+Run separately, in order: `.\gradlew.bat assembleFakeDebug assembleRealDebug assembleRealRelease`, then `.\gradlew.bat lintFakeDebug lintRealDebug`. Keeping release assembly separate avoids the observed cross-variant Hilt/lint generated-file race.
 Expected: BUILD SUCCESSFUL. Lint has no errors and 32 warnings per flavor; describe it that way, not as warning-free.
 
 - [ ] **Step 5: Walk through the acceptance criteria**
@@ -1758,8 +1801,8 @@ Go through `docs/manual-test-checklist.md` sections 1–6 on the emulator. Secti
 - [ ] **Step 7: Mark Milestone 1 done in the index**
 
 In `docs/superpowers/plans/2026-11-04-m1-00-index.md`:
-- set Part 8's status to "done";
-- add `> **Status:** Milestone 1 done (v0.1.0).` under the title;
+- set all eight implementation rows' status to "done";
+- add `> **Status:** Milestone 1 implementation complete (v0.1.0).` under the title;
 - under **Carried open items**, add: "On-device runs of backup, export and import (ACs 7–13 and 15–21) and `ContentDocuments` wait for the friend's screens. Argon2id timing on a low-end phone and app lock on a real phone stay on the manual checklist."
 
 - [ ] **Step 8: Commit and push**
@@ -1769,7 +1812,7 @@ git add README.md docs android/app/build.gradle.kts android/app/src/test/kotlin/
 git commit -m "Add the manual test checklist and export samples, and prepare v0.1.0"
 ```
 
-Push `main` after the owner approves (index, locked decision 12). Before pushing, check `gh run list` for a running workflow and `git fetch` for remote changes. Wait for CI to pass on the pushed commit.
+Push `main` immediately after every commit, as the owner explicitly requires for this repository. Check `gh run list` and `git fetch` for remote changes. The owner already approved the M1 pushes and v0.1.0 tag; the controller closes the whole-Part8 review and waits for green CI on the latest pushed commit before tagging.
 
 - [ ] **Step 9: Release v0.1.0**
 

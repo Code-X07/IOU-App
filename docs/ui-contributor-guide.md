@@ -14,7 +14,7 @@ Spec: [`superpowers/specs/2026-11-02-iou-mvp-design.md`](superpowers/specs/2026-
 
 ## Reads
 
-Every screen reads a `Flow` (`observeOverview()`, `observePerson(id)`, `observeGroup(id)`, `observeEntry(id)`, …). Flows re-emit after any write, so screens never refresh by hand. Read models are ready to render: balances are computed, people are canonical (merged duplicates appear once), amounts are `Money`.
+Every screen reads a `Flow` (`observeOverview()`, `observePerson(id)`, `observeGroup(id)`, `observeEntry(id)`, …). Read-model flows update automatically after writes that change what they observe, so screens never refresh by hand. Equal setup or settings values may be suppressed. Observe `BackupApi.observeLedgerGeneration()` separately to detect ledger replacement and invalidate drafts. Read models are ready to render: balances are computed, people are canonical (merged duplicates appear once), amounts are `Money`.
 
 Signs: a person balance is `net(me, X)`. **Positive means they owe me.** A group net is `groupNet(member)`. **Positive means the group owes them.** Overview totals are positive magnitudes.
 
@@ -60,6 +60,15 @@ Payment handles: fill an edit form's `HandleDraft` from the `PaymentHandleView`,
 
 - Group detail has `settlePlan`; person detail has `inGroups`. Call `settleUpFromPlan(item)` to get a pre-filled `SettleUpDraft`, let the user adjust amount or currency, and save with `SaveMode.Create(draft.basis)`.
 - `settleUpWithPerson(id, basis)` gives one draft per non-zero currency outside groups.
+
+## App lock and screen protection
+
+The core runs the policy and the window flag; you build the lock screen (spec §9).
+
+- While `SettingsApi.observeLockRequired()` is `true`, cover all content with a lock screen and show `BiometricPrompt` with `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`. On success call `markUnlocked()`. Add `androidx.biometric` for this; it brings the `USE_BIOMETRIC` permission.
+- Only offer the app-lock switch when the device has a secure lock screen (`KeyguardManager.isDeviceSecure`).
+- The core locks on a cold start and after the chosen timeout in the background, following the process lifecycle. Don't track that yourself.
+- Screen protection: `setScreenProtection(true)` is all you call. The core sets `FLAG_SECURE` on every activity window and follows later changes.
 
 ## Errors
 

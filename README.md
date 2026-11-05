@@ -2,7 +2,7 @@
 
 An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" threads in WhatsApp with exact, auditable balances.
 
-> **Status:** Milestone 0 done: the core ↔ UI contract and an in-memory fake with demo data. The real (Room) implementation comes in Milestone 1.
+> **Status:** Milestone 1 implementation complete (v0.1.0). The real flavor is a working ledger on Room, with groups, history and revert, merges, FX, encrypted backups, CSV export and import, app lock and screen protection. The screens come from the UI contributor. Importing group rows and XLSX export come in Milestone 2.
 
 ## What it does (MVP)
 
@@ -27,6 +27,7 @@ Later phases add pay/request helpers (EPC QR, Revolut links), automatic detectio
 
 - [MVP design spec (milestones 0–2)](docs/superpowers/specs/2026-11-02-iou-mvp-design.md)
 - [UI contributor guide](docs/ui-contributor-guide.md)
+- [Manual test checklist](docs/manual-test-checklist.md), run before each release
 
 ## Tech
 
