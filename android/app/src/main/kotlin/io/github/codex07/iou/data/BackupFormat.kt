@@ -73,6 +73,8 @@ class BackupFormat(
             return LedgerResult.Err(LedgerError.CorruptFile("Malformed backup: ${e.message}"))
         }
         val content = try {
+            val expenseIds = document.rows.expenses.map { it.id }.toSet()
+            require(document.rows.shares.all { it.expenseId in expenseIds }) { "Share references a missing expense" }
             // The rate cache isn't ledger data, but `FxService.load` reads it once the restore has committed.
             for (rate in document.rows.rates.map { it.toCachedRate().rate }) {
                 require(FxConverter.validateRate(rate) is LedgerResult.Ok) { "Invalid cached rate $rate" }

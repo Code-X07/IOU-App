@@ -69,6 +69,11 @@ class BackupFormatTest {
 
     @Test
     fun `rows that don't map or break a ledger rule are rejected`() {
+        val orphan = LedgerRows.of(LedgerContent(), emptyList()).copy(
+            shares = listOf(ShareRow("missing-expense", "person", 0, 100, null)),
+        )
+        format.read(format.write(orphan, "0.1.0", T0, null), null).error()::class shouldBe LedgerError.CorruptFile::class
+
         val badKind = rows.copy(transfers = rows.transfers.map { it.copy(kind = "BOGUS") })
         format.read(format.write(badKind, "0.1.0", T0, null), null).error()::class shouldBe LedgerError.CorruptFile::class
 
