@@ -7,6 +7,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.room)
 }
 
 val keystoreProperties = Properties().apply {
@@ -72,6 +74,13 @@ android {
         compose = true
         buildConfig = true
     }
+
+    // Room tests run on the plain JVM: data-layer code may touch Android stubs, which then return defaults.
+    testOptions.unitTests.isReturnDefaultValues = true
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 kotlin {
@@ -97,6 +106,10 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.hilt.navigation.compose)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.androidx.room.runtime)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.sqlite.framework)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
@@ -105,4 +118,5 @@ dependencies {
     testImplementation(libs.kotest.property)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
+    testImplementation(libs.androidx.sqlite.bundled.jvm)
 }
