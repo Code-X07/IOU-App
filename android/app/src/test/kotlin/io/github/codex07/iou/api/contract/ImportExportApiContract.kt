@@ -43,6 +43,15 @@ abstract class ImportExportApiContract : ApiContract() {
     }
 
     @Test
+    fun `XLSX waits for M2 and a date range can't end before it starts`() = runTest {
+        setUpMe()
+        apis.importExport.export(ExportRequest(ExportShape.REPORT, ExportFormat.XLSX), exportTarget()) shouldBe
+            LedgerResult.Err(LedgerError.InvalidField("format"))
+        val reversed = ExportRequest(ExportShape.REPORT, ExportFormat.CSV, from = TODAY, to = TODAY.minusDays(1))
+        apis.importExport.export(reversed, exportTarget()) shouldBe LedgerResult.Err(LedgerError.InvalidField("to"))
+    }
+
+    @Test
     fun `a foreign export needs confirmation and declining rejects it`() = runTest {
         setUpMe()
         val preview = apis.importExport.parseImport(importFile(ImportFixture.FOREIGN_EXPORT)).orFail()

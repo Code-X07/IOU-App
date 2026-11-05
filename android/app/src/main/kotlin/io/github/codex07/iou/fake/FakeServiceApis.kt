@@ -6,8 +6,6 @@ import io.github.codex07.iou.api.BackupReminder
 import io.github.codex07.iou.api.DocumentRef
 import io.github.codex07.iou.api.ExportInfo
 import io.github.codex07.iou.api.ExportRequest
-import io.github.codex07.iou.api.ExportScope
-import io.github.codex07.iou.api.ExportShape
 import io.github.codex07.iou.api.FxApi
 import io.github.codex07.iou.api.ImportBatchView
 import io.github.codex07.iou.api.ImportChoices
@@ -32,6 +30,7 @@ import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.ops.WritePlan
 import io.github.codex07.iou.store.BackupRules
 import io.github.codex07.iou.store.DeviceSettingsStore
+import io.github.codex07.iou.store.ExportRules
 import io.github.codex07.iou.store.LedgerContent
 import io.github.codex07.iou.store.LedgerStore
 import io.github.codex07.iou.store.StoreFxApi
@@ -93,9 +92,7 @@ class FakeBackupApi(private val store: LedgerStore, private val device: DeviceSe
 class FakeImportExportApi(private val store: LedgerStore) : ImportExportApi {
 
     override suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo> {
-        if (request.shape == ExportShape.NORMALIZED && request.scope != ExportScope.FullLedger) {
-            return LedgerResult.Err(LedgerError.InvalidField("scope"))
-        }
+        ExportRules.check(request)?.let { return LedgerResult.Err(it) }
         return LedgerResult.Ok(ExportInfo(rowCount = store.loaded().state.entries.size))
     }
 
