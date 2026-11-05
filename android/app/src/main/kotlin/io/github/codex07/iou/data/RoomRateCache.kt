@@ -14,7 +14,16 @@ class RoomRateCache(private val databases: DatabaseProvider) : RateCache {
 
     override suspend fun load(): List<CachedRate> = databases.database().ledgerDao().rates().map { it.toCachedRate() }
 
-    override suspend fun save(rates: List<CachedRate>) = databases.database().ledgerDao().upsertRates(rates.map { it.toRow() })
+    /**
+     * Saves outside the store's lock, so a restore may be swapping databases meanwhile; then there is no open
+     * database, or a closed one (`IllegalStateException`). Such rates stay in memory only.
+     */
+    override suspend fun save(rates: List<CachedRate>) {
+        try {
+            databases.database().ledgerDao().upsertRates(rates.map { it.toRow() })
+        } catch (_: IllegalStateException) {
+        }
+    }
 }
 
 fun CachedRate.toRow() = FxRateRow(base.code, quote.code, rateDate.toString(), rate, fetchedAt.toString())

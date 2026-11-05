@@ -44,6 +44,9 @@ class FxService(
     /** Reads the cache into memory. Also run after the database is replaced (Part 5). */
     suspend fun load() = mutex.withLock { publish(RateTable(cache.load())) }
 
+    /** Every cached rate, for backups (spec §7.1). */
+    suspend fun cachedRates(): Collection<CachedRate> = table.filterNotNull().first().rates
+
     /**
      * 1. The cached rate for [date]. 2. Frankfurter for [date]; its answer is cached and may be for the
      * previous working day, which is the date the quote carries. 3. The most recent cached rate, flagged

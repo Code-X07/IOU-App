@@ -1,6 +1,8 @@
 package io.github.codex07.iou.data
 
+import io.github.codex07.iou.api.DocumentRef
 import io.github.codex07.iou.api.contract.ApiContract
+import io.github.codex07.iou.api.contract.BackupApiContract
 import io.github.codex07.iou.api.contract.FxApiContract
 import io.github.codex07.iou.api.contract.GroupsApiContract
 import io.github.codex07.iou.api.contract.LedgerApiContract
@@ -14,8 +16,8 @@ import java.time.ZoneOffset
 import org.junit.jupiter.api.AfterEach
 
 // The M0 contract suites against the real backend on Room (spec §11, AC M1-14), `groups` tests included
-// (index, locked decision 6). FX runs on a mock Frankfurter (`RealHarness`); backup and import/export join
-// in Parts 5 and 7.
+// (index, locked decision 6). FX runs on a mock Frankfurter and backups on files (`RealHarness`);
+// import/export joins in Part 7.
 
 private fun harness() = RealHarness(Clock.fixed(ApiContract.NOW, ZoneOffset.UTC), SequentialIds("real"))
 
@@ -46,6 +48,13 @@ class RealLedgerApiContractTest : LedgerApiContract() {
 class RealFxApiContractTest : FxApiContract() {
     private val harness = harness()
     override fun newApis() = harness.start().apis
+    @AfterEach fun stop() = harness.stop()
+}
+
+class RealBackupApiContractTest : BackupApiContract() {
+    private val harness = harness()
+    override fun newApis() = harness.start().apis
+    override fun backupTarget(name: String) = DocumentRef(name)
     @AfterEach fun stop() = harness.stop()
 }
 

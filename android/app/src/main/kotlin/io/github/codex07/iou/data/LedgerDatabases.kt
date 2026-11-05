@@ -1,5 +1,7 @@
 package io.github.codex07.iou.data
 
+import androidx.room.immediateTransaction
+import androidx.room.useWriterConnection
 import io.github.codex07.iou.ledger.model.DeviceId
 import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerGeneration
@@ -29,9 +31,25 @@ class LedgerDatabases(
 
     override fun database(): IouDatabase = checkNotNull(live) { "No ledger database is open" }
 
+    val isOpen: Boolean get() = live != null
+
+    /** Closes the live database; in WAL mode closing checkpoints it, so it is a single file again. */
     fun close() {
         live?.close()
         live = null
+    }
+
+    /**
+     * Creates database [name] beside the live one, fills it through [fill] in one transaction and closes it,
+     * so it is a single file (restore step 3, spec §7.1).
+     */
+    suspend fun build(name: String, fill: suspend (LedgerDao) -> Unit) {
+        val db = open(files.database(name))
+        try {
+            db.useWriterConnection { connection -> connection.immediateTransaction { fill(db.ledgerDao()) } }
+        } finally {
+            db.close()
+        }
     }
 }
 
