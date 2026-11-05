@@ -529,7 +529,7 @@ Used now for duplicate contacts ("I created Alex twice"), and in phase 5 for lin
 ### 6.2 API shape
 
 - Pure Kotlin interfaces in `api`, grouped by area. Reads are `Flow`s of ready-to-render models; writes are `suspend` functions returning `LedgerResult<T>` (`Ok(value)` / `Err(LedgerError)`).
-- Pure, synchronous helpers need no I/O (e.g. `ImportExportApi.applyChoices`, `FxApi.userRate`). `LedgerApi.previewSplit` is `suspend`: it needs the group's FX mode and, for edits, the stored shares, but does no file or network I/O.
+- Synchronous helpers do no I/O (e.g. `ImportExportApi.applyChoices`, `FxApi.userRate`). `LedgerApi.previewSplit` is `suspend`: it needs the group's FX mode and, for edits, the stored shares, but does no file or network I/O.
 - Files are passed as `DocumentRef` (a value class wrapping a SAF URI string), so `api` stays Android-free. The real flavor reads and writes documents through the `store.DocumentStore` port: SAF on the device (`ContentDocuments`, written with mode `wt`), plain files in tests. A document that can't be opened, read or written gives `FileAccessFailed`.
 - **One save call per entry kind** with a `SaveMode`: `Create(basis)` or `Update(id, token)`. Edit forms start from `EntryDetail.editDraft`, which the core pre-fills as §4.4 and §4.5 require (canonical participants combined, `settlesCurrency` loaded, `FxChoice.KeepExisting` when the entry has a snapshot).
 - **Aliases carry their own `EditToken`** (`PersonDetail.aliases`), because unmerge writes the alias's row (ADR-0009). Observing a person by an alias ID returns the canonical person's detail.
@@ -544,12 +544,12 @@ Used now for duplicate contacts ("I created Alex twice"), and in phase 5 for lin
 | `LedgerApi` | Observe overview (totals, mixed people/group list) and activity feed with filters; save expense and transfer drafts; `previewSplit(draft)`; settle-up drafts from a plan item or a person; delete / restore; observe entry detail with history, diffs and an edit draft; `revertTo(entityId, version)`; `draftFromVersion(entity, version)` (§5.3) |
 | `FxApi` | `quote` for a date and currency pair through the lookup chain (value, source, date, stale flag; `RateRequired` when none is available); `userRate` (validate a typed rate); `rateFromCharged` (derive a rate from "amount actually charged") |
 | `BackupApi` | `observeLedgerGeneration()`; create a backup (encrypted or not); restore; undo last restore and whether one is available; observe the backup reminder (no manual backup for 30 days); observe and dismiss the "restore interrupted" notice (§7.1) |
-| `ImportExportApi` | Export (shape, format, Excel-friendly flag, and a scope for reports); parse an import into a preview; confirm or decline a foreign identity; `applyChoices` (pure); refresh a stale preview; commit with per-row conflict choices; observe import batches; undo an import |
+| `ImportExportApi` | Export (shape, format, Excel-friendly flag, and a scope for reports); parse an import into a preview; confirm or decline a foreign identity; `applyChoices`; refresh a stale preview; commit with per-row conflict choices; observe import batches; undo an import |
 | `SettingsApi` | Home currency; app-lock enabled and timeout; screen protection; backup encryption default; `observeLockRequired()` and `markUnlocked()` for the app-lock policy (§9) |
 
 **Validation the core does for the UI.** Both flavors check the backup passphrase length (`InvalidField("passphrase")` under 8 characters, §9) and the export request (§7.2). Plan items and details carry their generation, so `settleUpFromPlan(item)` and `settleUpWithPerson(id, basis)` reject stale input with `LedgerReplaced`.
 
-**Import previews** are immutable values. `applyChoices(preview, choices)` returns the preview with the forced cascade outcomes recomputed (§7.4); `commitImport` takes the preview and the choices. A parsed file stays in memory under its preview's ID only while the process lives: after an app restart, a preview gives `NotFound("preview")`.
+**Import previews** are immutable values. `applyChoices(preview, choices)` returns the preview with the forced cascade outcomes recomputed (§7.4); `commitImport` takes the preview and the choices. `applyChoices` is not a disposable calculation, though: the real flavor also stores the choices in the preview's import session, and `refreshPreview` rebuilds with the last choices stored there. So the UI should call it with the choices the user actually made, not to try out alternatives. (The fake returns the preview unchanged.) A parsed file stays in memory under its preview's ID only while the process lives: after an app restart, a preview gives `NotFound("preview")`.
 
 **Ledger replacement.** `BackupApi.observeLedgerGeneration()` emits the current ledger generation (§5.1) and emits again after every restore or undo-restore commits. Work prepared against the old ledger is invalid after that, create drafts included: a settle-up draft for €100 prepared before a restore must not be saved into a ledger where only €20 is outstanding. So every write input carries the generation it was prepared against (§5.1): edits inside their `EditToken`, everything else as a required `basis` field. Drafts the `api` builds (settle-up drafts from a plan item or a person) come with `basis` already set; for a blank create form, the UI sets `basis` from `observeLedgerGeneration()` when it opens the form. Writes from another generation and commits of import previews parsed before the restore return `LedgerReplaced`, and all read `Flow`s re-emit from the new database. The UI should drop open drafts and previews and return to the overview when the generation changes (how it tells the user is the UI contributor's call).
 
@@ -679,7 +679,14 @@ Files are read and written through the Storage Access Framework or the share she
 
 ## 8. Error handling
 
-All failures come back as typed `LedgerError`s that the UI can display. No partial writes.
+Expected failures (bad input, rule violations, stale work, bad or unreadable files) come back as typed `LedgerError`s that the UI can display. Storage failures of the app's own data propagate as exceptions instead, after leaving that data consistent:
+
+- A ledger write or a ledger-settings change whose journal append fails (Room error, full storage) throws; the store keeps its previous state (§2.2).
+- A device-settings change whose file write fails throws; the file is replaced atomically, so it keeps the previous settings (§3.3). The `SettingsApi` setters therefore return `Ok` or throw.
+- A backup whose document was written completely but whose `lastManualBackupAt` update fails throws: the backup file is good, but the reminder isn't cleared.
+- A failure after a restore's or undo's commit point throws and needs an app restart (§7.1).
+
+The ledger is never partly written: each write is one journal entry, and a restore commits through one pointer rename. Documents the user picked are not covered by that guarantee (see Files below).
 
 | Area | Errors | Behaviour |
 |---|---|---|
@@ -691,7 +698,7 @@ All failures come back as typed `LedgerError`s that the UI can display. No parti
 | FX | Network failure, unsupported currency | Fallback chain §4.5; worst case the user enters a rate manually. Never blocks entry |
 | Rate refresh worker | Any | WorkManager exponential backoff; silent |
 | Restore / import (fatal) | `CorruptFile`, `LimitsExceeded`, `SchemaTooNew`, `WrongPassphraseOrDamagedFile` (GCM tag failure), `ForeignLedger` (identity mapping declined), `RestoreFailed` (a failure before the commit point), process death during a restore or undo | Before the commit point: nothing changes and the new file is discarded. After it: the operation is complete; a failure while loading the committed database needs an app restart (§7.1). Never a mix |
-| Files | `FileAccessFailed` (a picked document can't be opened, read or written: missing, revoked permission, full storage) | Nothing written |
+| Files | `FileAccessFailed` (a picked document can't be opened, read or written: missing, revoked permission, full storage) | The ledger is unchanged. A backup or export target is opened in truncating mode (`wt`) and written directly, so a failure while writing can leave that document empty or partly written; the user should write it again |
 | Lookups | `NotFound(id)`: an unknown ID, `"me"` before setup, `"restore"` with nothing to undo, `"preview"` after a restart | Nothing written |
 | Import (per row) | Validation failures | Shown in the preview |
 

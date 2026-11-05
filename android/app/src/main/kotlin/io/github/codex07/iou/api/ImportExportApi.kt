@@ -16,7 +16,11 @@ interface ImportExportApi {
      */
     suspend fun confirmIdentity(preview: ImportPreview, accept: Boolean): LedgerResult<ImportPreview>
 
-    /** The preview with forced owner/owned outcomes recomputed for [choices]. Pure. */
+    /**
+     * The preview with forced owner/owned outcomes recomputed for [choices]. No I/O, but not a disposable
+     * calculation: the real flavor stores [choices] in the preview's import session, and [refreshPreview] rebuilds
+     * with the last choices stored. Pass the choices the user made, not trial alternatives (spec §6.2).
+     */
     fun applyChoices(preview: ImportPreview, choices: ImportChoices): ImportPreview
 
     /**
