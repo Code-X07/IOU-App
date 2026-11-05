@@ -17,13 +17,14 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import java.time.Clock
 import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 class SeedDataTest {
 
-    private val ledger = InMemoryLedger(Clock.fixed(T0, ZoneOffset.UTC), SequentialIds("seed")).also(SeedData::populate)
-    private val apis = FakeApis.create(ledger)
+    private val store = FakeApis.store(Clock.fixed(T0, ZoneOffset.UTC), SequentialIds("seed")).also { runBlocking { SeedData.populate(it) } }
+    private val apis = FakeApis.create(store)
 
     @Test
     fun `the seed has me, five people, a merged duplicate and an archived unsettled person`() = runTest {
@@ -51,7 +52,7 @@ class SeedDataTest {
     fun `every api returns seeded data`() = runTest {
         val loan = apis.ledger.observeActivity().first().first { it.description == null && it.note == "Concert tickets" }
         apis.ledger.observeEntry(loan.entryId).first()!!.history.size shouldBeGreaterThan 1
-        (apis.fx.quote(ledger.today(), EUR, SEK) is LedgerResult.Ok) shouldBe true
+        (apis.fx.quote(store.today(), EUR, SEK) is LedgerResult.Ok) shouldBe true
         apis.backup.observeBackupReminder().first().due shouldBe true
         apis.importExport.observeImportBatches().first().shouldNotBeEmpty()
         apis.settings.observeSettings().first().homeCurrency shouldBe EUR
@@ -60,8 +61,8 @@ class SeedDataTest {
     }
 
     @Test
-    fun `replaying the latest revision per entity reproduces the tables`() {
-        val snapshot = ledger.snapshot.value
+    fun `replaying the latest revision per entity reproduces the tables`() = runTest {
+        val snapshot = store.loaded()
         val latest = snapshot.revisions
             .groupBy { it.entityType to it.entityId }.values
             .map { revisions -> revisions.maxBy { it.version }.snapshot }

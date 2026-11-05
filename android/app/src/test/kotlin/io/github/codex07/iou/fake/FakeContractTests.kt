@@ -17,7 +17,7 @@ import java.time.Clock
 import java.time.ZoneOffset
 
 private fun fakeApis(): Apis =
-    FakeApis.create(InMemoryLedger(Clock.fixed(ApiContract.NOW, ZoneOffset.UTC), SequentialIds("fake")))
+    FakeApis.create(FakeApis.store(Clock.fixed(ApiContract.NOW, ZoneOffset.UTC), SequentialIds("fake")))
 
 class FakeSetupApiContractTest : SetupApiContract() { override fun newApis() = fakeApis() }
 class FakePeopleApiContractTest : PeopleApiContract() { override fun newApis() = fakeApis() }
