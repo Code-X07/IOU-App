@@ -110,6 +110,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.sqlite.framework)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
@@ -119,4 +121,5 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
     testImplementation(libs.androidx.sqlite.bundled.jvm)
+    testImplementation(libs.ktor.client.mock)
 }
