@@ -10,6 +10,7 @@ import io.github.codex07.iou.fake.FakeApis
 import io.github.codex07.iou.store.DeviceSettingsStore
 import io.github.codex07.iou.store.InMemoryDeviceSettings
 import io.github.codex07.iou.store.TimedLockGate
+import java.time.ZoneId
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -27,5 +28,5 @@ object BackendModule {
 
     @Provides
     @Singleton
-    fun apis(device: DeviceSettingsStore, lock: TimedLockGate): Apis = FakeApis.seeded(device = device, lock = lock)
+    fun apis(device: DeviceSettingsStore, lock: TimedLockGate): Apis = FakeApis.seeded(device = device, lock = lock, zone = { ZoneId.systemDefault() })
 }

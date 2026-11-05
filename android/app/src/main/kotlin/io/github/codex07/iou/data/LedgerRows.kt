@@ -59,6 +59,26 @@ data class LedgerRows(
         )
     }
 
+    /** Throws when two rows of a table share a primary key: mapping them would silently keep only the last. */
+    fun requireUniqueKeys() {
+        fun <T> unique(table: String, rows: List<T>, key: (T) -> Any) {
+            val seen = HashSet<Any>()
+            for (row in rows) require(seen.add(key(row))) { "Duplicate $table key ${key(row)}" }
+        }
+        unique("person", people) { it.id }
+        unique("payment_handle", handles) { it.id }
+        unique("ledger_group", groups) { it.id }
+        unique("group_member", members) { it.id }
+        unique("transfer", transfers) { it.id }
+        unique("expense", expenses) { it.id }
+        unique("expense_share", shares) { it.expenseId to it.personId }
+        unique("fx_snapshot", fxSnapshots) { it.id }
+        unique("entry_revision", revisions) { it.id }
+        unique("import_batch", importBatches) { it.id }
+        unique("app_setting", settings) { it.key }
+        unique("fx_rate_cache", rates) { Triple(it.base, it.quote, it.rateDate) }
+    }
+
     /** Inserts every row through [dao], in order; the caller provides the transaction. */
     suspend fun writeTo(dao: LedgerDao) {
         dao.upsertPeople(people)

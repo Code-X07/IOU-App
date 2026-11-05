@@ -19,8 +19,17 @@ suspend fun Apis.exportTo(documents: FileDocuments, name: String): File {
     return documents.file(ref)
 }
 
-/** [zip] with [table]'s rows rewritten by [transform] (cells by column name); the header is kept. */
-fun editCsv(zip: ByteArray, table: String, transform: (List<MutableMap<String, String>>) -> List<Map<String, String>>): ByteArray =
+/**
+ * [zip] with [table]'s rows rewritten by [transform] (cells by column name); the header is kept, and the
+ * manifest's row count for [table] follows the new rows, as a consistent edited export would have it.
+ */
+fun editCsv(zip: ByteArray, table: String, transform: (List<MutableMap<String, String>>) -> List<Map<String, String>>): ByteArray {
+    var count = 0
+    val edited = editCsvRows(zip, table) { rows -> transform(rows).also { count = it.size } }
+    return Zips.edit(edited, "manifest.json") { it.replace(Regex("\"$table\":\\d+"), "\"$table\":$count") }
+}
+
+private fun editCsvRows(zip: ByteArray, table: String, transform: (List<MutableMap<String, String>>) -> List<Map<String, String>>): ByteArray =
     Zips.edit(zip, "$table.csv") { text ->
         val parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get().parse(text.reader())
         val header = parser.headerNames

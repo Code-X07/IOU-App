@@ -28,6 +28,7 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 - **Everything else** (creates, member add/remove, settle-ups) takes a `basis`: the `LedgerGeneration` from `BackupApi.observeLedgerGeneration()` when the form opened. Settle-up drafts from the core already contain their basis.
 - **When the generation changes** (a backup was restored), drop open drafts and previews and go back to the overview. Writes prepared before return `LedgerReplaced`.
 - `StaleVersion`: the entity changed since you read it; reload and let the user redo the edit.
+- **Import previews** hold the parsed file in memory. Call `discardImport(preview)` when the user leaves a preview without committing; parsing another file ends earlier previews in the real flavor (`NotFound("preview")` afterwards).
 
 ## Entries
 
@@ -50,7 +51,7 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 
 ## History
 
-Every change is recorded and must be viewable (spec §1, §5.3). `EntryDetail.history` covers the entry. `PersonDetail.history` covers the person, every alias merged into them (the merge itself is the alias's revision) and their payment handles; `GroupDetail.history` covers the group and its memberships. Deleted rows are included. Each `RevisionView` says which row it belongs to (`entity`, `subject`); show the subject when it isn't the screen's own row. To revert, call `revertTo(revision.entity, revision.version, token)` with that row's token (`PersonDetail.token`, `AliasView.token`, `PaymentHandleView.token`, `GroupDetail.token`, `EntryDetail.token`).
+Every change is recorded and must be viewable (spec §1, §5.3). `EntryDetail.history` covers the entry. `PersonDetail.history` covers the person, every alias merged into them (the merge itself is the alias's revision) and their payment handles; `GroupDetail.history` covers the group and its memberships. Deleted rows are included. Each `RevisionView` says which row it belongs to (`entity`, `subject`); show the subject when it isn't the screen's own row. To revert, call `revertTo(revision.entity, revision.version, revision.token)`: each `RevisionView` carries the current token of its own row, which is the only token available for memberships and deleted handles. Never substitute the screen's own token (`PersonDetail.token`, `GroupDetail.token`) for another row's revision.
 
 Deleted people and groups disappear from the normal lists but must stay reachable: `observePeople(includeDeleted = true)` and `observeGroups(includeDeleted = true)` list them (`deleted = true`), so a "Recently deleted" view can open their detail, history and restore. Deleted entries come from `observeActivity(ActivityFilter(includeDeleted = true))`.
 

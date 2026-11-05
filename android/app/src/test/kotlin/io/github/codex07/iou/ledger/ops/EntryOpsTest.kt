@@ -37,6 +37,27 @@ class EntryOpsTest {
     private fun ok(result: LedgerResult<EntryId>): EntryId = (result as LedgerResult.Ok).value
 
     @Test
+    fun `the same record twice is a duplicate participant, while records of one merged person combine`() {
+        val ledger = TestLedger().apply { me() }
+        val alex = ledger.person("Alex")
+        val alex2 = ledger.person("Alex2", mergedInto = alex)
+        val h = OpsHarness(ledger.state)
+        fun draft(vararg people: SplitInput, type: SplitType = SplitType.EQUAL) =
+            ExpenseDraft(ME, "Dinner", total = eur(900), splitType = type, participants = people.toList(), occurredOn = D0)
+
+        for (twice in listOf(draft(SplitInput(ME), SplitInput(alex), SplitInput(alex)),
+            draft(SplitInput(ME, 1), SplitInput(alex, 1), SplitInput(alex, 1), type = SplitType.SHARES))) {
+            h.run { EntryOps.saveExpense(it, twice, SaveMode.Create(h.generation)) } shouldBe
+                LedgerResult.Err(LedgerError.DuplicateParticipant(alex))
+            EntryOps.previewShares(h.ctx(), twice, null) shouldBe LedgerResult.Err(LedgerError.DuplicateParticipant(alex))
+        }
+
+        val merged = draft(SplitInput(ME), SplitInput(alex), SplitInput(alex2))
+        val id = ok(h.run { EntryOps.saveExpense(it, merged, SaveMode.Create(h.generation)) })
+        h.state.expenses.getValue(id).shares.map { it.personId to it.shareMinor } shouldBe listOf(ME to 450L, alex to 450L)
+    }
+
+    @Test
     fun `outside groups an entry needs me and exactly one other person`() {
         val ledger = TestLedger().apply { me() }
         val x = ledger.person("X")

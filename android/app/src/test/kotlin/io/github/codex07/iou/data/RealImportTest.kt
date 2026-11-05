@@ -128,6 +128,29 @@ class RealImportTest {
     private fun row(preview: ImportPreview, type: EntityType, id: String) = preview.rows.single { it.key == ImportRowKey(type, id) }
 
     @Test
+    fun `abandoned previews don't keep their sessions`() = runTest {
+        val backend = harness.start()
+        backend.setUp()
+        val api = RealImportExportApi(backend.store, harness.documents, LedgerExport("test"))
+        val source = exported(backend)
+        val first = api.parseImport(source).orFail()
+        val second = api.parseImport(source).orFail()
+        api.openSessions shouldBe 1
+        api.refreshPreview(first) shouldBe LedgerResult.Err(LedgerError.NotFound("preview"))
+
+        api.discardImport(second)
+        api.openSessions shouldBe 0
+        api.commitImport(second, ImportChoices()) shouldBe LedgerResult.Err(LedgerError.NotFound("preview"))
+
+        val stranded = api.parseImport(source).orFail()
+        val backup = DocumentRef("replace.iou")
+        backend.apis.backup.createBackup(backup, null).orFail()
+        backend.apis.backup.restoreBackup(backup, null).orFail()
+        api.refreshPreview(stranded) shouldBe LedgerResult.Err(LedgerError.LedgerReplaced)
+        api.openSessions shouldBe 0
+    }
+
+    @Test
     fun `a conflict shows its diff, keeps local unless taken, and records the source file and version`() = runTest {
         val backend = harness.start()
         val (me, x) = backend.setUp()

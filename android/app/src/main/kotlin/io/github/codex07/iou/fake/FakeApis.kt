@@ -16,13 +16,14 @@ import io.github.codex07.iou.store.StoreSettingsApi
 import io.github.codex07.iou.store.StoreSetupApi
 import io.github.codex07.iou.store.TimedLockGate
 import java.time.Clock
+import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 
 object FakeApis {
     /** An empty in-memory store with the fake's fixed demo rates; nothing is persisted. */
-    fun store(clock: Clock = Clock.systemUTC(), ids: IdGenerator = IdGenerator.Random): LedgerStore =
-        LedgerStore(clock, ids, DeviceId(ids.next()), rates = MutableStateFlow(RateLookup(FakeRates::rate)), initial = LedgerContent())
+    fun store(clock: Clock = Clock.systemUTC(), ids: IdGenerator = IdGenerator.Random, zone: () -> ZoneId = { clock.zone }): LedgerStore =
+        LedgerStore(clock, ids, DeviceId(ids.next()), rates = MutableStateFlow(RateLookup(FakeRates::rate)), initial = LedgerContent(), zone = zone)
 
     fun create(
         store: LedgerStore,
@@ -44,5 +45,6 @@ object FakeApis {
         clock: Clock = Clock.systemUTC(),
         device: DeviceSettingsStore = InMemoryDeviceSettings(),
         lock: LockGate = TimedLockGate(device),
-    ): Apis = create(store(clock).also { runBlocking { SeedData.populate(it) } }, device, lock)
+        zone: () -> ZoneId = { clock.zone },
+    ): Apis = create(store(clock, zone = zone).also { runBlocking { SeedData.populate(it) } }, device, lock)
 }

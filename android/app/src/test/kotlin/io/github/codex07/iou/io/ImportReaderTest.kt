@@ -97,6 +97,21 @@ class ImportReaderTest {
     }
 
     @Test
+    fun `a file that doesn't hold what its manifest counts is rejected`() {
+        val file = export(TestLedger().apply { val me = me(); transfer(me, person("X"), eur(500)) }.state)
+        (reader.read(file) is LedgerResult.Ok) shouldBe true
+        fun without(name: String) = Zips.write(Zips.read(file).also { it.remove(name) })
+
+        reader.read(without("transfers.csv")).error() shouldBe LedgerError.CorruptFile("Missing transfers.csv")
+        // An empty table must be present as well: an export writes every table.
+        reader.read(without("expenses.csv")).error() shouldBe LedgerError.CorruptFile("Missing expenses.csv")
+        val dropped = Zips.edit(file, "transfers.csv") { it.lines().first() + "\r\n" }
+        reader.read(dropped).error() shouldBe LedgerError.CorruptFile("transfers.csv has 0 data rows, manifest.json says 1")
+        val uncounted = Zips.edit(file, "manifest.json") { it.replace(Regex(",?\"transfers\":\\d+"), "") }
+        reader.read(uncounted).error() shouldBe LedgerError.CorruptFile("manifest.json has no row count for transfers")
+    }
+
+    @Test
     fun `limits are enforced`() {
         val file = export(TestLedger().apply { me(); person("X"); person("Y") }.state)
         fun limited(limits: ImportLimits) = (ImportReader(limits).read(file) as LedgerResult.Err).error::class
@@ -131,6 +146,9 @@ class ImportReaderTest {
                     .replace("t-3,person-0-me,person-x,3000,30.00,EUR", "t-3,person-0-me,person-x,3000,30.00,XXX")
                 entries["expense_shares.csv"] = entries.getValue("expense_shares.csv") + "e-404,0,person-x,100,1.00,\r\n"
                 entries["people.csv"] = entries.getValue("people.csv").let { it + it.lines()[2] + "\r\n" }
+                // The manifest counts the added rows, as it would for a consistent file.
+                entries["manifest.json"] = entries.getValue("manifest.json")
+                    .replace("\"people\":2", "\"people\":3").replace("\"expense_shares\":2", "\"expense_shares\":3")
             },
         )
         val parsed = (reader.read(file) as LedgerResult.Ok).value

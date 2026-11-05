@@ -79,7 +79,18 @@ class BackupFormat(
             for (rate in document.rows.rates.map { it.toCachedRate().rate }) {
                 require(FxConverter.validateRate(rate) is LedgerResult.Ok) { "Invalid cached rate $rate" }
             }
-            document.rows.toContent()
+            document.rows.requireUniqueKeys()
+            document.rows.toContent().also { content ->
+                // A revision's snapshot is the row it names at that version (spec §5.3); a mismatch would let a
+                // revert write a different row.
+                for (revision in content.revisions) {
+                    val snapshot = revision.snapshot
+                    require(
+                        snapshot.entityType == revision.entityType && snapshot.entityId == revision.entityId &&
+                            snapshot.meta.version == revision.version,
+                    ) { "Revision ${revision.id.value} holds a snapshot of another row" }
+                }
+            }
         } catch (e: RuntimeException) {
             return LedgerResult.Err(LedgerError.CorruptFile("Unreadable rows: ${e.message}"))
         }

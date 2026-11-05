@@ -170,6 +170,9 @@ object EntryOps {
         // Negatives are rejected per record first: combining records of one person could hide one, and
         // combining is exact arithmetic, so an overflow there is AmountTooLarge (index decision 4).
         draft.participants.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
+        // The same record twice is a malformed draft (spec §4.4); only distinct records of one merged person combine.
+        draft.participants.groupingBy { it.personId }.eachCount().entries.firstOrNull { it.value > 1 }
+            ?.let { fail(LedgerError.DuplicateParticipant(it.key)) }
         val inputs = try {
             combineInputs(draft.participants, draft.splitType, resolver)
         } catch (overflow: ArithmeticException) {

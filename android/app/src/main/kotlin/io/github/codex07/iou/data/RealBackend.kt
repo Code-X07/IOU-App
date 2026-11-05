@@ -7,6 +7,7 @@ import io.github.codex07.iou.BuildConfig
 import io.github.codex07.iou.api.Apis
 import io.github.codex07.iou.fx.FrankfurterClient
 import io.github.codex07.iou.fx.FxService
+import io.github.codex07.iou.fx.RateCache
 import io.github.codex07.iou.io.LedgerExport
 import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerState
@@ -22,9 +23,11 @@ import io.github.codex07.iou.store.StoreSetupApi
 import io.github.codex07.iou.store.TimedLockGate
 import java.io.File
 import java.time.Clock
+import java.time.ZoneId
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,12 +59,14 @@ class RealBackend(
     appVersion: String = "",
     restoreHook: RestoreHook = RestoreHook.None,
     elapsed: () -> Duration = { System.nanoTime().nanoseconds },
+    zone: () -> ZoneId = { clock.zone },
+    rateCache: (DatabaseProvider) -> RateCache = ::RoomRateCache,
 ) {
     val files = DbFiles(databaseDir)
     val databases = LedgerDatabases(files, openDatabase, ids)
     val device = FileDeviceSettings(settingsFile)
-    val fx = FxService(RoomRateCache(databases), frankfurter, clock)
-    val store = LedgerStore(clock, ids, DeviceIdFile.read(deviceIdFile, ids), RoomJournal(databases), fx.lookup)
+    val fx = FxService(rateCache(databases), frankfurter, clock)
+    val store = LedgerStore(clock, ids, DeviceIdFile.read(deviceIdFile, ids), RoomJournal(databases), fx.lookup, zone = zone)
     val restores = RestoreProcedure(store, files, databases, fx, ids, restoreHook)
 
     /** The app-lock policy; `security.AppSecurity` feeds it the process lifecycle. */
@@ -98,11 +103,16 @@ class RealBackend(
 
     /**
      * The daily refresh (spec §4.5): caches the latest rates for the home currency and the currencies in use.
-     * False when Frankfurter was unavailable.
+     * False when it should be retried later (spec §8, any failure): Frankfurter was unavailable, or fetching or
+     * caching the rates failed. Cancellation still propagates.
      */
-    suspend fun refreshRates(): Boolean {
+    suspend fun refreshRates(): Boolean = try {
         val snapshot = store.loaded()
-        return fx.refresh(currenciesInUse(snapshot.state) + snapshot.settings.homeCurrency)
+        fx.refresh(currenciesInUse(snapshot.state) + snapshot.settings.homeCurrency)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
     }
 
     /** Stops background work and closes the database; the backend is unusable afterwards. */
@@ -135,6 +145,7 @@ class RealBackend(
                 scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
                 appVersion = BuildConfig.VERSION_NAME,
                 elapsed = { SystemClock.elapsedRealtime().milliseconds },
+                zone = { ZoneId.systemDefault() },
             )
         }
     }

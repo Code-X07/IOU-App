@@ -95,6 +95,13 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
             rowCount += rows.size
             tables[table.name] = rows
         }
+        // The manifest's row counts make the file checkably complete (spec §7.2): every known table must be
+        // present, even an empty one (exports always write all of them), with exactly the declared data rows.
+        for (table in NormalizedTables.all) {
+            val rows = tables[table.name] ?: return corrupt("Missing ${table.fileName}")
+            val declared = manifest.tables[table.name] ?: return corrupt("manifest.json has no row count for ${table.name}")
+            if (rows.size != declared) return corrupt("${table.fileName} has ${rows.size} data rows, manifest.json says $declared")
+        }
         return LedgerResult.Ok(ImportFile(manifest, tables))
     }
 

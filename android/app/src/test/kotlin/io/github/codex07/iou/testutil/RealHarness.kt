@@ -1,10 +1,13 @@
 package io.github.codex07.iou.testutil
 
 import io.github.codex07.iou.data.BackupFormat
+import io.github.codex07.iou.data.DatabaseProvider
 import io.github.codex07.iou.data.KdfParams
 import io.github.codex07.iou.data.RealBackend
 import io.github.codex07.iou.data.RestoreStep
+import io.github.codex07.iou.data.RoomRateCache
 import io.github.codex07.iou.fake.FakeRates
+import io.github.codex07.iou.fx.RateCache
 import io.github.codex07.iou.ledger.model.IdGenerator
 import java.io.File
 import java.time.Clock
@@ -32,7 +35,10 @@ class RealHarness(private val clock: Clock, private val ids: IdGenerator) {
     @Volatile var onStep: (RestoreStep) -> Unit = {}
     private var running: RealBackend? = null
 
-    fun start(scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)): RealBackend {
+    fun start(
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        rateCache: (DatabaseProvider) -> RateCache = ::RoomRateCache,
+    ): RealBackend {
         check(running == null) { "Stop the running backend first" }
         return RealBackend(
             databaseDir = databaseDir,
@@ -47,6 +53,7 @@ class RealHarness(private val clock: Clock, private val ids: IdGenerator) {
             backupFormat = BackupFormat(FAST_KDF),
             appVersion = "test",
             restoreHook = { onStep(it) },
+            rateCache = rateCache,
         ).also { running = it }
     }
 

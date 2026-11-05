@@ -8,6 +8,8 @@ import io.github.codex07.iou.api.SaveMode
 import io.github.codex07.iou.api.SetupState
 import io.github.codex07.iou.api.TransferDraft
 import io.github.codex07.iou.fake.FakeRates
+import io.github.codex07.iou.fx.CachedRate
+import io.github.codex07.iou.fx.RateCache
 import io.github.codex07.iou.ledger.model.FxSource
 import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.EUR
@@ -21,6 +23,7 @@ import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import java.io.File
+import java.io.IOException
 import java.time.Clock
 import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
@@ -108,6 +111,23 @@ class RealBackendTest {
         val restarted = harness.start()
         restarted.apis.fx.quote(RealHarness.RATES_DATE, SEK, EUR).orFail() shouldBe quote
         restarted.apis.fx.quote(D0, SEK, EUR).orFail() shouldBe quote.copy(isStale = true)
+    }
+
+    @Test
+    fun `a refresh that throws asks for a retry instead of failing the worker`() = runTest {
+        var failure: Exception? = null
+        val backend = harness.start(rateCache = { databases ->
+            val room = RoomRateCache(databases)
+            object : RateCache {
+                override suspend fun load() = room.load()
+                override suspend fun save(rates: List<CachedRate>) = failure?.let { throw it } ?: room.save(rates)
+            }
+        })
+        backend.apis.setup.completeSetup("Me", SEK).orFail()
+        failure = IOException("disk full")
+        backend.refreshRates() shouldBe false
+        failure = null
+        backend.refreshRates() shouldBe true
     }
 
     @Test

@@ -28,7 +28,10 @@ object RevertOps {
         val current = edited(ctx, token, ref.id) { it.entity(ref.type, ref.id) }
         val snapshot = revisions
             .firstOrNull { it.entityType == ref.type && it.entityId == ref.id && it.version == version }
-            ?.snapshot ?: fail(LedgerError.NotFound("${ref.id} v$version"))
+            ?.snapshot
+            // Only a snapshot of this very row can be reverted to: anything else would write another row.
+            ?.takeIf { it.entityType == ref.type && it.entityId == ref.id }
+            ?: fail(LedgerError.NotFound("${ref.id} v$version"))
 
         // Business fields from the snapshot; identity, links and sync columns (including the deleted state) stay current.
         val reverted = ctx.touch(businessFieldsOf(snapshot, current))

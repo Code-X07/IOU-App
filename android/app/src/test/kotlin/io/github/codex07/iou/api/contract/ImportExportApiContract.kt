@@ -103,6 +103,21 @@ abstract class ImportExportApiContract : ApiContract() {
     }
 
     @Test
+    fun `a discarded preview can no longer be used`() = runTest {
+        setUpMe()
+        val preview = apis.importExport.parseImport(importFile(ImportFixture.OWN_EXPORT)).orFail()
+        apis.importExport.discardImport(preview)
+        apis.importExport.discardImport(preview)
+
+        apis.importExport.refreshPreview(preview) shouldBe LedgerResult.Err(LedgerError.NotFound("preview"))
+        apis.importExport.commitImport(preview, ImportChoices()) shouldBe LedgerResult.Err(LedgerError.NotFound("preview"))
+        apis.importExport.observeImportBatches().first() shouldBe emptyList()
+        val foreign = apis.importExport.parseImport(importFile(ImportFixture.FOREIGN_EXPORT)).orFail()
+        apis.importExport.discardImport(foreign)
+        apis.importExport.confirmIdentity(foreign, accept = true) shouldBe LedgerResult.Err(LedgerError.NotFound("preview"))
+    }
+
+    @Test
     fun `any write after parsing makes the preview stale until refreshed`() = runTest {
         setUpMe()
         val preview = apis.importExport.parseImport(importFile(ImportFixture.OWN_EXPORT)).orFail()

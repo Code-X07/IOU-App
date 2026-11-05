@@ -65,6 +65,9 @@ class RealImportExportApi(
 
     private val sessions = ConcurrentHashMap<String, Session>()
 
+    /** Open import sessions, for tests. */
+    internal val openSessions: Int get() = sessions.size
+
     /** Errors: those of `ExportRules.check`, `NotFound` for the scope, `FileAccessFailed`. */
     override suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo> {
         ExportRules.check(request)?.let { return LedgerResult.Err(it) }
@@ -103,6 +106,8 @@ class RealImportExportApi(
         val sourceMe = decoded.ledger.people.firstOrNull { it.record.isMe }?.record?.id
         val session = Session(fileName(source), decoded, sourceMe)
         val id = store.ids.next()
+        // One import at a time (spec §7.5): a new file ends abandoned previews, so their parsed data is freed.
+        sessions.clear()
         sessions[id] = session
         LedgerResult.Ok(
             if (sourceMe == null || sourceMe == me) {
@@ -115,7 +120,7 @@ class RealImportExportApi(
 
     override suspend fun confirmIdentity(preview: ImportPreview, accept: Boolean): LedgerResult<ImportPreview> {
         val snapshot = store.loaded()
-        if (preview.generation != snapshot.generation) return LedgerResult.Err(LedgerError.LedgerReplaced)
+        if (preview.generation != snapshot.generation) return replaced(preview)
         val pending = preview.identity as? ImportIdentity.NeedsConfirmation ?: return LedgerResult.Ok(preview)
         if (!accept) {
             sessions.remove(preview.id)
@@ -139,7 +144,7 @@ class RealImportExportApi(
 
     override suspend fun refreshPreview(preview: ImportPreview): LedgerResult<ImportPreview> {
         val snapshot = store.loaded()
-        if (preview.generation != snapshot.generation) return LedgerResult.Err(LedgerError.LedgerReplaced)
+        if (preview.generation != snapshot.generation) return replaced(preview)
         val session = sessions[preview.id] ?: return LedgerResult.Err(LedgerError.NotFound("preview"))
         if (preview.identity is ImportIdentity.NeedsConfirmation) return LedgerResult.Ok(preview)
         return LedgerResult.Ok(withContext(computeDispatcher) { build(preview.id, session, snapshot, preview.identity, previous = preview) })
@@ -168,8 +173,18 @@ class RealImportExportApi(
                 }
             }
         }
-        if (result is LedgerResult.Ok) sessions.remove(preview.id)
+        if (result is LedgerResult.Ok || (result as LedgerResult.Err).error == LedgerError.LedgerReplaced) sessions.remove(preview.id)
         return result
+    }
+
+    override fun discardImport(preview: ImportPreview) {
+        sessions.remove(preview.id)
+    }
+
+    /** A preview of a replaced ledger can never be used again: its session goes too. */
+    private fun replaced(preview: ImportPreview): LedgerResult<ImportPreview> {
+        sessions.remove(preview.id)
+        return LedgerResult.Err(LedgerError.LedgerReplaced)
     }
 
     override fun observeImportBatches(): Flow<List<ImportBatchView>> = store.readSnapshot { snapshot ->

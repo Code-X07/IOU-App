@@ -273,6 +273,11 @@ data class RevisionView(
     val reason: String?,
     /** Field-level diff to the previous revision; shares diffed per person. */
     val changes: List<FieldChange>,
+    /**
+     * The current token of the row [entity] names, for `revertTo(entity, version, token)`. A membership or a
+     * deleted handle has no other view carrying it. Null only if the row no longer exists.
+     */
+    val token: EditToken?,
 )
 
 /** Shares a draft would get; [storedShares] is set when editing, so both can be shown (spec §4.4). */

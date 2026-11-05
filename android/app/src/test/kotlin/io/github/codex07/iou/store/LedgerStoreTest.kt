@@ -14,6 +14,9 @@ import io.github.codex07.iou.testutil.T0
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import java.time.Clock
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -47,6 +50,22 @@ class LedgerStoreTest {
         LedgerStore(Clock.fixed(T0, ZoneOffset.UTC), SequentialIds("store"), DeviceId("device-1"), journal, initial = initial)
 
     private suspend fun LedgerStore.setUp() = write(beforeSetup = true) { PeopleOps.setup(it, "Me") }
+
+    @Test
+    fun `today is the calendar date in the device zone, which may change while the app runs`() {
+        // 19:00 UTC on 5 November is already 6 November in Kolkata and still 5 November in New York.
+        var zone: ZoneId = ZoneId.of("Asia/Kolkata")
+        val store = LedgerStore(
+            Clock.fixed(Instant.parse("2026-11-05T19:00:00Z"), ZoneOffset.UTC), SequentialIds("store"), DeviceId("device-1"),
+            initial = LedgerContent(), zone = { zone },
+        )
+        store.today() shouldBe LocalDate.parse("2026-11-06")
+        zone = ZoneId.of("America/New_York")
+        store.today() shouldBe LocalDate.parse("2026-11-05")
+        store.now() shouldBe Instant.parse("2026-11-05T19:00:00Z")
+        zone = ZoneOffset.UTC
+        store.today() shouldBe LocalDate.parse("2026-11-05")
+    }
 
     @Test
     fun `writes before setup are refused, setup works`() = runTest {

@@ -7,7 +7,11 @@ interface ImportExportApi {
     /** Errors: `InvalidField("scope")` for a scoped normalized export. */
     suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo>
 
-    /** Parses and validates; writes nothing. Errors: `CorruptFile`, `LimitsExceeded`, `SchemaTooNew`. */
+    /**
+     * Parses and validates; writes nothing. Errors: `CorruptFile`, `LimitsExceeded`, `SchemaTooNew`. One import is
+     * open at a time: in the real flavor, parsing a file ends any earlier preview, whose later use returns
+     * `NotFound("preview")`.
+     */
     suspend fun parseImport(source: DocumentRef): LedgerResult<ImportPreview>
 
     /**
@@ -31,6 +35,12 @@ interface ImportExportApi {
 
     /** Errors: `LedgerReplaced`, `ImportPreviewStale` (any write since the preview), invalid rows not skipped. */
     suspend fun commitImport(preview: ImportPreview, choices: ImportChoices): LedgerResult<ImportBatchId>
+
+    /**
+     * Ends [preview]'s import session and frees what it holds; call it when the user leaves a preview without
+     * committing. Later use of the preview returns `NotFound("preview")`. Unknown or ended previews are ignored.
+     */
+    fun discardImport(preview: ImportPreview)
 
     fun observeImportBatches(): Flow<List<ImportBatchView>>
 

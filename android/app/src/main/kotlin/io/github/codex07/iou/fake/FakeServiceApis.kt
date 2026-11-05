@@ -91,6 +91,9 @@ class FakeBackupApi(private val store: LedgerStore, private val device: DeviceSe
 /** Simulated import/export (M0 Part 7 "Decisions"): canned previews, real staleness checks. */
 class FakeImportExportApi(private val store: LedgerStore) : ImportExportApi {
 
+    /** The fake keeps no sessions; it only remembers which previews were discarded, to answer like the real one. */
+    private val discarded = ConcurrentHashMap.newKeySet<String>()
+
     override suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo> {
         ExportRules.check(request)?.let { return LedgerResult.Err(it) }
         return LedgerResult.Ok(ExportInfo(rowCount = store.loaded().state.entries.size))
@@ -107,6 +110,7 @@ class FakeImportExportApi(private val store: LedgerStore) : ImportExportApi {
         val snapshot = store.loaded()
         // A preview parsed before a restore belongs to the replaced ledger, whatever the answer.
         if (preview.generation != snapshot.generation) return LedgerResult.Err(LedgerError.LedgerReplaced)
+        if (preview.id in discarded) return LedgerResult.Err(LedgerError.NotFound("preview"))
         val pending = preview.identity as? ImportIdentity.NeedsConfirmation ?: return LedgerResult.Ok(preview)
         if (!accept) return LedgerResult.Err(LedgerError.ForeignLedger)
         return LedgerResult.Ok(cannedPreview(snapshot, preview.fileName, ImportIdentity.Mapped(pending.sourceMe)))
@@ -118,6 +122,7 @@ class FakeImportExportApi(private val store: LedgerStore) : ImportExportApi {
     override suspend fun refreshPreview(preview: ImportPreview): LedgerResult<ImportPreview> {
         val snapshot = store.loaded()
         if (preview.generation != snapshot.generation) return LedgerResult.Err(LedgerError.LedgerReplaced)
+        if (preview.id in discarded) return LedgerResult.Err(LedgerError.NotFound("preview"))
         val previous = preview.rows.associateBy { it.key }
         val fresh = cannedPreview(snapshot, preview.fileName, preview.identity)
         return LedgerResult.Ok(
@@ -131,6 +136,7 @@ class FakeImportExportApi(private val store: LedgerStore) : ImportExportApi {
                 preview.generation != snapshot.generation -> LedgerResult.Err(LedgerError.LedgerReplaced)
                 preview.ledgerSeq != snapshot.ledgerSeq -> LedgerResult.Err(LedgerError.ImportPreviewStale)
                 preview.identity is ImportIdentity.NeedsConfirmation -> LedgerResult.Err(LedgerError.ForeignLedger)
+                preview.id in discarded -> LedgerResult.Err(LedgerError.NotFound("preview"))
                 preview.invalidRows.isNotEmpty() && !choices.skipInvalidRows -> LedgerResult.Err(LedgerError.InvalidField("invalidRows"))
                 else -> {
                     val id = ImportBatchId(context.ids.next())
@@ -140,6 +146,10 @@ class FakeImportExportApi(private val store: LedgerStore) : ImportExportApi {
                 }
             }
         }
+
+    override fun discardImport(preview: ImportPreview) {
+        discarded += preview.id
+    }
 
     override fun observeImportBatches(): Flow<List<ImportBatchView>> = store.readSnapshot { snapshot ->
         snapshot.importBatches.sortedByDescending { it.importedAt }

@@ -14,6 +14,7 @@ import io.github.codex07.iou.ledger.views.LedgerViews
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +44,8 @@ class LedgerStore(
     private val journal: LedgerJournal = LedgerJournal.None,
     private val rates: StateFlow<RateLookup> = MutableStateFlow(RateLookup.None),
     initial: LedgerContent? = null,
+    /** The device's current zone, asked each time: the user's calendar date for prefilled entry dates (spec §3.1). */
+    private val zone: () -> ZoneId = { clock.zone },
 ) {
     private val lock = Mutex()
     private val current = MutableStateFlow(initial?.let { StoreSnapshot(it, newGeneration()) })
@@ -68,7 +71,8 @@ class LedgerStore(
 
     fun now(): Instant = clock.instant()
 
-    fun today(): LocalDate = LocalDate.now(clock)
+    /** Today in the device's zone; instants stay zone-free. */
+    fun today(): LocalDate = clock.instant().atZone(zone()).toLocalDate()
 
     fun newGeneration() = LedgerGeneration(ids.next())
 

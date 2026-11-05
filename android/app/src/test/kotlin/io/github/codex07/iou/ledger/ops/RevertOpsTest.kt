@@ -80,6 +80,22 @@ class RevertOpsTest {
     }
 
     @Test
+    fun `a revision holding a snapshot of another row is not reverted to`() {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val y = ledger.person("Y")
+        val group = ledger.group("Trip", members = listOf(ME, x))
+        val h = OpsHarness(ledger.state)
+        val ref = EntityRef(EntityType.PERSON, x.value)
+        for (other in listOf(h.state.people.getValue(y), h.state.groups.getValue(group))) {
+            val corrupt = h.revisions.map { if (it.entityId == x.value && it.version == 1) it.copy(snapshot = other) else it }
+            h.run { RevertOps.revertTo(it, ref, 1, h.token(h.state.people.getValue(x)), corrupt) } shouldBe
+                LedgerResult.Err(LedgerError.NotFound("${x.value} v1"))
+        }
+        h.state.people.getValue(y).meta.version shouldBe 1
+    }
+
+    @Test
     fun `reverting a handle to a version that was the default clears the newer default`() {
         val ledger = TestLedger().apply { me() }
         val x = ledger.person("X")

@@ -6,6 +6,7 @@ import io.github.codex07.iou.api.EntryKind
 import io.github.codex07.iou.api.ExpenseDraft
 import io.github.codex07.iou.api.FxChoice
 import io.github.codex07.iou.api.FxQuote
+import io.github.codex07.iou.api.GroupDraft
 import io.github.codex07.iou.api.HandleDraft
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
@@ -18,13 +19,16 @@ import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSource
 import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.LedgerGeneration
+import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.ledger.ops.EntryOps
+import io.github.codex07.iou.ledger.ops.GroupOps
 import io.github.codex07.iou.ledger.ops.OpsHarness
 import io.github.codex07.iou.ledger.ops.PeopleOps
+import io.github.codex07.iou.ledger.ops.RevertOps
 import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.ME
@@ -33,6 +37,7 @@ import io.github.codex07.iou.testutil.TestLedger
 import io.github.codex07.iou.testutil.eur
 import io.github.codex07.iou.testutil.sek
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
 
 class EntryViewsTest {
@@ -144,6 +149,50 @@ class EntryViewsTest {
         val bigger = h.views().splitPreview(draft.copy(total = eur(1_001)), id, h.now).ok()
         bigger.recomputed shouldBe true
         bigger.shares.map { it.share }.sumOf { it.amountMinor } shouldBe 1_001L
+    }
+
+    @Test
+    fun `an unchanged split preview after a merge shows each person once, as the stored shares do`() {
+        for (type in listOf(SplitType.EQUAL, SplitType.SHARES)) {
+            val ledger = TestLedger().apply { me() }
+            val alex = ledger.person("Alex")
+            val alex2 = ledger.person("Alex2", mergedInto = alex)
+            val inputs: Map<PersonId, Long?> = if (type == SplitType.EQUAL) emptyMap() else mapOf(ME to 1L, alex to 1L, alex2 to 1L)
+            val id = ledger.expense(ME, eur(3), mapOf(ME to 1L, alex to 1L, alex2 to 1L), splitType = type, inputs = inputs)
+            val h = OpsHarness(ledger.state)
+            val draft = h.views().entry(id)!!.editDraft as ExpenseDraft
+
+            val preview = h.views().splitPreview(draft.copy(note = "only the note"), id, h.now).ok()
+            preview.recomputed shouldBe false
+            preview.shares shouldBe preview.storedShares
+            preview.shares.map { it.person.displayName to it.share } shouldBe listOf("Me" to eur(1), "Alex" to eur(2))
+            h.state.expenses.getValue(id).shares.size shouldBe 3
+        }
+    }
+
+    @Test
+    fun `each history row carries its own row's current token, so memberships and deleted handles can be reverted`() {
+        val ledger = TestLedger().apply { me() }
+        val a = ledger.person("A")
+        val h = OpsHarness(ledger.state)
+        val trip = h.run { GroupOps.createGroup(it, GroupDraft("Trip", EUR, FxMode.CONVERT), listOf(a), h.generation) }.ok()
+        h.run { GroupOps.removeMember(it, trip, a, h.generation) }.ok()
+        val iban = HandleDraft(HandleType.IBAN, "GB82WEST12345698765432", label = "UK")
+        val handle = h.run { PeopleOps.addHandle(it, a, iban, h.generation) }.ok()
+        h.run { PeopleOps.deleteHandle(it, handle, h.token(h.state.handles.getValue(handle))) }.ok()
+
+        val group = h.views().group(trip)!!
+        val membership = group.history.first { it.entity.type == EntityType.GROUP_MEMBER && it.subject == "A in Trip" }
+        val member = h.state.members.values.single { it.groupId == trip && it.personId == a }
+        membership.token shouldBe h.token(member)
+        membership.token shouldNotBe group.token
+        group.history.filter { it.entity.type == EntityType.GROUP }.forEach { it.token shouldBe group.token }
+        h.run { RevertOps.revertTo(it, membership.entity, 1, membership.token!!, h.revisions) }.ok()
+        h.state.members.getValue(member.id).removedAt shouldBe null
+
+        val deleted = h.views().person(a)!!.history.first { it.entity.type == EntityType.PAYMENT_HANDLE }
+        deleted.token shouldBe h.token(h.state.handles.getValue(handle))
+        h.run { RevertOps.revertTo(it, deleted.entity, 1, deleted.token!!, h.revisions) }.ok()
     }
 
     @Test

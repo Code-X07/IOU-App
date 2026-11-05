@@ -132,6 +132,7 @@ fun LedgerViews.history(refs: Collection<EntityRef>): List<RevisionView> {
         .flatMap { (ref, revisionsOfRow) ->
             val own = revisionsOfRow.sortedBy { it.version }
             val subject = subject(ref)
+            val rowToken = state.entity(ref.type, ref.id)?.let { token(it) }
             own.mapIndexed { index, revision ->
                 RevisionView(
                     entity = ref,
@@ -143,6 +144,7 @@ fun LedgerViews.history(refs: Collection<EntityRef>): List<RevisionView> {
                     deviceId = revision.deviceId,
                     reason = revision.reason,
                     changes = RevisionDiff.diff(own.getOrNull(index - 1)?.snapshot, revision.snapshot, names),
+                    token = rowToken,
                 )
             }
         }
@@ -163,6 +165,7 @@ fun LedgerViews.subject(ref: EntityRef): String = when (val entity = state.entit
 /** "Open as draft" (spec §5.3): the old version's fields as its edit form's draft; an entry's FX becomes a fresh choice. */
 fun LedgerViews.draftFromVersion(ref: EntityRef, version: Int): LedgerResult<VersionDraft> {
     val old = revisions.firstOrNull { it.entityType == ref.type && it.entityId == ref.id && it.version == version }?.snapshot
+        ?.takeIf { it.entityType == ref.type && it.entityId == ref.id }
         ?: return LedgerResult.Err(LedgerError.NotFound("${ref.id} v$version"))
     val draft = when (old) {
         is Entry -> VersionDraft.OfEntry(draftOf(old, fxChoiceOf(old)))
@@ -188,10 +191,17 @@ fun LedgerViews.splitPreview(draft: ExpenseDraft, editing: EntryId?, now: Instan
     val existing = editing?.let { state.expenses[it] ?: return LedgerResult.Err(LedgerError.NotFound(it.value)) }
     val ctx = WriteContext(state, generation, now, IdGenerator.Random)
     return EntryOps.previewShares(ctx, draft, existing).map { preview ->
+        val stored = existing?.let { shareViews(it) }
         SplitPreview(
             effectTotal = preview.effectTotal,
-            shares = preview.shares.map { ShareView(personRef(it.personId), Money(it.shareMinor, preview.effectTotal.currency), it.inputValue) },
-            storedShares = existing?.let { shareViews(it) },
+            // Kept shares are the stored rows, possibly several per person after a merge: show them combined,
+            // as storedShares does. Recomputed shares already have one row per canonical person.
+            shares = if (!preview.recomputed && stored != null) {
+                stored
+            } else {
+                preview.shares.map { ShareView(personRef(it.personId), Money(it.shareMinor, preview.effectTotal.currency), it.inputValue) }
+            },
+            storedShares = stored,
             recomputed = preview.recomputed,
         )
     }

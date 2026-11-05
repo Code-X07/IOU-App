@@ -82,6 +82,37 @@ class BackupFormatTest {
     }
 
     @Test
+    fun `a revision whose snapshot is of another row is rejected`() {
+        val people = rows.revisions.filter { it.entityType == "PERSON" }
+        val a = people.first()
+        val b = people.first { it.entityId != a.entityId }
+        val group = rows.revisions.first { it.entityType == "GROUP" }
+        for (snapshot in listOf(b.snapshotJson, group.snapshotJson)) {
+            val swapped = rows.copy(revisions = rows.revisions.map { if (it.id == a.id) it.copy(snapshotJson = snapshot) else it })
+            val error = format.read(format.write(swapped, "0.1.0", T0, null), null).error() as LedgerError.CorruptFile
+            error.detail shouldContain "snapshot of another row"
+        }
+        val wrongVersion = rows.copy(revisions = rows.revisions.map { if (it.id == a.id) it.copy(version = it.version + 1) else it })
+        format.read(format.write(wrongVersion, "0.1.0", T0, null), null).error()::class shouldBe LedgerError.CorruptFile::class
+    }
+
+    @Test
+    fun `rows that share a primary key are rejected, not collapsed`() {
+        val person = rows.people.first()
+        // The earlier copy is invalid; mapping by ID would keep only the valid later one and never check it.
+        val people = rows.copy(people = listOf(person.copy(displayName = "")) + rows.people)
+        (format.read(format.write(people, "0.1.0", T0, null), null).error() as LedgerError.CorruptFile).detail shouldContain
+            "Duplicate person key ${person.id}"
+        val revisions = rows.copy(revisions = rows.revisions + rows.revisions.first())
+        (format.read(format.write(revisions, "0.1.0", T0, null), null).error() as LedgerError.CorruptFile).detail shouldContain
+            "Duplicate entry_revision key"
+        val share = rows.shares.first()
+        val shares = rows.copy(shares = rows.shares + share.copy(shareMinor = share.shareMinor + 1))
+        (format.read(format.write(shares, "0.1.0", T0, null), null).error() as LedgerError.CorruptFile).detail shouldContain
+            "Duplicate expense_share key"
+    }
+
+    @Test
     fun `cached rates that don't map or aren't valid are rejected`() {
         val rate = rows.rates.single()
         for (bad in listOf(rate.copy(rateDate = "not a date"), rate.copy(base = "ZZZ"), rate.copy(rate = "0"), rate.copy(rate = "10E+2147483647"), rate.copy(rate = "100E+2147483647"))) {
