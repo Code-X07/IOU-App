@@ -2,10 +2,10 @@ package io.github.codex07.iou.data
 
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
+import io.github.codex07.iou.store.readAtMost
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.io.InputStream
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import java.util.zip.GZIPInputStream
@@ -110,19 +110,5 @@ object BackupCipher {
         if (plain == null) LedgerResult.Err(LedgerError.LimitsExceeded("Backup larger than $maxPlainBytes bytes")) else LedgerResult.Ok(plain)
     } catch (_: IOException) {
         LedgerResult.Err(LedgerError.CorruptFile("Damaged compressed backup"))
-    }
-}
-
-/** Reads the whole stream, or returns null once it holds more than [max] bytes. */
-fun InputStream.readAtMost(max: Long): ByteArray? {
-    val out = ByteArrayOutputStream()
-    val chunk = ByteArray(64 * 1024)
-    var total = 0L
-    while (true) {
-        val read = read(chunk)
-        if (read < 0) return out.toByteArray()
-        total += read
-        if (total > max) return null
-        out.write(chunk, 0, read)
     }
 }

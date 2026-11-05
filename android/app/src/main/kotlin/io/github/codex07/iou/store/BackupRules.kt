@@ -3,6 +3,7 @@ package io.github.codex07.iou.store
 import io.github.codex07.iou.api.BackupReminder
 import io.github.codex07.iou.api.DocumentRef
 import io.github.codex07.iou.api.LedgerError
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.Duration
@@ -18,6 +19,20 @@ interface DocumentStore {
 
     /** Replaces [ref]'s content. Throws `IOException` when it can't be opened. */
     fun openWrite(ref: DocumentRef): OutputStream
+}
+
+/** Reads the whole stream, or returns null once it holds more than [max] bytes. */
+fun InputStream.readAtMost(max: Long): ByteArray? {
+    val out = ByteArrayOutputStream()
+    val chunk = ByteArray(64 * 1024)
+    var total = 0L
+    while (true) {
+        val read = read(chunk)
+        if (read < 0) return out.toByteArray()
+        total += read
+        if (total > max) return null
+        out.write(chunk, 0, read)
+    }
 }
 
 /** Backup rules both flavors share (spec §7.1, §9). */
