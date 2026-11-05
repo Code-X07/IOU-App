@@ -11,7 +11,7 @@ class DomainPurityTest {
     // Gradle runs Android unit tests with the module directory (android/app) as working directory.
     private val sourceRoot = File("src/main/kotlin/io/github/codex07/iou")
 
-    private val androidFreePackages = listOf("money", "ledger", "api", "store", "fake", "fx")
+    private val androidFreePackages = listOf("money", "ledger", "api", "store", "fake", "fx", "io")
     private val noFloatingPointPackages = listOf("money", "ledger", "api", "store", "data", "io", "fx")
 
     @Test

@@ -18,6 +18,7 @@ kotlinxSerialization = "1.9.0"
 ktor = "3.2.3"
 work = "2.10.3"
 bouncycastle = "1.81"
+commonsCsv = "1.14.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -49,6 +50,7 @@ ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "kto
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 androidx-work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
 bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
+commons-csv = { module = "org.apache.commons:commons-csv", version.ref = "commonsCsv" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
