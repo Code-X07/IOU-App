@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup on API 30 (spec §9): only the ledger databases and their pointer, and only into an
+     end-to-end encrypted cloud backup or a device-to-device transfer. API 31+ reads data_extraction_rules.xml.
+     Device-local settings and the device ID live in noBackupFilesDir, which is never backed up. -->
+<full-backup-content>
+    <include domain="database" path="." requireFlags="clientSideEncryption" />
+    <include domain="database" path="." requireFlags="deviceToDeviceTransfer" />
+    <exclude domain="database" path="db-state.json.tmp" />
+    <exclude domain="database" path="restore-marker.json" />
+    <exclude domain="database" path="restore-marker.json.tmp" />
+</full-backup-content>

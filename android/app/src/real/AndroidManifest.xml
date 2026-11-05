@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- real flavor only: Frankfurter rates (spec §4.5). The fake flavor never touches the network. -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- real flavor only: Frankfurter rates (spec §4.5). The fake flavor never touches the network.
+     WorkManager also merges WAKE_LOCK, ACCESS_NETWORK_STATE and RECEIVE_BOOT_COMPLETED (spec §9 allows them) and
+     FOREGROUND_SERVICE, which only long-running workers need; the rate refresh never runs in the foreground. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
 </manifest>

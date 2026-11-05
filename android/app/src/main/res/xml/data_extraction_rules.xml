@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup and device transfer on API 31+ (spec §9): only the ledger databases and their pointer. Cloud
+     backup runs only where it is end-to-end encrypted. The same rules for API 30 are in backup_rules.xml. -->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <include domain="database" path="." />
+        <exclude domain="database" path="db-state.json.tmp" />
+        <exclude domain="database" path="restore-marker.json" />
+        <exclude domain="database" path="restore-marker.json.tmp" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="database" path="." />
+        <exclude domain="database" path="db-state.json.tmp" />
+        <exclude domain="database" path="restore-marker.json" />
+        <exclude domain="database" path="restore-marker.json.tmp" />
+    </device-transfer>
+</data-extraction-rules>
