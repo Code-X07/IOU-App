@@ -43,7 +43,8 @@ class RealBackupApi(
     override suspend fun createBackup(target: DocumentRef, passphrase: CharArray?): LedgerResult<BackupInfo> {
         BackupRules.checkPassphrase(passphrase)?.let { return LedgerResult.Err(it) }
         val now = store.now()
-        val rows = LedgerRows.of(store.loaded().content, fx.cachedRates())
+        store.loaded()
+        val rows = store.exclusive { live, _ -> LedgerRows.of(checkNotNull(live).content, fx.cachedRates()) }
         val written = withContext(Dispatchers.IO) {
             val file = format.write(rows, appVersion, now, passphrase)
             access(target) { documents.openWrite(target).use { it.write(file) } }

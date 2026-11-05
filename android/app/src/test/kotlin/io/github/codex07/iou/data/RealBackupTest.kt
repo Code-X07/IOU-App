@@ -13,6 +13,7 @@ import io.github.codex07.iou.testutil.RealHarness
 import io.github.codex07.iou.testutil.SEK
 import io.github.codex07.iou.testutil.SequentialIds
 import io.github.codex07.iou.testutil.T0
+import io.github.codex07.iou.testutil.USD
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -23,13 +24,19 @@ import java.time.Clock
 import java.time.Duration
 import java.time.ZoneOffset
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -286,6 +293,35 @@ class RealBackupTest {
 
         beforeStartup({ it.restores.restore(backup) }, backedUp)
         beforeStartup({ it.restores.undo() }, later)
+    }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `backup captures a coherent ledger and rates while restore replaces them`() = runTest {
+        val backend = seeded()
+        backend.apis.backup.createBackup(file, null).orFail()
+        val format = BackupFormat(RealHarness.FAST_KDF)
+        val beforeRestore = format.read(harness.documents.file(file).readBytes(), null).orFail()
+        backend.apis.people.createPerson(PersonDraft("Later"), backend.store.loaded().generation).orFail()
+        backend.apis.fx.quote(D0, USD, EUR).orFail()
+        val laterContent = backend.store.loaded().content
+        val laterRates = LedgerRows.of(laterContent, backend.fx.cachedRates()).rates.toSet()
+        beforeRestore.content shouldNotBe laterContent
+        beforeRestore.rows.rates.toSet() shouldNotBe laterRates
+
+        val resultFile = DocumentRef("during-restore.json")
+        val started = CompletableDeferred<Deferred<LedgerResult<io.github.codex07.iou.api.BackupInfo>>>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            backend.fx.lookup.drop(1).first()
+            started.complete(async(start = CoroutineStart.UNDISPATCHED) {
+                backend.apis.backup.createBackup(resultFile, null)
+            })
+        }
+        backend.apis.backup.restoreBackup(file, null).orFail()
+        started.await().await().orFail()
+        val captured = format.read(harness.documents.file(resultFile).readBytes(), null).orFail()
+        val actual = captured.content to captured.rows.rates.toSet()
+        val valid = setOf(beforeRestore.content to beforeRestore.rows.rates.toSet(), laterContent to laterRates)
+        (actual in valid) shouldBe true
     }
     @Test
     fun `the reminder is due after 30 days without a manual backup`() = runTest {
