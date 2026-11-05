@@ -40,7 +40,7 @@ object DeviceIdFile {
     fun read(file: File, ids: IdGenerator): DeviceId {
         if (!file.exists()) {
             file.parentFile?.mkdirs()
-            file.writeText(ids.next())
+            file.writeAtomically(ids.next())
         }
         return DeviceId(file.readText().trim())
     }

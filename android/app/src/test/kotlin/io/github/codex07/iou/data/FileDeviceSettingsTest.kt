@@ -7,6 +7,7 @@ import io.kotest.matchers.shouldBe
 import java.io.File
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.path.createTempDirectory
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Runnable
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class FileDeviceSettingsTest {
 
     private val file = File(createTempDirectory("iou-device").toFile(), "device-settings.json")

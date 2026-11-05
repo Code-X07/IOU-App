@@ -41,7 +41,7 @@
 | `main/.../data/RealBackend.kt` | Assembles the real backend; `RealBackend.android(context)` |
 | `real/.../di/BackendModule.kt` | Hilt binding of `RealBackend` and its `Apis` |
 | `test/.../testutil/RealHarness.kt` | Real backends in a temp directory; restart by stop and start |
-| `test/.../data/DbFilesTest.kt`, `RestoreRecoveryTest.kt`, `FileDeviceSettingsTest.kt`, `RealBackendTest.kt`, `RealContractTests.kt` | Tests |
+| `test/.../data/DbFilesTest.kt`, `RestoreRecoveryTest.kt`, `FileDeviceSettingsTest.kt`, `DeviceIdFileTest.kt`, `RealBackendTest.kt`, `RealContractTests.kt` | Tests |
 
 `main/...` = `android/app/src/main/kotlin/io/github/codex07/iou/`; `real/...` = `android/app/src/real/kotlin/io/github/codex07/iou/`; `test/...` = `android/app/src/test/kotlin/io/github/codex07/iou/`. Gradle commands run from `android/` (see Part 1 for `JAVA_HOME`).
 
@@ -371,7 +371,7 @@ git commit -m "Add the database pointer files and start-up recovery"
 - Create: `main/.../data/LedgerDatabases.kt`, `main/.../data/FileDeviceSettings.kt`, `main/.../data/RealBackend.kt`
 - Modify: `real/.../di/BackendModule.kt` (whole file below)
 - Create: `test/.../testutil/RealHarness.kt`
-- Test: `test/.../data/FileDeviceSettingsTest.kt`, `test/.../data/RealBackendTest.kt`, `test/.../data/RealContractTests.kt`
+- Test: `test/.../data/FileDeviceSettingsTest.kt`, `test/.../data/DeviceIdFileTest.kt`, `test/.../data/RealBackendTest.kt`, `test/.../data/RealContractTests.kt`
 
 **Interfaces:**
 - Consumes:
@@ -445,6 +445,7 @@ import io.kotest.matchers.shouldBe
 import java.io.File
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.path.createTempDirectory
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Runnable
@@ -454,6 +455,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class FileDeviceSettingsTest {
 
     private val file = File(createTempDirectory("iou-device").toFile(), "device-settings.json")
@@ -491,6 +493,41 @@ class FileDeviceSettingsTest {
 
         store.settings.first().appLockEnabled shouldBe true
         FileDeviceSettings(file).settings.first().appLockEnabled shouldBe true
+    }
+}
+```
+
+`test/.../data/DeviceIdFileTest.kt`:
+
+```kotlin
+package io.github.codex07.iou.data
+
+import io.github.codex07.iou.ledger.model.DeviceId
+import io.github.codex07.iou.ledger.model.IdGenerator
+import io.kotest.matchers.shouldBe
+import java.io.File
+import java.io.IOException
+import kotlin.io.path.createTempDirectory
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+
+class DeviceIdFileTest {
+    @Test
+    fun `failed initial write does not publish an ID and retry persists it`() {
+        val dir = createTempDirectory("iou-device-id").toFile()
+        val file = File(dir, "device-id")
+        val obstruction = File(dir, "device-id.tmp")
+        obstruction.mkdir() shouldBe true
+        var generated = 0
+        val ids = IdGenerator { "id-${++generated}" }
+
+        assertThrows<IOException> { DeviceIdFile.read(file, ids) }
+        file.exists() shouldBe false
+        obstruction.delete() shouldBe true
+
+        DeviceIdFile.read(file, ids) shouldBe DeviceId("id-2")
+        DeviceIdFile.read(file, ids) shouldBe DeviceId("id-2")
+        generated shouldBe 2
     }
 }
 ```
@@ -633,7 +670,7 @@ class RealSettingsApiContractTest : SettingsApiContract() {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.data.*"`
-Expected: FAIL, compilation errors `Unresolved reference 'RealBackend'`, `'FileDeviceSettings'`.
+Expected: FAIL, compilation errors `Unresolved reference 'RealBackend'`, `'FileDeviceSettings'` and `'DeviceIdFile'`.
 
 - [ ] **Step 3: Write the database holder and the device ID**
 
@@ -682,7 +719,7 @@ object DeviceIdFile {
     fun read(file: File, ids: IdGenerator): DeviceId {
         if (!file.exists()) {
             file.parentFile?.mkdirs()
-            file.writeText(ids.next())
+            file.writeAtomically(ids.next())
         }
         return DeviceId(file.readText().trim())
     }
@@ -901,10 +938,10 @@ object BackendModule {
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.data.*"`
-Expected: PASS. `RealContractTests` adds 24 tests (setup 1, people 7, groups 5, ledger 9, settings 2), `RealBackendTest` 3 and `FileDeviceSettingsTest` 2.
+Expected: PASS. `RealContractTests` adds 24 tests (setup 1, people 7, groups 5, ledger 9, settings 2), `RealBackendTest` 3, `FileDeviceSettingsTest` 2 and `DeviceIdFileTest` 1.
 
 Run: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest --rerun-tasks`
-Expected: PASS, 261 tests per flavor.
+Expected: PASS, 262 tests per flavor.
 
 Run: `.\gradlew.bat lintFakeDebug lintRealDebug assembleFakeDebug assembleRealDebug`
 Expected: BUILD SUCCESSFUL; lint reports no errors.
