@@ -312,3 +312,12 @@ Smaller items:
 | Compose instrumentation | Not added in this merge; carried as an open item in the manual checklist (section 8). |
 
 Device pass (disposable API 37 AVD, realDebug, synthetic data) findings: **D1** and **D2** (the ledger-replaced dialog and message appeared after every restore, even with nothing interrupted) were fixed in `b48cd78` (`AdvancedManagementTest`: `a ledger replacement reports LedgerReplaced only for an action under review`; `SettingsSecurityTest`: `ledger replacement without a pending authentication adds no message`). **D3**, the import screen showing the SAF document id instead of the file name, is a core follow-up and is not fixed here. The passed and still-open device checks are recorded in section 8 of `docs/manual-test-checklist.md`.
+
+### Targeted re-review at `247c0f6` (2026-11-06)
+
+A re-review of the fixed branch found two of the fixes incomplete. Both were confirmed and fixed in `6908b44`.
+
+| Finding | Problem | Fix | Tests |
+| --- | --- | --- | --- |
+| F9 (P2) | `RealImportExportApi.parseImport` installed its session on the compute dispatcher. A caller cancelled after that but before the preview reached it got a `CancellationException` from `withContext`, so the UI never saw the preview and the session (parsed financial data) stayed until the next parse. A regression probe left one session instead of zero. | `parseImport` records the session it installs and removes it if the call ends with any exception, including cancellation at the dispatcher-return boundary. | `RealImportTest`: `a parse cancelled after its session is installed but before the caller gets the preview keeps no session` (fails without the fix with 1 session left). |
+| F13 (P3) | A route owner cached by `RouteStores` kept delegating `defaultViewModelProviderFactory`/`defaultViewModelCreationExtras` to the Activity that first created it, so after rotation an open route retained the destroyed Activity. | Each `owner(route, parent)` call points the route at the current parent while keeping its `ViewModelStore`; `IOUApp` calls `RouteStores.detach(activity)` when the Activity's composition is disposed, so no route keeps a destroyed Activity. A detached route used before re-attachment fails loudly. | `RouteStoresTest`: `recreatedParentKeepsTheStoreAndReplacesTheDelegate`, `detachingADestroyedParentLeavesNoReferenceToIt`, `detachingAnOldParentKeepsTheCurrentOne`. |
