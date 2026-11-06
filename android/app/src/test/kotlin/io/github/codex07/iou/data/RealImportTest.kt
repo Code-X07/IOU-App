@@ -34,6 +34,8 @@ import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import java.time.Clock
 import java.time.ZoneOffset
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.CoroutineContext
@@ -156,18 +158,23 @@ class RealImportTest {
     fun `a parse cancelled after its session is installed but before the caller gets the preview keeps no session`() = runTest {
         val backend = harness.start()
         backend.setUp()
-        val api = RealImportExportApi(backend.store, harness.documents, LedgerExport("test"))
+        // The parse's compute steps queue here and run only when this test runs them, on the test thread.
+        val compute = LinkedBlockingQueue<Runnable>()
+        val dispatcher = object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) { compute.put(block) }
+        }
+        val api = RealImportExportApi(backend.store, harness.documents, LedgerExport("test"), computeDispatcher = dispatcher)
         val source = exported(backend)
         val delivered = AtomicBoolean(false)
-        // The caller runs on the test scheduler: once the parse finishes on its own dispatcher, the caller's resumption
-        // waits in that queue, so cancelling before it runs is exactly the window where the preview is never delivered.
         val caller = launch { api.parseImport(source); delivered.set(true) }
         runCurrent()
-        val deadline = System.nanoTime() + 10_000_000_000L
+        // Run the parse until it installs its session. That step also finishes the parse, which queues the caller's
+        // resumption on the test scheduler; the test does not yield, so the caller has not received the preview yet.
         while (api.openSessions == 0) {
-            check(System.nanoTime() < deadline) { "parse never installed its session" }
-            Thread.sleep(1)
+            checkNotNull(compute.poll(10, TimeUnit.SECONDS)) { "parse never installed its session" }.run()
         }
+        compute.isEmpty() shouldBe true
+        delivered.get() shouldBe false
         caller.cancel()
         caller.join()
         delivered.get() shouldBe false
