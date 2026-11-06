@@ -307,16 +307,66 @@ class AdvancedManagementTest {
         assertNull(ops.form(key)); assertNull(ops.state.value.openRoute)
     }
 
-    @Test fun `membership history does not substitute the group token and deleted handles have no invented token`() = runTest(dispatcher) {
+    @Test fun `membership history reverts through the membership row token`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val p = person(a, "History member"); val g = group(a, p)
+        assertTrue(a.groups.removeMember(g, p, basis(a)) is LedgerResult.Ok)
+        val group = a.groups.observeGroup(g).first()!!
+        val revision = group.history.first { it.entity.type == EntityType.GROUP_MEMBER && it.version == 1 }
+        assertNotNull(revision.token); assertNotEquals(group.token, revision.token)
+        val action = group.restoreAction(revision)
+        assertNotNull(action, "A membership revision with a current row token must be actionable")
+        assertEquals(revision.token, action?.token); assertFalse(action!!.deletedHandle)
+        val ops = operations(a); runCurrent(); ops.request(action); ops.confirm(); runCurrent()
+        assertEquals(AdvancedOutcome.SUCCESS, ops.state.value.outcome); assertNull(ops.state.value.error)
+    }
+
+    @Test fun `deleted handle history reverts through its own token and is marked deleted`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val p = person(a, "History owner")
+        val h = (a.people.addHandle(p, HandleDraft(HandleType.PHONE, "+37061234567", "Mobile"), basis(a)) as LedgerResult.Ok).value
+        val token = a.people.observePerson(p).first()!!.handles.first { it.id == h }.token
+        assertTrue(a.people.deleteHandle(h, token) is LedgerResult.Ok)
+        val owner = a.people.observePerson(p).first()!!
+        assertTrue(owner.handles.none { it.id == h })
+        val revision = owner.history.first { it.entity.type == EntityType.PAYMENT_HANDLE && it.entity.id == h.value && it.version == 1 }
+        assertNotNull(revision.token)
+        val action = owner.restoreAction(revision)
+        assertNotNull(action, "A deleted handle revision with a current row token must be actionable")
+        assertEquals(revision.token, action?.token); assertTrue(action!!.deletedHandle)
+    }
+
+    @Test fun `revision without a current row token has no action`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val p = person(a); val g = group(a, p)
         val group = a.groups.observeGroup(g).first()!!
-        val membership = group.history.first { it.entity.type == EntityType.GROUP_MEMBER }
-        assertNull(group.restoreAction(membership))
-        val h = (a.people.addHandle(p, HandleDraft(HandleType.PHONE, "+37061234567", "Mobile"), basis(a)) as LedgerResult.Ok).value
-        val before = a.people.observePerson(p).first()!!
-        a.people.deleteHandle(h, before.handles.first().token)
-        val after = a.people.observePerson(p).first()!!
-        assertNull(after.restoreAction(after.history.first { it.entity.id == h.value }))
+        val revision = group.history.first { it.entity.type == EntityType.GROUP_MEMBER }
+        assertNull(group.restoreAction(revision.copy(token = null)))
+    }
+
+    @Test fun `stale membership revision token fails safely without writing`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val p = person(a); val g = group(a, p)
+        assertTrue(a.groups.removeMember(g, p, basis(a)) is LedgerResult.Ok)
+        val staleRevision = a.groups.observeGroup(g).first()!!.history.first { it.entity.type == EntityType.GROUP_MEMBER && it.version == 1 }
+        val stale = a.groups.observeGroup(g).first()!!.restoreAction(staleRevision)!!
+        assertTrue(a.groups.addMember(g, p, basis(a)) is LedgerResult.Ok)
+        val before = a.groups.observeGroup(g).first()!!.history
+        val ops = operations(a); runCurrent(); ops.request(stale); ops.confirm(); runCurrent()
+        val error = ops.state.value.error
+        assertTrue(error is LedgerError.StaleVersion || error is LedgerError.LedgerReplaced, "was $error")
+        assertEquals(AdvancedOutcome.FAILED, ops.state.value.outcome)
+        assertEquals(before, a.groups.observeGroup(g).first()!!.history)
+    }
+
+    @Test fun `a thrown write is unconfirmed and never reported as success`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val p = person(a); val g = group(a, p)
+        val group = a.groups.observeGroup(g).first()!!
+        val action = group.restoreAction(group.history.first { it.entity.type == EntityType.GROUP })!!
+        val throwing = object : LedgerApi by a.ledger {
+            override suspend fun revertTo(entity: EntityRef, version: Int, token: EditToken): LedgerResult<Unit> = throw IllegalStateException("disk")
+        }
+        val ops = operations(a, ledger = throwing); runCurrent(); ops.request(action); ops.confirm(); runCurrent()
+        val state = ops.state.value
+        assertEquals(AdvancedOutcome.UNCONFIRMED, state.outcome)
+        assertFalse(state.busy); assertNull(state.pending); assertNull(state.error)
+        assertTrue(state.message!!.contains("could not be confirmed"))
     }
 
     @Test fun `historical FX draft uses its own rate instead of the current entry snapshot`() = runTest(dispatcher) {

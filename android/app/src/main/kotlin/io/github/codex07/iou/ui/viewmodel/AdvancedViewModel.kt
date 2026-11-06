@@ -16,16 +16,17 @@ sealed interface AdvancedAction {
     data class Lifecycle(val entity: EntityRef, val token: EditToken, val operation: LifeOperation, override val subject: String) : AdvancedAction
     data class Membership(val group: GroupId, val person: PersonId, val basis: LedgerGeneration, val remove: Boolean, override val subject: String) : AdvancedAction
     data class Unmerge(val alias: AliasView) : AdvancedAction { override val subject = alias.person.displayName }
-    data class Revision(val revision: RevisionView, val token: EditToken, val owner: PersonId? = null, val editable: Boolean = true) : AdvancedAction { override val subject = revision.subject }
+    data class Revision(val revision: RevisionView, val token: EditToken, val owner: PersonId? = null, val editable: Boolean = true, val deletedHandle: Boolean = false) : AdvancedAction { override val subject = revision.subject }
 }
 data class RecoveryDraft(val entity: EntityRef, val token: EditToken, val draft: VersionDraft, val owner: PersonId? = null)
 sealed interface PreparedForm {
     data class Repayment(val draft: SettleUpDraft) : PreparedForm
     data class Recovery(val draft: RecoveryDraft) : PreparedForm
 }
+enum class AdvancedOutcome { SUCCESS, FAILED, UNCONFIRMED }
 data class AdvancedState(
     val pending: AdvancedAction? = null, val busy: Boolean = false, val error: LedgerError? = null,
-    val message: String? = null, val openRoute: String? = null,
+    val message: String? = null, val openRoute: String? = null, val outcome: AdvancedOutcome? = null,
 )
 
 @HiltViewModel
@@ -76,11 +77,11 @@ class AdvancedViewModel @Inject constructor(
                 val result = block()
                 currentCoroutineContext().ensureActive()
                 when (result) {
-                    is LedgerResult.Ok -> if (state.value.openRoute == null) mutableState.value = AdvancedState(message = success)
-                    is LedgerResult.Err -> mutableState.update { it.copy(busy = false, error = result.error) }
+                    is LedgerResult.Ok -> if (state.value.openRoute == null) mutableState.value = AdvancedState(message = success, outcome = AdvancedOutcome.SUCCESS)
+                    is LedgerResult.Err -> mutableState.update { it.copy(busy = false, error = result.error, outcome = AdvancedOutcome.FAILED) }
                 }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { mutableState.update { it.copy(busy = false, pending = null, message = "The operation could not be confirmed. Review the latest records before trying again.") } }
+            catch (_: Exception) { mutableState.update { it.copy(busy = false, pending = null, error = null, outcome = AdvancedOutcome.UNCONFIRMED, message = "The operation could not be confirmed. Review the latest records before trying again.") } }
         }
     }
     fun preparePlan(plan: PlanItem) = execute({

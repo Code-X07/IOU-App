@@ -142,7 +142,8 @@ fun LazyListScope.revisionRows(history: List<RevisionView>, hidden: Boolean,
             Text("By ${revision.author.displayName}", style = MaterialTheme.typography.bodySmall)
             when {
                 revision.entity.type == EntityType.GROUP_MEMBER -> {
-                    Text("Use member management to add, remove or re-add this member.")
+                    if (onRestore != null && canRestore(revision)) TextButton(onClick = { onRestore(revision) }) { Text("Restore this version") }
+                    else Text("Use member management to add, remove or re-add this member.")
                     if (onMembership != null) TextButton(onClick = onMembership) { Text("Manage members") }
                 }
                 revision.isIdentityChange() -> Text("Use the dedicated Merge or Unmerge action for identity links.")

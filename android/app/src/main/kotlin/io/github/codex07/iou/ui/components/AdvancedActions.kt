@@ -43,6 +43,7 @@ fun AdvancedDialog(vm: AdvancedViewModel, state: AdvancedState, hidden: Boolean)
     val action = state.pending
     val title = when {
         state.error != null -> "Action needs review"
+        state.outcome == AdvancedOutcome.UNCONFIRMED -> "Change not confirmed"
         state.message != null -> "Ledger updated"
         action is AdvancedAction.Revision -> "Restore version ${action.revision.version}?"
         action is AdvancedAction.Membership -> if (action.remove) "Remove member?" else "Add member?"
@@ -74,7 +75,7 @@ fun AdvancedDialog(vm: AdvancedViewModel, state: AdvancedState, hidden: Boolean)
                     is AdvancedAction.Membership -> Text(if (action.remove) "Remove ${action.subject}? History remains. The ledger will block removal while a balance is outstanding." else "Add or re-add ${action.subject} to this group?")
                     is AdvancedAction.Unmerge -> Text("Separate ${action.subject} from the canonical contact? Original records, handles and references follow the backend's identity rules.")
                     is AdvancedAction.Revision -> {
-                        Text(if (hidden) "Historical business fields will be restored on the affected record. Values hidden." else "${action.revision.subject}: restore the business fields of version ${action.revision.version} as a new revision. Identity links and deletion state stay current.")
+                        Text(if (hidden) "Historical business fields will be restored on the affected record. Values hidden." else "${action.revision.subject}: restore the business fields of version ${action.revision.version} as a new revision. ${if (action.deletedHandle) "The handle stays deleted; only its historical fields are restored." else "Identity links and deletion state stay current."}")
                         action.revision.changes.forEach { change -> Text(if (hidden) "${change.field}: values hidden" else "${change.field}: ${change.before ?: "—"} → ${change.after ?: "—"}") }
                     }
                     null -> Unit
