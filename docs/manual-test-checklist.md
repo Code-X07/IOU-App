@@ -149,6 +149,19 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   not split the semicolon files correctly; use the explicit import procedure above. These results cover
   those versions and the tested files.
 - [ ] XLSX export arrives in M2 (spec §7.3); check it then.
+- [ ] On a real-flavor build (Settings > Backup & data management), with synthetic data only:
+  - Create backup with encryption off: the warning and its acknowledgement are required; the picker
+    suggests `iou-backup.json`; the result says the backup was saved. Pulled file starts with `{` and holds
+    the ledger.
+  - Create backup with encryption on: the picker suggests `iou-backup.ioub`; the pulled file starts with
+    `IOUB`.
+  - Export normalized CSV: the picker suggests `iou-export.zip`; the file is a ZIP with `manifest.json`.
+    Export a report: `iou-export.csv`. The Format field offers CSV only, with a line that XLSX arrives later.
+  - Restore a backup: the confirmation says the ledger is replaced; the result says it was replaced.
+    Undo last restore says the same. Import a normalized ZIP: no "Simulation scenarios" are listed; the
+    commit confirmation and result say the ledger changed; undoing the import reports complete or partial.
+  - Nothing on these screens calls real data simulated or empty. The fake flavor keeps its simulation labels
+    and the `IOU-SIMULATION-EMPTY-*.txt` names.
 
 ## 7. Signed release APK (spec §2.4, §10)
 

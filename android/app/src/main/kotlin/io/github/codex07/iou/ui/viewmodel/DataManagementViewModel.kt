@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.*
 @HiltViewModel
 class DataManagementViewModel @Inject constructor(
     private val backup: BackupApi, private val transfer: ImportExportApi, private val settings: SettingsApi,
-    people: PeopleApi, groups: GroupsApi, @param:FileIo private val io: CoroutineDispatcher,
+    people: PeopleApi, groups: GroupsApi, @param:FileIo private val io: CoroutineDispatcher, val services: DataServices,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(DataState())
     val state = mutableState.asStateFlow()
@@ -80,8 +80,8 @@ class DataManagementViewModel @Inject constructor(
     fun exportChange(update: (ExportFields) -> ExportFields) { if (available()) mutableState.update { it.copy(export = update(it.export), error = null) } }
     private fun picker(operation: DocumentOperation, create: Boolean, mime: String, filename: String) {
         mutableState.update { it.copy(error = null, message = null, picker = DocumentPickerRequest(++sequence, operation, create,
-            if (create && BackendCapabilities.simulatedDataServices) "text/plain" else mime,
-            if (create && BackendCapabilities.simulatedDataServices) "IOU-SIMULATION-EMPTY-${operation.name.lowercase()}.txt" else filename)) }
+            if (create && services.simulated) "text/plain" else mime,
+            if (create && services.simulated) "IOU-SIMULATION-EMPTY-${operation.name.lowercase()}.txt" else filename)) }
     }
     fun beginBackup(phrase: CharArray, confirmation: CharArray, allowPlain: Boolean) {
         try {
@@ -117,7 +117,7 @@ class DataManagementViewModel @Inject constructor(
                 val password = secret; secret = null
                 runOperation(write = true) {
                     try { file { backup.createBackup(document, password) }.map {
-                        mutableState.update { s -> s.copy(message = if (BackendCapabilities.simulatedDataServices) "Backup simulation completed. No financial data was written; the selected empty document is not a usable backup." else "Backup saved to your chosen document.") }
+                        mutableState.update { s -> s.copy(message = if (services.simulated) "Backup simulation completed. No financial data was written; the selected empty document is not a usable backup." else "Backup saved to your chosen document.") }
                     } } finally { password?.fill('\u0000') }
                 }
             }
@@ -125,7 +125,7 @@ class DataManagementViewModel @Inject constructor(
             DocumentOperation.IMPORT -> parse(document)
             DocumentOperation.EXPORT -> {
                 val export = exportRequest ?: return
-                runOperation(write = true) { file { transfer.export(export, document) }.map { info -> mutableState.update { it.copy(message = if (BackendCapabilities.simulatedDataServices)
+                runOperation(write = true) { file { transfer.export(export, document) }.map { info -> mutableState.update { it.copy(message = if (services.simulated)
                     "Export simulation reports ${info.rowCount} rows. No financial data was written to the selected document." else "Exported ${info.rowCount} rows.") } } }
             }
         }
@@ -143,17 +143,17 @@ class DataManagementViewModel @Inject constructor(
             DataConfirmation.RESTORE -> {
                 val source = restoreSource ?: return; val password = secret; secret = null
                 runOperation(write = true, replace = true) { try { file { backup.restoreBackup(source, password) }.map {
-                    mutableState.update { it.copy(message = "Restore simulation completed. The backend changed ledger generation; no on-disk backup was read.", restoreSelected = false) }
+                    mutableState.update { it.copy(message = if (services.simulated) "Restore simulation completed. The backend changed ledger generation; no on-disk backup was read." else "Restore complete. Your ledger was replaced with the backup.", restoreSelected = false) }
                 } } finally { password?.fill('\u0000') } }
             }
             DataConfirmation.UNDO_RESTORE -> runOperation(write = true, replace = true) { file { backup.undoLastRestore() }.map {
-                mutableState.update { it.copy(message = "Undo-restore simulation completed. This is another ledger replacement.") }
+                mutableState.update { it.copy(message = if (services.simulated) "Undo-restore simulation completed. This is another ledger replacement." else "Undo complete. Your ledger was replaced with its state before the last restore.") }
             } }
             DataConfirmation.COMMIT_IMPORT -> commit()
             DataConfirmation.UNDO_IMPORT -> {
                 val id = undoBatch ?: return
                 runOperation(write = true) { file { transfer.undoImport(id) }.map { result -> mutableState.update { it.copy(undoResult = result,
-                    message = if (BackendCapabilities.simulatedDataServices) "Import undo simulated. Review the backend result below." else if (result.complete) "The backend reports a complete import undo." else "Import undo was partial. Some rows were skipped.") } } }
+                    message = if (services.simulated) "Import undo simulated. Review the backend result below." else if (result.complete) "Import undo complete." else "Import undo was partial. Some rows were skipped.") } } }
             }
             null -> Unit
         }
@@ -165,6 +165,7 @@ class DataManagementViewModel @Inject constructor(
     }
     private fun parse(source: DocumentRef) = runOperation { file { transfer.parseImport(source) }.map { publish(it) } }
     fun simulateImport(scenario: String) {
+        if (!services.simulated) return
         if (!available()) return
         parse(DocumentRef("simulation/${scenario.filter { it.isLetterOrDigit() }}.zip"))
     }
@@ -209,8 +210,8 @@ class DataManagementViewModel @Inject constructor(
     private fun commit() {
         val preview = state.value.preview ?: return; val choices = state.value.choices
         runOperation(write = true) { file { transfer.commitImport(preview, choices) }.map {
-            rawPreview = null; mutableState.update { it.copy(preview = null, choices = ImportChoices(), message = if (BackendCapabilities.simulatedDataServices)
-                "Import simulation committed a batch record. The canned preview did not change financial records." else "Import committed. Backend flows now show the updated ledger.") }
+            rawPreview = null; mutableState.update { it.copy(preview = null, choices = ImportChoices(), message = if (services.simulated)
+                "Import simulation committed a batch record. The canned preview did not change financial records." else "Import committed. The imported changes are now in your ledger.") }
         } }
     }
     fun requestLeave() {

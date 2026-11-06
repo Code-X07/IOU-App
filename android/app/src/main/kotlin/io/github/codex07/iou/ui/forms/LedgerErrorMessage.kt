@@ -24,7 +24,7 @@ fun LedgerError.userMessage(hidden: Boolean = false, currency: io.github.codex07
         "unencryptedWarning" -> "Acknowledge the unencrypted-file warning before continuing."
         "invalidRows" -> "Fix invalid source rows or deliberately choose Skip invalid rows."
         "scope" -> "Normalized exports require the full ledger without a date restriction."
-        "exportFormat" -> "Excel-friendly text options apply to CSV only."
+        "format" -> "Only CSV export is available. XLSX arrives in a later version."
         "dateRange" -> "The end date must be on or after the start date."
         "label" -> "Enter a label for this payment handle. The ledger requires one."
         "description" -> "Enter an expense description."

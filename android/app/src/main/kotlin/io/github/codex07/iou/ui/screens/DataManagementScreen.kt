@@ -32,6 +32,7 @@ import io.github.codex07.iou.ui.viewmodel.DataManagementViewModel
 fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val services = vm.services
     var phrase by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
     var plainAcknowledged by remember { mutableStateOf(false) }
@@ -67,7 +68,7 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding(), state = scroll,
             contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item(key = "operation-status") { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Notice("Simulation only", BackendCapabilities.dataNotice)
+                Notice(if (services.simulated) "Simulation only" else "Your data", services.notice)
                 if (state.loading || state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 state.error?.let { Notice("Please review", it.userMessage(hidden)) }
                 state.message?.let { Notice("Data management", it) }
@@ -85,8 +86,8 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
                 }
                 state.undoResult?.let { result ->
                     item(key = "undo-result") { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Notice(if (result.complete) "Backend reports complete undo" else "Partial undo", if (result.complete)
-                            "The API reported no skipped rows. This remains a simulation; no on-disk financial data was undone." else "Some rows could not be undone because of later changes. Do not assume balances were exactly restored.")
+                        Notice(if (result.complete) "Backend reports complete undo" else "Partial undo", if (result.complete) (
+                            if (services.simulated) "The API reported no skipped rows. This remains a simulation; no on-disk financial data was undone." else "No rows were skipped. The import was fully undone.") else "Some rows could not be undone because of later changes. Do not assume balances were exactly restored.")
                         result.skipped.forEach { skipped -> InfoLine("${skipped.key.type.name.lowercase().replace('_', ' ')} record", if (hidden) "Reason hidden" else skipped.reason) }
                     } }
                 }
@@ -95,19 +96,19 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
             } else item(key = "data-editor") { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when (state.mode) {
                 "backup" -> {
-                    catalog?.let { InfoLine("Last manual backup", it.reminder.lastBackupAt?.toString() ?: "None recorded"); Text(if (it.reminder.due) "Backup reminder is due." else "The backend reports a recent backup simulation.") }
+                    catalog?.let { InfoLine("Last manual backup", it.reminder.lastBackupAt?.toString() ?: "None recorded"); Text(if (it.reminder.due) "Backup reminder is due." else if (services.simulated) "The backend reports a recent backup simulation." else "Your last backup is recent.") }
                     SettingsSwitch("Encrypt this backup", state.encrypted, enabled) { value -> phrase = ""; confirmation = ""; plainAcknowledged = false; vm.encryption(value) }
                     if (state.encrypted) {
                         SecretField("Passphrase (at least 8 characters)", phrase, { phrase = it }, enabled)
                         SecretField("Confirm passphrase", confirmation, { confirmation = it }, enabled)
-                        Text("A forgotten passphrase cannot be recovered. Nothing is saved in UI preferences or saved instance state. Use test passphrases with this simulated backend.")
+                        Text("A forgotten passphrase cannot be recovered. Nothing is saved in UI preferences or saved instance state.${if (services.simulated) " Use test passphrases with this simulated backend." else ""}")
                     } else {
-                        Notice("Unencrypted data warning", "A real unencrypted backup would be readable by anyone with access to the file. This build writes no backup contents.")
+                        Notice("Unencrypted data warning", if (services.simulated) "A real unencrypted backup would be readable by anyone with access to the file. This build writes no backup contents." else "This backup will not be encrypted. Anyone with access to the file can read your financial records.")
                         SettingsSwitch("I understand the unencrypted-file risk", plainAcknowledged, enabled) { plainAcknowledged = it }
                     }
                     Button(onClick = {
                         vm.beginBackup(phrase.toCharArray(), confirmation.toCharArray(), plainAcknowledged); phrase = ""; confirmation = ""
-                    }, enabled = enabled) { Text("Choose document & simulate backup") }
+                    }, enabled = enabled) { Text(if (services.simulated) "Choose document & simulate backup" else "Choose document & save backup") }
                 }
                 "restore" -> {
                     Text("Restore replaces the current ledger. Unsaved forms and import previews become invalid. Choosing a file does not restore it.")
@@ -117,16 +118,18 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
                         Button(onClick = { vm.requestRestore(phrase.toCharArray()); phrase = "" }, enabled = enabled) { Text("Review ledger replacement") }
                     }
                     if (catalog?.canUndoRestore == true) OutlinedButton(onClick = vm::requestUndoRestore, enabled = enabled) { Text("Undo last restore") }
-                    Text("Undo restore is another ledger replacement. In this build, restore only exercises the in-memory simulation.", style = MaterialTheme.typography.bodySmall)
+                    Text(if (services.simulated) "Undo restore is another ledger replacement. In this build, restore only exercises the in-memory simulation." else "Undo restore is another ledger replacement: it brings back the ledger as it was before the last restore.", style = MaterialTheme.typography.bodySmall)
                 }
                 "export" -> ExportEditor(state.export, catalog, enabled, vm)
                 "import" -> {
                     if (state.preview == null) {
                         Text("Only an IOU normalized CSV ZIP is supported for import. Report CSV and XLSX files are not import sources.")
                         Button(onClick = vm::pickImport, enabled = enabled) { Text("Choose normalized CSV ZIP") }
-                        BrowseHeading("Simulation scenarios")
-                        Text("These use canned API previews and do not read the selected file contents.", style = MaterialTheme.typography.bodySmall)
-                        listOf("normal", "foreign", "invalid", "corrupt").forEach { scenario -> TextButton(onClick = { vm.simulateImport(scenario) }, enabled = enabled) { Text("Simulate $scenario import") } }
+                        if (services.simulated) {
+                            BrowseHeading("Simulation scenarios")
+                            Text("These use canned API previews and do not read the selected file contents.", style = MaterialTheme.typography.bodySmall)
+                            listOf("normal", "foreign", "invalid", "corrupt").forEach { scenario -> TextButton(onClick = { vm.simulateImport(scenario) }, enabled = enabled) { Text("Simulate $scenario import") } }
+                        }
                     }
                 }
 
@@ -138,9 +141,9 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
     if (state.confirmation != null) AlertDialog(onDismissRequest = vm::dismissConfirmation,
         title = { Text(when (state.confirmation) { DataConfirmation.RESTORE -> "Replace this ledger?"; DataConfirmation.UNDO_RESTORE -> "Undo the last restore?"; DataConfirmation.COMMIT_IMPORT -> "Commit this import?"; else -> "Undo this import?" }) },
         text = { Text(when (state.confirmation) {
-            DataConfirmation.RESTORE -> "The current ledger will be replaced and unfinished drafts will be discarded. A valid backup and its passphrase are required. This backend only simulates replacement; it does not read an on-disk backup."
+            DataConfirmation.RESTORE -> "The current ledger will be replaced and unfinished drafts will be discarded. A valid backup and its passphrase are required.${if (services.simulated) " This backend only simulates replacement; it does not read an on-disk backup." else " This cannot be undone except with Undo last restore."}"
             DataConfirmation.UNDO_RESTORE -> "This replaces the current ledger with the backend's previous state and invalidates all old drafts and previews."
-            DataConfirmation.COMMIT_IMPORT -> "Apply the reviewed choices through the backend? If the preview is stale, nothing will be committed. This build records a simulated batch only."
+            DataConfirmation.COMMIT_IMPORT -> "Apply the reviewed choices through the backend? If the preview is stale, nothing will be committed.${if (services.simulated) " This build records a simulated batch only." else " The ledger on this device will change; you can review and undo the import from Import history."}"
             else -> "Undo is best-effort. Records changed later may be skipped; the actual skipped-row result will be shown."
         }) }, confirmButton = { TextButton(onClick = vm::confirm, enabled = enabled) { Text("Confirm") } },
         dismissButton = { TextButton(onClick = vm::dismissConfirmation, enabled = enabled) { Text("Cancel") } })
@@ -159,10 +162,12 @@ private fun SecretField(label: String, text: String, change: (String) -> Unit, e
 
 @Composable
 private fun ExportEditor(fields: ExportFields, catalog: DataCatalog?, enabled: Boolean, vm: DataManagementViewModel) {
+    val services = vm.services
     ChoiceField("Export shape", fields.shape.name, ExportShape.entries.map { it.name to if (it == ExportShape.NORMALIZED) "Normalized full ledger" else "Human-readable report" }, { value -> vm.exportChange {
         it.copy(shape = ExportShape.valueOf(value), scope = "full", from = "", to = "")
     } }, enabled)
-    ChoiceField("Format", fields.format.name, listOf("CSV" to "CSV (ZIP for normalized)", "XLSX" to "XLSX workbook"), { value -> vm.exportChange { it.copy(format = ExportFormat.valueOf(value), excelFriendly = false) } }, enabled)
+    ChoiceField("Format", fields.format.name, listOf("CSV" to "CSV (ZIP for normalized)"), { value -> vm.exportChange { it.copy(format = ExportFormat.valueOf(value), excelFriendly = false) } }, enabled)
+    Text("XLSX export arrives in a later version.", style = MaterialTheme.typography.bodySmall)
     if (fields.shape == ExportShape.REPORT) {
         val scopes = listOf("full" to "Full ledger report") + catalog?.people.orEmpty().map { "person:${it.person.id.value}" to "Person · ${it.person.displayName}" } + catalog?.groups.orEmpty().map { "group:${it.group.id.value}" to "Group · ${it.group.name}" }
         ChoiceField("Report scope", fields.scope, scopes, { value -> vm.exportChange { it.copy(scope = value) } }, enabled)
@@ -171,7 +176,7 @@ private fun ExportEditor(fields: ExportFields, catalog: DataCatalog?, enabled: B
     } else Text("Normalized exports always include the entire ledger, including history references and deleted rows. Scope/date restrictions are unavailable.")
     if (fields.format == ExportFormat.CSV) SettingsSwitch("Excel-friendly CSV (BOM and semicolon)", fields.excelFriendly, enabled) { value -> vm.exportChange { it.copy(excelFriendly = value) } }
     Text("Exports may contain sensitive financial data and are not encrypted. IOU does not share them automatically.")
-    Button(onClick = vm::pickExport, enabled = enabled) { Text("Choose destination & simulate export") }
+    Button(onClick = vm::pickExport, enabled = enabled) { Text(if (services.simulated) "Choose destination & simulate export" else "Choose destination & export") }
 }
 
 private fun LazyListScope.importPreviewRows(preview: ImportPreview, state: DataState, hidden: Boolean, enabled: Boolean, vm: DataManagementViewModel) {

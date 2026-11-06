@@ -36,18 +36,17 @@
     <string name="archive_notice">Archived, but not settled</string>
     <string name="archive_notice_body">Archived people and groups with open balances remain in your totals.</string>
     <string name="backup_due">Time for a backup</string>
-    <string name="backup_due_body">Your backend reports that a backup is due. Backup controls are planned for a later phase.</string>
+    <string name="backup_due_body">Your last backup is out of date. Open backup controls to create a new one.</string>
     <string name="backup_controls">Backup and restore</string>
     <string name="local_note">IOU records who owes what. It never sends or receives money.</string>
     <string name="not_implemented">Not implemented yet</string>
-    <string name="phase_one_only">Phase 1 includes the Overview dashboard. This destination is reserved for the next conversion phases.</string>
     <string name="back_overview">Back to Overview</string>
     <string name="done">Done</string>
     <string name="add_record">Add a record</string>
     <string name="shared_expense">Shared expense</string>
     <string name="personal_loan">Personal loan</string>
     <string name="record_repayment">Record repayment</string>
-    <string name="feature_unfinished">%1$s is not implemented yet. This preview does not create or change any ledger data.</string>
+    <string name="feature_unfinished">%1$s is not available from this screen yet.</string>
     <string name="person_details">%1$s · contact details</string>
     <string name="group_details">%1$s · group details</string>
     <string name="entry_details">Transaction details</string>
@@ -71,6 +70,6 @@
     <string name="transfer_title">Transfer</string>
     <string name="you">You</string>
     <string name="setup_required">Set up your ledger</string>
-    <string name="setup_required_body">This ledger needs an owner profile. Profile setup is not implemented in Phase 1. Use the fakeDebug variant to explore the seeded dashboard.</string>
+    <string name="setup_required_body">This ledger needs an owner profile before it can show your dashboard.</string>
     <string name="setup_action">Profile setup</string>
 </resources>

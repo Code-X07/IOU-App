@@ -95,7 +95,12 @@ ad-hoc dinner), the CONVERT EUR group "Lisbon trip" (with a SEK taxi converted t
 group "Flat" (SEK rent plus a EUR purchase). It uses the real rules, balances and settle plans, so
 errors and numbers are the real ones.
 
-Simulated parts:
+Each flavor's `BackendModule` also provides a `DataServices` value (`DataServices.Simulated` in the fake,
+`DataServices.Real` in the real flavor). `DataManagementViewModel` and `AppSettingsViewModel` expose it, and
+the backup, export, restore and import screens read it to choose file names, MIME types and wording, and to
+show the canned import scenarios only when it is simulated.
+
+Simulated parts (fake flavor only):
 
 - **Backup:** any target works; restoring needs the same passphrase used for that backup, and brings the
   current data back under a new ledger generation (so you can test the `LedgerReplaced` flow). Undo works.

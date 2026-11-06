@@ -19,7 +19,8 @@ class DataManagementTest {
     private val dispatcher = StandardTestDispatcher()
     @BeforeEach fun setup() { Dispatchers.setMain(dispatcher) }
     @AfterEach fun cleanup() { Dispatchers.resetMain() }
-    private fun vm(a: Apis, backup: BackupApi = a.backup, io: ImportExportApi = a.importExport) = DataManagementViewModel(backup, io, a.settings, a.people, a.groups, dispatcher)
+    private fun vm(a: Apis, backup: BackupApi = a.backup, io: ImportExportApi = a.importExport, services: DataServices = DataServices.Simulated) =
+        DataManagementViewModel(backup, io, a.settings, a.people, a.groups, dispatcher, services)
 
     @Test fun `backup encryption follows backend preference and validates length and confirmation`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val vm = vm(a); vm.open("backup"); runCurrent(); assertTrue(vm.state.value.encrypted)
@@ -127,7 +128,7 @@ class DataManagementTest {
         assertTrue(ExportFields(scope = "person:id").request().errorOrNull() is LedgerError.InvalidField)
         assertTrue(ExportFields(from = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
         assertTrue(ExportFields(format = ExportFormat.XLSX, excelFriendly = true).request().errorOrNull() is LedgerError.InvalidField)
-        for (scope in listOf("full", "person:id", "group:id")) for (format in ExportFormat.entries) {
+        for (scope in listOf("full", "person:id", "group:id")) for (format in listOf(ExportFormat.CSV)) {
             assertTrue(ExportFields(ExportShape.REPORT, format, scope, "2026-01-01", "2026-12-31").request() is LedgerResult.Ok)
         }
         assertTrue(ExportFields(ExportShape.REPORT, from = "2026-12-31", to = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
@@ -239,5 +240,58 @@ class DataManagementTest {
         vm.simulateImport("normal"); runCurrent(); vm.requestLeave(); assertTrue(vm.state.value.discard)
         vm.keepEditing(); assertNotNull(vm.state.value.preview); assertFalse(vm.state.value.discard)
         vm.requestLeave(); vm.discard(); assertTrue(vm.state.value.exit); assertNull(vm.state.value.preview); vm.end()
+    }
+
+    @Test fun `real backup picker requests usable encrypted backup metadata`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val vm = vm(a, services = DataServices.Real); vm.open("backup"); runCurrent()
+        vm.beginBackup("testphrase".toCharArray(), "testphrase".toCharArray(), false)
+        val encrypted = vm.state.value.picker!!
+        assertEquals("iou-backup.ioub", encrypted.name); assertEquals("application/octet-stream", encrypted.mime); assertTrue(encrypted.create)
+        vm.documentResult(null); runCurrent()
+        vm.encryption(false); vm.beginBackup(charArrayOf(), charArrayOf(), true)
+        val plain = vm.state.value.picker!!
+        assertEquals("iou-backup.json", plain.name); assertEquals("application/json", plain.mime)
+        vm.end()
+    }
+
+    @Test fun `fake backup picker keeps the simulation naming`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val vm = vm(a, services = DataServices.Simulated); vm.open("backup"); runCurrent()
+        vm.beginBackup("testphrase".toCharArray(), "testphrase".toCharArray(), false)
+        val picker = vm.state.value.picker!!
+        assertEquals("IOU-SIMULATION-EMPTY-backup.txt", picker.name); assertEquals("text/plain", picker.mime)
+        vm.end()
+    }
+
+    @Test fun `xlsx export is rejected before any picker opens`() = runTest(dispatcher) {
+        assertEquals(LedgerError.InvalidField("format"), ExportFields(shape = ExportShape.REPORT, format = ExportFormat.XLSX).request().errorOrNull())
+        val a = FakeApis.seeded(); val vm = vm(a); vm.open("export"); runCurrent()
+        vm.exportChange { it.copy(shape = ExportShape.REPORT, format = ExportFormat.XLSX) }
+        vm.pickExport()
+        assertNull(vm.state.value.picker); assertEquals(LedgerError.InvalidField("format"), vm.state.value.error)
+        vm.end()
+    }
+
+    @Test fun `real data services write a usable backup and a zip export to the chosen documents`() = runTest(dispatcher) {
+        val harness = io.github.codex07.iou.testutil.RealHarness(java.time.Clock.fixed(io.github.codex07.iou.testutil.T0, java.time.ZoneOffset.UTC), io.github.codex07.iou.testutil.SequentialIds("vm"))
+        try {
+            val backend = harness.start(); SeedData.populate(backend.store); val a = backend.apis
+            val vm = DataManagementViewModel(a.backup, a.importExport, a.settings, a.people, a.groups, dispatcher, DataServices.Real)
+            vm.open("backup"); vm.state.first { !it.loading }
+            vm.encryption(false); vm.beginBackup(charArrayOf(), charArrayOf(), true); vm.documentResult("plain.json")
+            vm.state.first { !it.busy && it.message != null }
+            assertEquals("Backup saved to your chosen document.", vm.state.value.message)
+            val plain = harness.documents.file(DocumentRef("plain.json")).readBytes()
+            assertTrue(plain.isNotEmpty() && plain[0] == '{'.code.toByte()); assertFalse(String(plain, 0, 4, Charsets.US_ASCII) == "IOUB")
+
+            vm.encryption(true); vm.beginBackup("testphrase".toCharArray(), "testphrase".toCharArray(), false); vm.documentResult("secret.ioub")
+            vm.state.first { !it.busy && it.message != null && it.picker == null && harness.documents.file(DocumentRef("secret.ioub")).exists() }
+            assertEquals("IOUB", String(harness.documents.file(DocumentRef("secret.ioub")).readBytes(), 0, 4, Charsets.US_ASCII))
+
+            vm.pickExport(); assertEquals("iou-export.zip", vm.state.value.picker!!.name); assertEquals("application/zip", vm.state.value.picker!!.mime)
+            vm.documentResult("export.zip")
+            vm.state.first { !it.busy && it.message?.startsWith("Exported") == true }
+            java.util.zip.ZipFile(harness.documents.file(DocumentRef("export.zip"))).use { assertNotNull(it.getEntry("manifest.json")) }
+            vm.end()
+        } finally { harness.stop() }
     }
 }

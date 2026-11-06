@@ -15,7 +15,7 @@ data class SettingsActionState(val busy: Boolean = false, val error: LedgerError
 @HiltViewModel
 class AppSettingsViewModel @Inject constructor(
     private val setup: SetupApi, private val settings: SettingsApi, private val people: PeopleApi,
-    backup: BackupApi, private val preferences: ThemePreferences,
+    backup: BackupApi, private val preferences: ThemePreferences, val dataServices: DataServices,
 ) : ViewModel() {
     private val mutableAction = MutableStateFlow(SettingsActionState())
     private val refresh = MutableStateFlow(0)

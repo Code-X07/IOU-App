@@ -81,18 +81,15 @@ fun SettingsScreen(vm: AppSettingsViewModel, security: SecurityViewModel, hidden
                     current.settings.screenProtection, !action.busy, vm::screenProtection)
             }
         }
-        item {
-            DisclosureNotice("Security limitations", "Authentication is required whenever you return. Security preferences reset on process restart.", BackendCapabilities.lockNotice)
-        }
         item { Text("Hide Balances masks financial amounts throughout IOU. Sensitive form inputs require deliberate reveal.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item { BrowseHeading("Backup & data management") }
-        item { DisclosureNotice("Simulated data services", "No usable financial backup or export files are written. Use test passphrases only.", BackendCapabilities.dataNotice) }
+        if (vm.dataServices.simulated) item { DisclosureNotice("Simulated data services", "No usable financial backup or export files are written. Use test passphrases only.", vm.dataServices.notice) }
         item {
             SettingsGroup {
                 SettingsToggle("Encrypt backups by default", "Applies to the next backup form", IouIcons.Shield,
                     current.settings.backupEncryptionDefault, !action.busy, vm::backupEncryption)
                 SettingsDivider()
-                SettingsRow("Create backup", "${if (current.reminder.due) "Reminder due" else "Simulated backup status"} · Last: ${current.reminder.lastBackupAt?.toString() ?: "Never"}", IouIcons.Backup,
+                SettingsRow("Create backup", "${if (current.reminder.due) "Reminder due" else if (vm.dataServices.simulated) "Simulated backup status" else "Backup status"} · Last: ${current.reminder.lastBackupAt?.toString() ?: "Never"}", IouIcons.Backup,
                     onClick = { openData("backup") })
                 SettingsDivider()
                 SettingsRow("Restore & undo restore", "Replaces the whole ledger after confirmation", IouIcons.Back,
@@ -109,7 +106,7 @@ fun SettingsScreen(vm: AppSettingsViewModel, security: SecurityViewModel, hidden
         item {
             SettingsGroup {
                 SettingsRow("IOU ${BuildConfig.VERSION_NAME}", "Build ${BuildConfig.VERSION_CODE} · ${BuildConfig.FLAVOR}", IouIcons.Info)
-                Text("IOU records obligations and repayments. It never transfers money, adds cloud sync or signs you into an account. Local data services are simulated; production persistence is unfinished.",
+                Text("IOU records obligations and repayments. It never transfers money, adds cloud sync or signs you into an account. " + if (vm.dataServices.simulated) "This build uses simulated in-memory data services." else "Your data stays on this device.",
                     Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp), style = MaterialTheme.typography.bodyMedium)
             }
         }

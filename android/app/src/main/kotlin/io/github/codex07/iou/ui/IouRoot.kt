@@ -69,7 +69,8 @@ private fun SetupScreen(vm: AppSettingsViewModel) {
     val action by vm.action.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) {
         Text("Welcome to IOU", style = MaterialTheme.typography.headlineLarge)
-        Notice("Local prototype backend", "This build uses an in-memory ledger, including the real flavor. Your setup and financial records do not persist across app process restarts. Production persistence is not implemented.")
+        val services = vm.dataServices
+        if (services.simulated) Notice("Demo data only", "This build uses an in-memory demo ledger. Your setup and records are not saved when the app process ends.")
         FormTextField("Your display name", name, { name = it }, !action.busy)
         FormTextField("Home currency code", currency, { currency = it.uppercase() }, !action.busy)
         action.error?.let { Text(it.userMessage(), color = MaterialTheme.colorScheme.error) }
