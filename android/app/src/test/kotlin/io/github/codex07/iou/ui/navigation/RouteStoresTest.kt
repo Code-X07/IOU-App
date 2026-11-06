@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -57,6 +58,45 @@ class RouteStoresTest {
         val owner = RouteStores().owner("r", activity) as HasDefaultViewModelProviderFactory
         assertSame(factory, owner.defaultViewModelProviderFactory)
         assertEquals(CreationExtras.Empty, owner.defaultViewModelCreationExtras)
+    }
+
+    @Test fun recreatedParentKeepsTheStoreAndReplacesTheDelegate() {
+        val stores = RouteStores()
+        val probe = stores.probe("r")
+        val store = stores.owner("r", activity).viewModelStore
+        stores.detach(activity)
+        val newFactory = object : ViewModelProvider.Factory {}
+        val newExtras = CreationExtras.Empty
+        val recreated = object : ViewModelStoreOwner, HasDefaultViewModelProviderFactory {
+            override val viewModelStore = ViewModelStore()
+            override val defaultViewModelProviderFactory: ViewModelProvider.Factory = newFactory
+            override val defaultViewModelCreationExtras: CreationExtras = newExtras
+        }
+        val owner = stores.owner("r", recreated)
+        assertSame(store, owner.viewModelStore)
+        assertFalse(probe.cleared)
+        assertSame(probe, ViewModelProvider.create(owner, factory)[Probe::class.java])
+        assertSame(newFactory, (owner as HasDefaultViewModelProviderFactory).defaultViewModelProviderFactory)
+        assertSame(newExtras, owner.defaultViewModelCreationExtras)
+    }
+
+    @Test fun detachingADestroyedParentLeavesNoReferenceToIt() {
+        val stores = RouteStores()
+        val owner = stores.owner("r", activity) as HasDefaultViewModelProviderFactory
+        stores.detach(activity)
+        assertThrows(IllegalStateException::class.java) { owner.defaultViewModelProviderFactory }
+    }
+
+    @Test fun detachingAnOldParentKeepsTheCurrentOne() {
+        val stores = RouteStores()
+        val old = object : ViewModelStoreOwner, HasDefaultViewModelProviderFactory {
+            override val viewModelStore = ViewModelStore()
+            override val defaultViewModelProviderFactory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {}
+        }
+        stores.owner("r", old)
+        val owner = stores.owner("r", activity) as HasDefaultViewModelProviderFactory
+        stores.detach(old)
+        assertSame(factory, owner.defaultViewModelProviderFactory)
     }
 
     @Test fun clearingTheHolderClearsEveryRoute() {

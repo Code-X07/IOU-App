@@ -68,6 +68,8 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
     val generation = ledgerGeneration ?: observedGeneration
     val routeStores: RouteStores = viewModel()
     val activity = LocalActivity.current as ComponentActivity
+    // Routes outlive rotation; this drops the destroyed activity they delegate their ViewModel factory to.
+    DisposableEffect(routeStores, activity) { onDispose { routeStores.detach(activity) } }
     var previousKeys by remember { mutableStateOf(emptySet<String>()) }
     LaunchedEffect(stack, generation?.value) {
         routeStores.retainOnly(stack.toSet())

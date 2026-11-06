@@ -37,6 +37,7 @@ import io.github.codex07.iou.store.readAtMost
 import java.io.IOException
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
@@ -91,7 +92,19 @@ class RealImportExportApi(
     }
 
     /** Errors: `FileAccessFailed`, `CorruptFile`, `SchemaTooNew`, `LimitsExceeded`, `NotFound("me")` before setup. */
-    override suspend fun parseImport(source: DocumentRef): LedgerResult<ImportPreview> = withContext(computeDispatcher) {
+    override suspend fun parseImport(source: DocumentRef): LedgerResult<ImportPreview> {
+        // The session is installed on the compute dispatcher; if the caller is cancelled before the preview reaches it
+        // (withContext's prompt cancellation), nobody can discard it, so it is removed here.
+        val installed = AtomicReference<String?>(null)
+        try {
+            return parse(source, installed)
+        } catch (failure: Throwable) {
+            installed.get()?.let(sessions::remove)
+            throw failure
+        }
+    }
+
+    private suspend fun parse(source: DocumentRef, installed: AtomicReference<String?>): LedgerResult<ImportPreview> = withContext(computeDispatcher) {
         val bytes = when (val read = withContext(Dispatchers.IO) { access(source) { documents.openRead(source).use { it.readAtMost(maxFileBytes) } } }) {
             is LedgerResult.Err -> return@withContext read
             is LedgerResult.Ok -> read.value ?: return@withContext LedgerResult.Err(LedgerError.LimitsExceeded("File larger than $maxFileBytes bytes"))
@@ -109,6 +122,7 @@ class RealImportExportApi(
         // One import at a time (spec §7.5): a new file ends abandoned previews, so their parsed data is freed.
         sessions.clear()
         sessions[id] = session
+        installed.set(id)
         LedgerResult.Ok(
             if (sourceMe == null || sourceMe == me) {
                 build(id, session, snapshot, ImportIdentity.Same, previous = null)

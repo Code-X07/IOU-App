@@ -42,6 +42,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -147,6 +149,28 @@ class RealImportTest {
         backend.apis.backup.createBackup(backup, null).orFail()
         backend.apis.backup.restoreBackup(backup, null).orFail()
         api.refreshPreview(stranded) shouldBe LedgerResult.Err(LedgerError.LedgerReplaced)
+        api.openSessions shouldBe 0
+    }
+
+    @Test
+    fun `a parse cancelled after its session is installed but before the caller gets the preview keeps no session`() = runTest {
+        val backend = harness.start()
+        backend.setUp()
+        val api = RealImportExportApi(backend.store, harness.documents, LedgerExport("test"))
+        val source = exported(backend)
+        val delivered = AtomicBoolean(false)
+        // The caller runs on the test scheduler: once the parse finishes on its own dispatcher, the caller's resumption
+        // waits in that queue, so cancelling before it runs is exactly the window where the preview is never delivered.
+        val caller = launch { api.parseImport(source); delivered.set(true) }
+        runCurrent()
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (api.openSessions == 0) {
+            check(System.nanoTime() < deadline) { "parse never installed its session" }
+            Thread.sleep(1)
+        }
+        caller.cancel()
+        caller.join()
+        delivered.get() shouldBe false
         api.openSessions shouldBe 0
     }
 
