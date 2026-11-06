@@ -26,7 +26,8 @@ service state and transport, and restore both after testing.
   - `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED` (WorkManager);
   - `io.github.codex07.iou.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, a signature permission that
     `androidx.core` declares for the app's own receivers;
-  - `USE_BIOMETRIC`, once the UI adds `androidx.biometric`.
+  - `USE_BIOMETRIC` (declared by the app and by `androidx.biometric`) and `USE_FINGERPRINT` (added only by
+    `androidx.biometric` 1.1.0). Neither is a financial-data permission; confirm both appear and nothing else is new.
 
   `FOREGROUND_SERVICE` must be absent; `src/real/AndroidManifest.xml` removes it. For anything new, find
   its source in `app/build/outputs/logs/manifest-merger-real-release-report.txt`. Remove it with
@@ -180,3 +181,39 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   `adb install -r iou-vX.Y.Z.apk`. The upgrade succeeds without uninstalling, and the app starts and shows
   the same test ledger. Keep debug and signed-release builds on separate images because they use different
   signing keys.
+
+## 8. Compose UI integration pass (PR #1 merge, branch `integrate/compose-ui`)
+
+Run on 2026-11-06 on a disposable API 37 AVD (`IOU_Integration_Review`), realDebug, synthetic data only ("MergeTester").
+Only items marked passed were observed; everything unchecked is still open.
+
+Passed on the emulator (2026-11-06):
+
+- [x] Real first-run setup shows no simulation notice; person and loan creation; force-stop and reopen keeps the data.
+- [x] Backup with encryption on: `iou-backup.ioub` (1146 bytes, `IOUB` header). Backup with encryption off: `iou-backup.json` (4356 bytes,
+  real JSON including identity), after the plaintext warning and acknowledgement.
+- [x] Normalized export is a ZIP ("Exported 3 rows"); the report CSV is correct; the Format field offers CSV only with the XLSX note.
+- [x] Restore, with a rotation between picking the file and confirming: balance restored and the outcome snackbar shown. Undo restore
+  brought the earlier balance back.
+- [x] App lock turned on with the device PIN. 1-minute timeout: returning after 10 s stayed unlocked, after 70 s showed the unlock screen.
+  Immediately: every return locks. Returning from a document picker with Immediately locks, and the picker result is delivered after unlock.
+- [x] Import preview of the app's own ZIP (3 duplicates); Back discards it. The draft survives rotation, and the form reopens blank after discard.
+- [x] No crash entries in the log buffer during the pass.
+
+Open items (not done, or only partly covered):
+
+- [ ] App lock on, screen protection off: the Recents thumbnail shows content. This is by design: per spec §9, `FLAG_SECURE` follows
+  screen protection only, never app lock. Confirm that with protection on the thumbnail is blank.
+- [ ] Interrupted restore notice: kill the app during a pre-commit restore, relaunch and unlock; expect the single "The last restore was
+  interrupted. Nothing changed." dialog (the ViewModel path is covered by JVM tests; the on-device path was not run).
+- [ ] Nested group creation from a personal `NeedsGroup` keeps the parent form's draft when it returns.
+- [ ] Biometric success, cancel and lockout paths on a device with a biometric sensor (the emulator had none; only the PIN path ran).
+- [ ] Screenshots and Recents with screen protection on (refused and blank), including the first frame of a cold start.
+- [ ] Fake-flavor walkthrough (simulation labels, demo data, canned import scenarios).
+- [ ] Repeated open, cancel and save of the same form (new transaction, person, group): each visit starts blank and no draft survives a
+  pop (route ViewModels are cleared when a route leaves the stack).
+- [ ] Remaining validation matrix cases: expense split modes and FX choices on a device, settlement drafts, and an import round trip with a
+  foreign identity, invalid rows and undo.
+- [ ] Compose instrumentation suite (`androidTest`): carried over. This merge relies on JVM tests and the passes above; destination
+  disposal, semantics, system pickers and lifecycle ordering still have no automated device test.
+- [ ] Known core follow-up (not a UI defect): the import screen shows the SAF document id instead of the file's display name.

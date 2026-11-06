@@ -26,7 +26,7 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 
 - **Edits** take the `EditToken` from the read model you edited (`PersonDetail.token`, `EntryDetail.token`, …).
 - **Everything else** (creates, member add/remove, settle-ups) takes a `basis`: the `LedgerGeneration` from `BackupApi.observeLedgerGeneration()` when the form opened. Settle-up drafts from the core already contain their basis.
-- **When the generation changes** (a backup was restored), drop open drafts and previews and go back to the overview. Writes prepared before return `LedgerReplaced`.
+- **When the generation changes** (a backup was restored), drop open drafts and previews and go back to the overview. Writes prepared before return `LedgerReplaced`. Show that error only to an action or authentication that was actually interrupted (an Advanced action under review, a pending unlock); a generation change with nothing pending is silent.
 - `StaleVersion`: the entity changed since you read it; reload and let the user redo the edit.
 - **Import previews** hold the parsed file in memory. `DataManagementViewModel` calls `discardImport(preview)` whenever a preview is dropped without a commit (Back, discard, replacement, a newer parse, a parse cancelled mid-flight, `end()`, `onCleared`); parsing another file ends earlier previews in the real flavor (`NotFound("preview")` afterwards).
 - **Restore and undo-restore outlive their screen.** A replacement changes the generation, which clears the route stack and the Data-management ViewModel. `DataManagementViewModel` therefore starts them through the singleton `LedgerReplacements` (`ui/settings/`), which runs the call in its own scope, rejects a second replacement while one runs (`running`), and publishes the final text in `outcome`. The ViewModel stays busy until its callback arrives (if it still exists). `IOUApp` shows `outcome` in the snackbar and then calls `consumeOutcome()`; the generic "ledger was replaced" text appears only for replacements nobody started from this screen.
@@ -69,7 +69,7 @@ Payment handles: fill an edit form's `HandleDraft` from the `PaymentHandleView`,
 
 The core runs the policy and the window flag; you build the lock screen (spec §9).
 
-- While `SettingsApi.observeLockRequired()` is `true`, cover all content with a lock screen and show `BiometricPrompt` with `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`. On success call `markUnlocked()`. Add `androidx.biometric` for this; it brings the `USE_BIOMETRIC` permission.
+- While `SettingsApi.observeLockRequired()` is `true`, cover all content with a lock screen and show `BiometricPrompt` with `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`. On success call `markUnlocked()`. Add `androidx.biometric` for this; it brings both the `USE_BIOMETRIC` and the legacy `USE_FINGERPRINT` permissions.
 - Only offer the app-lock switch when the device has a secure lock screen (`KeyguardManager.isDeviceSecure`).
 - The core locks on a cold start and after the chosen timeout in the background, following the process lifecycle. Don't track that yourself.
   `SecurityViewModel` follows that flag only: leaving the foreground covers the content (privacy) but never locks it, and `MainActivity` and `IouRoot` never touch window flags.
