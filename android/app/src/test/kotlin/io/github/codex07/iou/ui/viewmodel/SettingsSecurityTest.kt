@@ -153,6 +153,13 @@ class SettingsSecurityTest {
         assertEquals(0, unlocks); assertTrue(vm.state.value.covered)
     }
 
+    @Test fun `ledger replacement without a pending authentication adds no message`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        val vm = SecurityViewModel(a.settings, a.backup); runCurrent(); vm.foreground()
+        a.backup.createBackup(DocumentRef("replace"), null); a.backup.restoreBackup(DocumentRef("replace"), null); runCurrent()
+        assertNull(vm.state.value.message); assertNull(vm.state.value.request)
+    }
+
     @Test fun `informational banner body has readable contrast in both palettes`() {
         fun luminance(c: androidx.compose.ui.graphics.Color): Double {
             fun channel(v: Float): Double = v.toDouble().let { if (it <= 0.04045) it / 12.92 else ((it + 0.055) / 1.055).pow(2.4) }

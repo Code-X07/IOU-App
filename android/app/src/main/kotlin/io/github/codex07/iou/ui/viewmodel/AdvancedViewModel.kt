@@ -45,7 +45,9 @@ class AdvancedViewModel @Inject constructor(
             }.collect { next ->
                 if (generation != null && generation != next) {
                     job?.cancel(); prepared.clear()
-                    mutableState.value = AdvancedState(error = LedgerError.LedgerReplaced)
+                    // Only an action under review or in flight was invalidated; an idle dialog has nothing to report.
+                    val interrupted = state.value.pending != null || state.value.busy
+                    mutableState.value = if (interrupted) AdvancedState(error = LedgerError.LedgerReplaced) else AdvancedState()
                 }
                 generation = next
             }

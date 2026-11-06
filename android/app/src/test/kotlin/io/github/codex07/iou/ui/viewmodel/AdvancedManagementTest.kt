@@ -298,6 +298,15 @@ class AdvancedManagementTest {
         }
     }
 
+    @Test fun `a ledger replacement reports LedgerReplaced only for an action under review`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val idle = operations(a); val reviewing = operations(a); runCurrent()
+        val p = person(a); val g = group(a, p); val group = a.groups.observeGroup(g).first()!!
+        reviewing.request(group.restoreAction(group.history.first { it.entity.type == EntityType.GROUP })!!)
+        a.backup.createBackup(DocumentRef("replace"), null); a.backup.restoreBackup(DocumentRef("replace"), null); runCurrent()
+        assertEquals(AdvancedState(), idle.state.value)
+        assertEquals(LedgerError.LedgerReplaced, reviewing.state.value.error)
+    }
+
     @Test fun `prepared routes are cleared when the ledger generation changes`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val other = a.people.observePeople().first().first().person
         val draft = (a.ledger.settleUpWithPerson(other.id, basis(a)) as LedgerResult.Ok).value.first()

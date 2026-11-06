@@ -36,7 +36,7 @@ class SecurityViewModel @Inject constructor(private val settings: SettingsApi, b
             }.collect { generation ->
                 if (previous != null && previous != generation) {
                     authJob?.cancel()
-                    mutableState.update { it.copy(request = null, busy = false, message = "The ledger changed. Authenticate again if app lock is enabled.") }
+                    mutableState.update { it.copy(request = null, busy = false, message = if (it.request != null || it.busy) "The ledger changed. Authenticate again." else it.message) }
                 }
                 previous = generation
             }
