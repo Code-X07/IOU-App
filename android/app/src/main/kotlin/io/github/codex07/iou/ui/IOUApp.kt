@@ -62,16 +62,22 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
     val observedGeneration by session.generation.collectAsStateWithLifecycle()
     val generation = ledgerGeneration ?: observedGeneration
     var lastGeneration by rememberSaveable { mutableStateOf<String?>(null) }
+    val replacementOutcome by settingsModel.replacements.outcome.collectAsStateWithLifecycle()
+    val restoreInterrupted by settingsModel.restoreInterrupted.collectAsStateWithLifecycle()
     LaunchedEffect(generation) {
         generation?.let {
             val replaced = lastGeneration != null && lastGeneration != it.value
             lastGeneration = it.value
             if (replaced) {
                 stack = emptyList(); selectedName = Destination.Overview.name
-                snackbar.showSnackbar("Your ledger was replaced. Unfinished forms were closed. Reopen records from the current ledger.")
+                // A restore or undo from Data management delivers its own outcome below; the generic text is for outside replacements.
+                if (!settingsModel.replacements.running.value && settingsModel.replacements.outcome.value == null)
+                    snackbar.showSnackbar("Your ledger was replaced. Unfinished forms were closed. Reopen records from the current ledger.")
             }
-
         }
+    }
+    LaunchedEffect(replacementOutcome) {
+        replacementOutcome?.let { text -> snackbar.showSnackbar(text); settingsModel.replacements.consumeOutcome() }
     }
     val openPerson: (String) -> Unit = { stack = stack + "person:$it" }
     val openGroup: (String) -> Unit = { stack = stack + "group:$it" }
@@ -321,6 +327,13 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
         }
     }
     AdvancedDialog(advanced, advancedState, hidden)
+    if (restoreInterrupted) AlertDialog(
+        onDismissRequest = {},
+        icon = { Icon(IouIcons.Info, null) },
+        title = { Text("Restore interrupted") },
+        text = { Text("The last restore was interrupted. Nothing changed.") },
+        confirmButton = { TextButton(onClick = settingsModel::acknowledgeRestoreInterrupted) { Text(stringResource(R.string.done)) } },
+    )
     if (unfinished != null) AlertDialog(
         onDismissRequest = { unfinished = null },
         icon = { Icon(IouIcons.Info, null) },

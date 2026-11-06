@@ -19,8 +19,9 @@ class DataManagementTest {
     private val dispatcher = StandardTestDispatcher()
     @BeforeEach fun setup() { Dispatchers.setMain(dispatcher) }
     @AfterEach fun cleanup() { Dispatchers.resetMain() }
+    private fun replacements() = LedgerReplacements(CoroutineScope(SupervisorJob() + dispatcher))
     private fun vm(a: Apis, backup: BackupApi = a.backup, io: ImportExportApi = a.importExport, services: DataServices = DataServices.Simulated) =
-        DataManagementViewModel(backup, io, a.settings, a.people, a.groups, dispatcher, services)
+        DataManagementViewModel(backup, io, a.settings, a.people, a.groups, dispatcher, services, replacements())
 
     @Test fun `backup encryption follows backend preference and validates length and confirmation`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val vm = vm(a); vm.open("backup"); runCurrent(); assertTrue(vm.state.value.encrypted)
@@ -275,7 +276,7 @@ class DataManagementTest {
         val harness = io.github.codex07.iou.testutil.RealHarness(java.time.Clock.fixed(io.github.codex07.iou.testutil.T0, java.time.ZoneOffset.UTC), io.github.codex07.iou.testutil.SequentialIds("vm"))
         try {
             val backend = harness.start(); SeedData.populate(backend.store); val a = backend.apis
-            val vm = DataManagementViewModel(a.backup, a.importExport, a.settings, a.people, a.groups, dispatcher, DataServices.Real)
+            val vm = DataManagementViewModel(a.backup, a.importExport, a.settings, a.people, a.groups, dispatcher, DataServices.Real, replacements())
             vm.open("backup"); vm.state.first { !it.loading }
             vm.encryption(false); vm.beginBackup(charArrayOf(), charArrayOf(), true); vm.documentResult("plain.json")
             vm.state.first { !it.busy && it.message != null }

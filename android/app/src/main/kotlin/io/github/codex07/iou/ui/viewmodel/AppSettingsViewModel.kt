@@ -15,12 +15,15 @@ data class SettingsActionState(val busy: Boolean = false, val error: LedgerError
 @HiltViewModel
 class AppSettingsViewModel @Inject constructor(
     private val setup: SetupApi, private val settings: SettingsApi, private val people: PeopleApi,
-    backup: BackupApi, private val preferences: ThemePreferences, val dataServices: DataServices,
+    private val backup: BackupApi, private val preferences: ThemePreferences, val dataServices: DataServices, val replacements: LedgerReplacements,
 ) : ViewModel() {
     private val mutableAction = MutableStateFlow(SettingsActionState())
     private val refresh = MutableStateFlow(0)
     val generation = refresh.flatMapLatest { backup.observeLedgerGeneration().catch { mutableAction.value = SettingsActionState(message = "Ledger status is unavailable. Reopen the app or retry.") } }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     fun retry() { refresh.update { it + 1 } }
+    /** True from process start until the user acknowledges that a restore was cut off before its commit point. */
+    val restoreInterrupted = backup.observeRestoreInterrupted().catch { emit(false) }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    fun acknowledgeRestoreInterrupted() { viewModelScope.launch { try { backup.dismissRestoreInterrupted() } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { } } }
     val page = refresh.flatMapLatest { combine(setup.observeSetupState(), settings.observeSettings(), backup.observeBackupReminder(), backup.observeUndoRestoreAvailable()) {
         owner, options, reminder, undo -> SettingsPage(owner, options, reminder, undo)
     }.catch { mutableAction.value = SettingsActionState(message = "Settings could not be loaded. Close and reopen the app.") }

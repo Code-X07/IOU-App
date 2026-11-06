@@ -61,6 +61,12 @@ secure Android screen lock set.
   `adb shell dumpsys window windows | grep SECURE` finds the window. Off: screenshots work and the flag is gone.
   Check the first frame of a cold start and the Recents thumbnail in both states.
 - [ ] Turn app lock off (needs an unlocked app): no unlock screen on return or cold start.
+- [ ] Data management lifecycles (real flavor, synthetic data on a disposable AVD): restore a backup and watch the
+  screen close; the snackbar then shows the restore outcome ("Restore complete..."), not only the generic
+  "ledger was replaced" text. Kill the app during a pre-commit restore (for example with a gated test build or an
+  early `adb shell am force-stop`), relaunch and unlock: the original ledger is intact and one dialog says
+  "The last restore was interrupted. Nothing changed." After **Done**, relaunch: no dialog. A normal launch and a
+  completed restore show no such dialog. Open an import preview, press Back and discard: no import session stays open.
 
 ## 3. Auto Backup (spec §9, §14 item 5)
 

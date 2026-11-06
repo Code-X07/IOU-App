@@ -24,7 +24,7 @@ class SettingsSecurityTest {
         override fun read() = stored
         override fun write(value: String): Boolean { if (!writable) return false; stored = value; return true }
     }
-    private fun vm(a: Apis) = AppSettingsViewModel(a.setup, a.settings, a.people, a.backup, ThemePreferences(MemoryTheme()), DataServices.Simulated)
+    private fun vm(a: Apis) = AppSettingsViewModel(a.setup, a.settings, a.people, a.backup, ThemePreferences(MemoryTheme()), DataServices.Simulated, LedgerReplacements(CoroutineScope(SupervisorJob() + dispatcher)))
 
     @Test fun `setup validates fields and never reinitializes an existing ledger`() = runTest(dispatcher) {
         val a = FakeApis.create(FakeApis.store()); val vm = vm(a)

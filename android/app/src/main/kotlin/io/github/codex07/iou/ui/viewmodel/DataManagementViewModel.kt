@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.*
 class DataManagementViewModel @Inject constructor(
     private val backup: BackupApi, private val transfer: ImportExportApi, private val settings: SettingsApi,
     people: PeopleApi, groups: GroupsApi, @param:FileIo private val io: CoroutineDispatcher, val services: DataServices,
+    private val replacements: LedgerReplacements,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(DataState())
     val state = mutableState.asStateFlow()
@@ -40,8 +41,9 @@ class DataManagementViewModel @Inject constructor(
         }.collect { current ->
             if (generation != null && current != generation) {
                 epoch++; if (!replacing) job?.cancel()
-                clearPrepared(); mutableState.value = DataState(loading = false, mode = state.value.mode,
-                    message = "The ledger changed. Old selections, confirmations and import previews were discarded.")
+                // A restore this ViewModel started stays busy until its own call returns; its outcome is delivered then.
+                clearPrepared(); mutableState.value = DataState(loading = false, mode = state.value.mode, busy = replacing,
+                    message = if (replacing) null else "The ledger changed. Old selections, confirmations and import previews were discarded.")
             }
             generation = current
         }
@@ -57,23 +59,44 @@ class DataManagementViewModel @Inject constructor(
     }
     private suspend fun <T> file(block: suspend () -> LedgerResult<T>): LedgerResult<T> = withContext(io) { block() }
     private fun clearSecret() { secret?.fill('\u0000'); secret = null }
-    private fun clearPrepared() { clearSecret(); restoreSource = null; rawPreview = null; exportRequest = null; undoBatch = null }
+    private fun dropPreview() { rawPreview?.let(transfer::discardImport); rawPreview = null }
+    private fun clearPrepared() { clearSecret(); restoreSource = null; dropPreview(); exportRequest = null; undoBatch = null }
     private fun fail(error: LedgerError) { mutableState.update { it.copy(error = error) } }
-    private fun available() = !state.value.loading && !state.value.busy && state.value.picker == null && !state.value.exit
-    private fun runOperation(write: Boolean = false, replace: Boolean = false, block: suspend () -> LedgerResult<Unit>) {
+    private fun available() = !state.value.loading && !state.value.busy && state.value.picker == null && !state.value.exit && !replacements.running.value
+    /** Calls [call] and hands its preview to [accept]; a preview that arrives after cancellation is discarded instead of lost. */
+    private suspend fun <T> producing(call: suspend () -> LedgerResult<ImportPreview>, accept: (ImportPreview) -> T): LedgerResult<T> {
+        var pending: ImportPreview? = null
+        try { return file { call().also { if (it is LedgerResult.Ok) pending = it.value } }.map { pending = null; accept(it) } }
+        finally { pending?.let(transfer::discardImport) }
+    }
+    private fun replace(success: String, block: suspend () -> LedgerResult<Unit>, wipe: CharArray? = null) {
+        if (!available()) { wipe?.fill('\u0000'); return }
+        mutating = true; replacing = true
+        mutableState.update { it.copy(busy = true, error = null, message = null, confirmation = null) }
+        val started = replacements.run(block, success) { result ->
+            replacing = false; mutating = false
+            if (!state.value.exit) when (result) {
+                is LedgerResult.Ok -> { clearPrepared(); mutableState.update { it.copy(busy = false, message = success, restoreSelected = false) } }
+                is LedgerResult.Err -> mutableState.update { it.copy(busy = false, error = result.error) }
+                null -> mutableState.update { it.copy(busy = false, message = "The restore could not be confirmed. Review your records and document access before retrying.") }
+            }
+        }
+        if (!started) { replacing = false; mutating = false; wipe?.fill('\u0000'); mutableState.update { it.copy(busy = false, message = "Another restore is still running.") } }
+    }
+    private fun runOperation(write: Boolean = false, block: suspend () -> LedgerResult<Unit>) {
         if (!available()) return
-        val version = epoch; mutating = write; replacing = replace
+        val version = epoch; mutating = write
         mutableState.update { it.copy(busy = true, error = null, message = null, confirmation = null) }
         job = viewModelScope.launch {
             try {
                 val result = block(); currentCoroutineContext().ensureActive()
-                if (version == epoch || replace) when (result) {
+                if (version == epoch) when (result) {
                     is LedgerResult.Ok -> mutableState.update { it.copy(busy = false) }
                     is LedgerResult.Err -> mutableState.update { it.copy(busy = false, error = result.error) }
                 }
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { if (version == epoch) mutableState.update { it.copy(busy = false, message = "The file operation could not be confirmed. Review your records and document access before retrying.") } }
-            finally { replacing = false; mutating = false }
+            finally { mutating = false }
         }
     }
     fun encryption(value: Boolean) { if (available()) { clearSecret(); mutableState.update { it.copy(encrypted = value, error = null) } } }
@@ -142,13 +165,11 @@ class DataManagementViewModel @Inject constructor(
         when (state.value.confirmation) {
             DataConfirmation.RESTORE -> {
                 val source = restoreSource ?: return; val password = secret; secret = null
-                runOperation(write = true, replace = true) { try { file { backup.restoreBackup(source, password) }.map {
-                    mutableState.update { it.copy(message = if (services.simulated) "Restore simulation completed. The backend changed ledger generation; no on-disk backup was read." else "Restore complete. Your ledger was replaced with the backup.", restoreSelected = false) }
-                } } finally { password?.fill('\u0000') } }
+                replace(if (services.simulated) "Restore simulation completed. The backend changed ledger generation; no on-disk backup was read." else "Restore complete. Your ledger was replaced with the backup.",
+                    { try { file { backup.restoreBackup(source, password) } } finally { password?.fill('\u0000') } }, wipe = password)
             }
-            DataConfirmation.UNDO_RESTORE -> runOperation(write = true, replace = true) { file { backup.undoLastRestore() }.map {
-                mutableState.update { it.copy(message = if (services.simulated) "Undo-restore simulation completed. This is another ledger replacement." else "Undo complete. Your ledger was replaced with its state before the last restore.") }
-            } }
+            DataConfirmation.UNDO_RESTORE -> replace(if (services.simulated) "Undo-restore simulation completed. This is another ledger replacement." else "Undo complete. Your ledger was replaced with its state before the last restore.",
+                { file { backup.undoLastRestore() } })
             DataConfirmation.COMMIT_IMPORT -> commit()
             DataConfirmation.UNDO_IMPORT -> {
                 val id = undoBatch ?: return
@@ -159,11 +180,11 @@ class DataManagementViewModel @Inject constructor(
         }
     }
     private fun publish(preview: ImportPreview) {
-        rawPreview = preview
+        rawPreview?.takeIf { it.id != preview.id }?.let(transfer::discardImport); rawPreview = preview
         val visible = if (preview.identity is ImportIdentity.NeedsConfirmation) preview.copy(counts = ImportCounts(0, 0, 0, 0), rows = emptyList(), invalidRows = emptyList(), balanceChanges = emptyList()) else preview
         mutableState.update { it.copy(preview = visible, choices = ImportChoices(), undoResult = null) }
     }
-    private fun parse(source: DocumentRef) = runOperation { file { transfer.parseImport(source) }.map { publish(it) } }
+    private fun parse(source: DocumentRef) = runOperation { producing({ transfer.parseImport(source) }) { publish(it) } }
     fun simulateImport(scenario: String) {
         if (!services.simulated) return
         if (!available()) return
@@ -172,11 +193,11 @@ class DataManagementViewModel @Inject constructor(
     fun confirmIdentity(accept: Boolean) {
         val preview = rawPreview?.takeIf { it.identity is ImportIdentity.NeedsConfirmation } ?: return
         runOperation {
-            when (val result = file { transfer.confirmIdentity(preview, accept) }) {
+            when (val result = producing({ transfer.confirmIdentity(preview, accept) }) { publish(it) }) {
                 is LedgerResult.Err -> if (!accept && result.error == LedgerError.ForeignLedger) {
                     rawPreview = null; mutableState.update { it.copy(preview = null, message = "Identity declined. Nothing was imported.") }; LedgerResult.Ok(Unit)
                 } else result
-                is LedgerResult.Ok -> { publish(result.value); LedgerResult.Ok(Unit) }
+                is LedgerResult.Ok -> LedgerResult.Ok(Unit)
             }
         }
     }
@@ -192,10 +213,10 @@ class DataManagementViewModel @Inject constructor(
     }
     fun refresh() {
         val old = rawPreview ?: return; val choices = state.value.choices
-        runOperation { file { transfer.refreshPreview(old) }.map { fresh ->
+        runOperation { producing({ transfer.refreshPreview(old) }) { fresh ->
             val unchanged = fresh.rows.filter { row -> row.choice == ImportRowChoice.KeepOrTake && !row.changedSinceLastPreview && old.rows.firstOrNull { it.key == row.key }?.changes == row.changes }.map { it.key }.toSet()
             publish(fresh)
-            if (fresh.identity is ImportIdentity.NeedsConfirmation) return@map
+            if (fresh.identity is ImportIdentity.NeedsConfirmation) return@producing
             val retained = choices.copy(takeIncoming = choices.takeIncoming.intersect(unchanged), skipInvalidRows = false)
             mutableState.update { it.copy(choices = retained, preview = transfer.applyChoices(fresh, retained), message = "Preview refreshed. Review highlighted rows and invalid-row decisions before committing.") }
         } }

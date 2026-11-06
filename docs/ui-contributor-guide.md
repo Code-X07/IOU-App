@@ -28,7 +28,10 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 - **Everything else** (creates, member add/remove, settle-ups) takes a `basis`: the `LedgerGeneration` from `BackupApi.observeLedgerGeneration()` when the form opened. Settle-up drafts from the core already contain their basis.
 - **When the generation changes** (a backup was restored), drop open drafts and previews and go back to the overview. Writes prepared before return `LedgerReplaced`.
 - `StaleVersion`: the entity changed since you read it; reload and let the user redo the edit.
-- **Import previews** hold the parsed file in memory. Call `discardImport(preview)` when the user leaves a preview without committing; parsing another file ends earlier previews in the real flavor (`NotFound("preview")` afterwards).
+- **Import previews** hold the parsed file in memory. `DataManagementViewModel` calls `discardImport(preview)` whenever a preview is dropped without a commit (Back, discard, replacement, a newer parse, a parse cancelled mid-flight, `end()`, `onCleared`); parsing another file ends earlier previews in the real flavor (`NotFound("preview")` afterwards).
+- **Restore and undo-restore outlive their screen.** A replacement changes the generation, which clears the route stack and the Data-management ViewModel. `DataManagementViewModel` therefore starts them through the singleton `LedgerReplacements` (`ui/settings/`), which runs the call in its own scope, rejects a second replacement while one runs (`running`), and publishes the final text in `outcome`. The ViewModel stays busy until its callback arrives (if it still exists). `IOUApp` shows `outcome` in the snackbar and then calls `consumeOutcome()`; the generic "ledger was replaced" text appears only for replacements nobody started from this screen.
+- **Interrupted restore.** `AppSettingsViewModel.restoreInterrupted` follows `BackupApi.observeRestoreInterrupted()`. `IOUApp` (rendered only after setup and unlock) shows "The last restore was interrupted. Nothing changed." and calls `dismissRestoreInterrupted()` only when the user taps Done.
+- **Document grants are not persisted.** Every picked URI is used immediately, so the screen does not call `takePersistableUriPermission`; read and write problems arrive as `FileAccessFailed`.
 
 ## Entries
 

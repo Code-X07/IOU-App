@@ -14,7 +14,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
@@ -36,27 +35,21 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
     var phrase by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
     var plainAcknowledged by remember { mutableStateOf(false) }
-    val context = LocalContext.current
     val scroll = rememberLazyListState()
     BackHandler { vm.requestLeave() }
     LaunchedEffect(state.exit) { if (state.exit) { vm.end(); close() } }
     DisposableEffect(Unit) { onDispose { phrase = ""; confirmation = "" } }
+    // Every operation uses the returned URI right away, so the temporary grant is enough; nothing is persisted.
     val documents = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val uri = result.data?.data?.takeIf { result.resultCode == Activity.RESULT_OK }
-        if (uri != null) {
-            try {
-                val flags = result.data?.flags.orZero() and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                if (flags != 0) context.contentResolver.takePersistableUriPermission(uri, flags)
-                vm.documentResult(uri.toString())
-            } catch (_: SecurityException) { vm.documentFailure() }
-        } else vm.documentResult(null)
+        vm.documentResult(uri?.toString())
     }
     LaunchedEffect(state.picker?.id, state.picker?.launched) {
         state.picker?.takeIf { !it.launched }?.let { picker ->
             vm.pickerLaunched(picker.id)
             val intent = Intent(if (picker.create) Intent.ACTION_CREATE_DOCUMENT else Intent.ACTION_OPEN_DOCUMENT)
                 .addCategory(Intent.CATEGORY_OPENABLE).setType(picker.mime)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (picker.create) intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION).putExtra(Intent.EXTRA_TITLE, picker.name)
             try { documents.launch(intent) } catch (_: Exception) { vm.documentFailure() }
         }
@@ -152,7 +145,6 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
         confirmButton = { TextButton(onClick = vm::discard) { Text("Discard") } }, dismissButton = { TextButton(onClick = vm::keepEditing) { Text("Keep reviewing") } })
 }
 
-private fun Int?.orZero() = this ?: 0
 
 @Composable
 private fun SecretField(label: String, text: String, change: (String) -> Unit, enabled: Boolean) {
