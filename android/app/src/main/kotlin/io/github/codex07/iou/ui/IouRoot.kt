@@ -23,14 +23,13 @@ import io.github.codex07.iou.ui.viewmodel.*
 
 @Composable
 fun IouRoot(security: SecurityViewModel, requestAuthentication: (AuthPurpose) -> Unit,
-            launchAuthentication: (AuthenticationRequest) -> Unit, cancelAuthentication: () -> Unit, protectScreen: (Boolean) -> Unit,
+            launchAuthentication: (AuthenticationRequest) -> Unit, cancelAuthentication: () -> Unit,
             settings: AppSettingsViewModel = hiltViewModel()) {
     val protection by security.state.collectAsStateWithLifecycle()
     val page by settings.page.collectAsStateWithLifecycle()
     val theme by settings.theme.collectAsStateWithLifecycle()
     val generation by settings.generation.collectAsStateWithLifecycle()
     val holder = rememberSaveableStateHolder()
-    SideEffect { protectScreen(protection.secureWindow) }
     LaunchedEffect(protection.request?.id, protection.request?.launched) {
         if (protection.request == null) cancelAuthentication() else protection.request?.takeIf { !it.launched }?.let(launchAuthentication)
     }
@@ -44,7 +43,7 @@ fun IouRoot(security: SecurityViewModel, requestAuthentication: (AuthPurpose) ->
                         Text("IOU", style = MaterialTheme.typography.headlineLarge)
                         if (protection.loading) CircularProgressIndicator()
                         else if (!protection.foreground) Text("Private financial records")
-                        else {
+                        else if (!protection.unavailable) {
                             Text("Unlock to view your financial records")
                             Button(onClick = { requestAuthentication(AuthPurpose.UNLOCK) }, enabled = protection.request == null && !protection.busy) { Text("Unlock") }
                         }

@@ -12,15 +12,16 @@ enum class AuthPurpose { UNLOCK, ENABLE_LOCK }
 data class AuthenticationRequest(val id: Long, val purpose: AuthPurpose, val launched: Boolean = false)
 data class SecurityState(
     val loading: Boolean = true, val foreground: Boolean = false, val enabled: Boolean = false,
-    val backendLocked: Boolean = true, val localLocked: Boolean = true, val screenProtection: Boolean = true,
+    val backendLocked: Boolean = true, val screenProtection: Boolean = true,
+    val generationFailed: Boolean = false, val settingsFailed: Boolean = false,
     val request: AuthenticationRequest? = null, val busy: Boolean = false, val message: String? = null,
 ) {
-    val locked get() = enabled && (backendLocked || localLocked)
-    val covered get() = loading || !foreground || locked
-    val secureWindow get() = loading || screenProtection || locked || (!foreground && enabled)
+    val locked get() = enabled && backendLocked
+    val unavailable get() = generationFailed || settingsFailed
+    val covered get() = loading || unavailable || !foreground || locked
 }
 
-/** No timeout calculation: the current backend has no lifecycle policy. Fail closed on every background transition. */
+/** Lock policy lives in the core: [locked] follows SettingsApi.observeLockRequired. Not being in the foreground only covers content. */
 @HiltViewModel
 class SecurityViewModel @Inject constructor(private val settings: SettingsApi, backup: BackupApi) : ViewModel() {
     private val mutableState = MutableStateFlow(SecurityState())
@@ -31,26 +32,26 @@ class SecurityViewModel @Inject constructor(private val settings: SettingsApi, b
         viewModelScope.launch {
             var previous: io.github.codex07.iou.ledger.model.LedgerGeneration? = null
             backup.observeLedgerGeneration().catch {
-                authJob?.cancel(); mutableState.update { it.copy(loading = true, localLocked = true, request = null, message = "Ledger security status is unavailable. Reopen the app.") }
+                authJob?.cancel(); mutableState.update { it.copy(generationFailed = true, request = null, busy = false, message = "Ledger security status is unavailable. Reopen the app.") }
             }.collect { generation ->
                 if (previous != null && previous != generation) {
                     authJob?.cancel()
-                    mutableState.update { it.copy(request = null, busy = false, localLocked = true, message = "The ledger changed. Authenticate again if app lock is enabled.") }
+                    mutableState.update { it.copy(request = null, busy = false, message = "The ledger changed. Authenticate again if app lock is enabled.") }
                 }
                 previous = generation
             }
         }
         viewModelScope.launch {
             combine(settings.observeSettings(), settings.observeLockRequired()) { config, lock -> config to lock }
-                .catch { mutableState.update { it.copy(loading = true, message = "Security settings are unavailable. Reopen the app.") } }
+                .catch { mutableState.update { it.copy(settingsFailed = true, message = "Security settings are unavailable. Reopen the app.") } }
                 .collect { (config, lock) -> mutableState.update { it.copy(loading = false, enabled = config.appLockEnabled,
                     backendLocked = lock, screenProtection = config.screenProtection) } }
         }
     }
     fun foreground() { mutableState.update { it.copy(foreground = true) } }
-    fun background() { mutableState.update { it.copy(foreground = false, localLocked = if (it.enabled) true else it.localLocked) } }
+    fun background() { mutableState.update { it.copy(foreground = false) } }
     fun begin(purpose: AuthPurpose, deviceSecure: Boolean, available: Boolean) {
-        if (state.value.request != null || state.value.busy || state.value.loading) return
+        if (state.value.request != null || state.value.busy || state.value.loading || state.value.unavailable) return
         if (!deviceSecure || !available) {
             mutableState.update { it.copy(message = "Set up a secure Android screen lock and an available strong biometric or device credential before continuing.") }; return
         }
@@ -72,12 +73,12 @@ class SecurityViewModel @Inject constructor(private val settings: SettingsApi, b
                 when (result) {
                     is LedgerResult.Ok -> {
                         settings.markUnlocked() // Only reachable through a successful system authentication callback.
-                        mutableState.update { it.copy(request = null, busy = false, localLocked = false, backendLocked = false, message = null) }
+                        mutableState.update { it.copy(request = null, busy = false, backendLocked = false, message = null) }
                     }
                     is LedgerResult.Err -> mutableState.update { it.copy(request = null, busy = false, message = "App lock could not be enabled. Review the current setting.") }
                 }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { mutableState.update { it.copy(request = null, busy = false, localLocked = true, message = "Authentication could not be completed. Try again.") } }
+            catch (_: Exception) { mutableState.update { it.copy(request = null, busy = false, message = "Authentication could not be completed. Try again.") } }
         }
     }
     fun disable() {
@@ -86,7 +87,7 @@ class SecurityViewModel @Inject constructor(private val settings: SettingsApi, b
         viewModelScope.launch {
             try {
                 when (settings.setAppLockEnabled(false)) {
-                    is LedgerResult.Ok -> mutableState.update { it.copy(busy = false, localLocked = false) }
+                    is LedgerResult.Ok -> mutableState.update { it.copy(busy = false) }
                     is LedgerResult.Err -> mutableState.update { it.copy(busy = false, message = "App lock could not be disabled.") }
                 }
             } catch (cancel: CancellationException) { throw cancel }

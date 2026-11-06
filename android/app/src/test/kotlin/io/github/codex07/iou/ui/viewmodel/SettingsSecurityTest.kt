@@ -99,7 +99,8 @@ class SettingsSecurityTest {
 
     @Test fun `only successful system result marks unlocked and cancellation keeps protected UI inaccessible`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); a.settings.setAppLockEnabled(true); var unlocks = 0
-        val settings = object : SettingsApi by a.settings { override fun markUnlocked() { unlocks++; a.settings.markUnlocked() } }
+        val gate = MutableStateFlow(true)
+        val settings = object : SettingsApi by a.settings { override fun observeLockRequired() = gate; override fun markUnlocked() { unlocks++; gate.value = false } }
         val vm = SecurityViewModel(settings, a.backup); runCurrent(); vm.foreground()
         assertTrue(vm.state.value.covered)
         vm.begin(AuthPurpose.UNLOCK, true, true); val first = vm.state.value.request!!.id
@@ -118,29 +119,33 @@ class SettingsSecurityTest {
         assertTrue(a.settings.observeSettings().first().appLockEnabled); assertFalse(vm.state.value.covered)
     }
 
-    @Test fun `foreground fallback is conservative for every saved timeout without a competing timer`() = runTest(dispatcher) {
+    @Test fun `UI lock follows the backend lock requirement for every saved timeout`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); a.settings.setAppLockEnabled(true)
-        val vm = SecurityViewModel(a.settings, a.backup); runCurrent(); vm.foreground()
+        val backendLock = MutableStateFlow(true)
+        val settings = object : SettingsApi by a.settings { override fun observeLockRequired() = backendLock }
+        val vm = SecurityViewModel(settings, a.backup); runCurrent(); vm.foreground()
         for (timeout in LockTimeout.entries) {
-            a.settings.setLockTimeout(timeout); runCurrent()
-            vm.begin(AuthPurpose.UNLOCK, true, true); vm.result(vm.state.value.request!!.id, true); runCurrent()
-            assertFalse(vm.state.value.covered)
-            vm.background(); assertTrue(vm.state.value.covered); assertTrue(vm.state.value.secureWindow)
-            vm.foreground(); assertTrue(vm.state.value.locked)
+            a.settings.setLockTimeout(timeout); backendLock.value = true; runCurrent()
+            assertTrue(vm.state.value.locked); assertTrue(vm.state.value.covered)
+            backendLock.value = false; runCurrent()
+            assertFalse(vm.state.value.locked); assertFalse(vm.state.value.covered)
+            vm.background(); assertTrue(vm.state.value.covered); assertFalse(vm.state.value.locked)
+            vm.foreground(); assertFalse(vm.state.value.covered)
         }
     }
 
-    @Test fun `security loading and screen protection fail closed and toggle effective secure flag`() = runTest(dispatcher) {
+    @Test fun `security loading and failures fail closed while screen protection does not affect the cover`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val vm = SecurityViewModel(a.settings, a.backup)
-        assertTrue(vm.state.value.covered); assertTrue(vm.state.value.secureWindow)
-        runCurrent(); vm.foreground(); assertFalse(vm.state.value.secureWindow)
-        a.settings.setScreenProtection(true); runCurrent(); assertTrue(vm.state.value.secureWindow)
-        a.settings.setScreenProtection(false); runCurrent(); assertFalse(vm.state.value.secureWindow)
+        assertTrue(vm.state.value.covered)
+        runCurrent(); vm.foreground(); assertFalse(vm.state.value.covered)
+        a.settings.setScreenProtection(true); runCurrent(); assertFalse(vm.state.value.covered)
+        a.settings.setScreenProtection(false); runCurrent(); assertFalse(vm.state.value.covered)
     }
 
     @Test fun `ledger replacement cancels an old authentication request and ignores its callback`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); a.settings.setAppLockEnabled(true); var unlocks = 0
-        val settings = object : SettingsApi by a.settings { override fun markUnlocked() { unlocks++ } }
+        val gate = MutableStateFlow(true)
+        val settings = object : SettingsApi by a.settings { override fun observeLockRequired() = gate; override fun markUnlocked() { unlocks++ } }
         val vm = SecurityViewModel(settings, a.backup); runCurrent(); vm.foreground()
         vm.begin(AuthPurpose.UNLOCK, true, true); val id = vm.state.value.request!!.id
         a.backup.createBackup(DocumentRef("replace"), null); a.backup.restoreBackup(DocumentRef("replace"), null); runCurrent()

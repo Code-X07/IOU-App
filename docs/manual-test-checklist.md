@@ -40,26 +40,27 @@ service state and transport, and restore both after testing.
 
 ## 2. App lock and screen protection (spec §9)
 
-Until the UI has a lock screen, the placeholder shows the lock state (", locked"). Set the device settings
-through the file on a fresh disposable image containing only test data:
+The UI owns the lock screen and the Settings controls. The core owns the policy (`TimedLockGate`) and `FLAG_SECURE`
+(`AppSecurity`); the UI never sets window flags. Use a fresh disposable image containing only test data, with a
+secure Android screen lock set.
 
-- [ ] Install realDebug (`./gradlew installRealDebug`) and start it once. Then write the settings and restart:
-
-  ```bash
-  printf '{"appLockEnabled":true,"screenProtection":true}' > ds.json
-  adb push ds.json /data/local/tmp/ds.json
-  adb shell am force-stop io.github.codex07.iou
-  adb shell "run-as io.github.codex07.iou cp /data/local/tmp/ds.json no_backup/device-settings.json"
-  adb shell am start -n io.github.codex07.iou/.MainActivity
-  ```
-
-  The screen shows `IOU (real): 0 balances, locked`. `adb shell dumpsys window windows | grep SECURE` finds
-  the window, and `adb shell screencap` gives a black app surface.
-- [ ] Delete `no_backup/device-settings.json` with `run-as` and restart: no lock, no `FLAG_SECURE`.
-- [ ] **On a real phone, once the UI's lock screen exists:** turn app lock on, and on return after the timeout
-  `BiometricPrompt` (fingerprint or device credential) covers everything. Under the timeout there is no
-  prompt; with "immediately" every return prompts. With screen protection on, the Recents thumbnail is
-  blank and screenshots are refused.
+- [ ] Settings → App lock: turn it on. The system prompt appears first; after you authenticate the switch is on and
+  the open app stays unlocked.
+- [ ] Settings → Saved timeout: the row and the picker describe locking after the app has been in the background
+  for the chosen time, and "Immediately" locking on every return. Pick each of Immediately, 1, 5 and 15 minutes in
+  turn and check:
+  - return within the timeout: no unlock screen;
+  - return after the timeout (wait it out): the unlock screen covers everything, and **Unlock** shows the system
+    prompt;
+  - Immediately: every return shows the unlock screen.
+- [ ] Cold start (force-stop, then launch) with app lock on: the unlock screen appears. Cancelling the prompt keeps
+  the content covered and **Unlock** can retry.
+- [ ] Rotate during the system prompt, and return from a document picker (backup/restore/import): no spurious
+  lock inside the timeout, and no stuck prompt.
+- [ ] Settings → Screen protection on: screenshots are refused, the Recents thumbnail is blank, and
+  `adb shell dumpsys window windows | grep SECURE` finds the window. Off: screenshots work and the flag is gone.
+  Check the first frame of a cold start and the Recents thumbnail in both states.
+- [ ] Turn app lock off (needs an unlocked app): no unlock screen on return or cold start.
 
 ## 3. Auto Backup (spec §9, §14 item 5)
 

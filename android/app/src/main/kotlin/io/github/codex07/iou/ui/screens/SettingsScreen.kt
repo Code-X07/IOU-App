@@ -74,7 +74,7 @@ fun SettingsScreen(vm: AppSettingsViewModel, security: SecurityViewModel, hidden
                     if (it) authenticate(AuthPurpose.ENABLE_LOCK) else security.disable()
                 }
                 SettingsDivider()
-                SettingsRow("Saved timeout · ${current.settings.lockTimeout.displayLabel()}", "Saved preference; delay enforcement unavailable", IouIcons.Activity,
+                SettingsRow("Saved timeout · ${current.settings.lockTimeout.displayLabel()}", "Lock after the app has been in the background this long", IouIcons.Activity,
                     enabled = !action.busy, onClick = { chooseTimeout = true })
                 SettingsDivider()
                 SettingsToggle("Screen protection", "Block screenshots and protected task previews", IouIcons.EyeOff,
@@ -119,7 +119,7 @@ fun SettingsScreen(vm: AppSettingsViewModel, security: SecurityViewModel, hidden
         dismissButton = { TextButton(onClick = { editCurrency = false }) { Text("Cancel") } })
     if (chooseTimeout) AlertDialog(onDismissRequest = { chooseTimeout = false }, title = { Text("Saved lock timeout") },
         text = { Column {
-            Text("Delay enforcement is unavailable. This build authenticates on every return.")
+            Text("The app locks after it has been in the background for the chosen time. Immediately locks on every return.")
             LockTimeout.entries.forEach { timeout ->
                 TextButton(onClick = { vm.setTimeout(timeout); chooseTimeout = false }, enabled = !action.busy,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {

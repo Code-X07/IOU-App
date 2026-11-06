@@ -69,6 +69,7 @@ The core runs the policy and the window flag; you build the lock screen (spec §
 - While `SettingsApi.observeLockRequired()` is `true`, cover all content with a lock screen and show `BiometricPrompt` with `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`. On success call `markUnlocked()`. Add `androidx.biometric` for this; it brings the `USE_BIOMETRIC` permission.
 - Only offer the app-lock switch when the device has a secure lock screen (`KeyguardManager.isDeviceSecure`).
 - The core locks on a cold start and after the chosen timeout in the background, following the process lifecycle. Don't track that yourself.
+  `SecurityViewModel` follows that flag only: leaving the foreground covers the content (privacy) but never locks it, and `MainActivity` and `IouRoot` never touch window flags.
 - Screen protection: `setScreenProtection(true)` is all you call. The core sets `FLAG_SECURE` on every activity window and follows later changes.
 
 ## Errors

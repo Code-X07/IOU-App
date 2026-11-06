@@ -2,7 +2,6 @@ package io.github.codex07.iou
 
 import android.app.KeyguardManager
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.activity.compose.setContent
@@ -24,7 +23,6 @@ class MainActivity : FragmentActivity() {
     private val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) // Fail closed until security settings have loaded.
         enableEdgeToEdge()
         authenticationId = security.state.value.request?.id
         prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), object : BiometricPrompt.AuthenticationCallback() {
@@ -43,10 +41,7 @@ class MainActivity : FragmentActivity() {
                 val secure = getSystemService(KeyguardManager::class.java).isDeviceSecure
                 val available = BiometricManager.from(this).canAuthenticate(authenticators) == BiometricManager.BIOMETRIC_SUCCESS
                 security.begin(purpose, secure, available)
-            }, launchAuthentication = ::authenticate, cancelAuthentication = { prompt.cancelAuthentication() }, protectScreen = { secure ->
-                if (secure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            })
+            }, launchAuthentication = ::authenticate, cancelAuthentication = { prompt.cancelAuthentication() })
         }
     }
     private fun authenticate(request: AuthenticationRequest) {
@@ -60,7 +55,6 @@ class MainActivity : FragmentActivity() {
     }
     override fun onStart() { super.onStart(); security.foreground() }
     override fun onPause() {
-        if (security.state.value.enabled || security.state.value.screenProtection) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         if (!isChangingConfigurations) security.background()
         super.onPause()
     }
