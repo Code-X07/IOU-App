@@ -311,7 +311,7 @@ class AdvancedManagementTest {
         val a = FakeApis.seeded(); val p = person(a, "History member"); val g = group(a, p)
         assertTrue(a.groups.removeMember(g, p, basis(a)) is LedgerResult.Ok)
         val group = a.groups.observeGroup(g).first()!!
-        val revision = group.history.first { it.entity.type == EntityType.GROUP_MEMBER && it.version == 1 }
+        val revision = group.history.first { it.entity.type == EntityType.GROUP_MEMBER && it.subject.startsWith("History member") && it.version == 1 }
         assertNotNull(revision.token); assertNotEquals(group.token, revision.token)
         val action = group.restoreAction(revision)
         assertNotNull(action, "A membership revision with a current row token must be actionable")
@@ -344,7 +344,7 @@ class AdvancedManagementTest {
     @Test fun `stale membership revision token fails safely without writing`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val p = person(a); val g = group(a, p)
         assertTrue(a.groups.removeMember(g, p, basis(a)) is LedgerResult.Ok)
-        val staleRevision = a.groups.observeGroup(g).first()!!.history.first { it.entity.type == EntityType.GROUP_MEMBER && it.version == 1 }
+        val staleRevision = a.groups.observeGroup(g).first()!!.history.first { it.entity.type == EntityType.GROUP_MEMBER && it.subject.startsWith("New person") && it.version == 1 }
         val stale = a.groups.observeGroup(g).first()!!.restoreAction(staleRevision)!!
         assertTrue(a.groups.addMember(g, p, basis(a)) is LedgerResult.Ok)
         val before = a.groups.observeGroup(g).first()!!.history
