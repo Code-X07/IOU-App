@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -181,7 +182,7 @@ fun GroupPreview(group: GroupSummary, hidden: Boolean, onClick: () -> Unit,
                 Column(Modifier.weight(1f)) {
                     Text(group.group.name, style = MaterialTheme.typography.titleMedium, maxLines = 2,
                         overflow = TextOverflow.Ellipsis)
-                    Text(stringResource(R.string.members_currency, group.activeMemberCount,
+                    Text(pluralStringResource(R.plurals.members_currency, group.activeMemberCount, group.activeMemberCount,
                         if (group.fxMode == FxMode.CONVERT) stringResource(R.string.converted_to, group.defaultCurrency.code)
                         else stringResource(R.string.original_currencies)), style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant)

@@ -40,16 +40,12 @@
     <string name="backup_controls">Backup and restore</string>
     <string name="local_note">IOU records who owes what. It never sends or receives money.</string>
     <string name="not_implemented">Not implemented yet</string>
-    <string name="back_overview">Back to Overview</string>
     <string name="done">Done</string>
     <string name="add_record">Add a record</string>
     <string name="shared_expense">Shared expense</string>
     <string name="personal_loan">Personal loan</string>
     <string name="record_repayment">Record repayment</string>
     <string name="feature_unfinished">%1$s is not available from this screen yet.</string>
-    <string name="person_details">%1$s · contact details</string>
-    <string name="group_details">%1$s · group details</string>
-    <string name="entry_details">Transaction details</string>
     <string name="load_failed">Could not load your dashboard</string>
     <string name="load_failed_body">Your saved data has not been changed. Try loading the dashboard again.</string>
     <string name="retry">Try again</string>
@@ -58,7 +54,10 @@
     <string name="you_owe_person">You owe</string>
     <string name="mixed_currencies">Mixed currencies</string>
     <string name="archived_status">Archived · %1$s</string>
-    <string name="members_currency">%1$d members · %2$s</string>
+    <plurals name="members_currency">
+        <item quantity="one">%1$d member · %2$s</item>
+        <item quantity="other">%1$d members · %2$s</item>
+    </plurals>
     <string name="original_currencies">Original currencies</string>
     <string name="converted_to">In %1$s</string>
     <string name="you_get_back">You get back</string>
