@@ -26,7 +26,8 @@ service state and transport, and restore both after testing.
   - `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED` (WorkManager);
   - `io.github.codex07.iou.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, a signature permission that
     `androidx.core` declares for the app's own receivers;
-  - `USE_BIOMETRIC`, once the UI adds `androidx.biometric`.
+  - `USE_BIOMETRIC` (declared by the app and by `androidx.biometric`) and `USE_FINGERPRINT` (added only by
+    `androidx.biometric` 1.1.0). Neither is a financial-data permission; confirm both appear and nothing else is new.
 
   `FOREGROUND_SERVICE` must be absent; `src/real/AndroidManifest.xml` removes it. For anything new, find
   its source in `app/build/outputs/logs/manifest-merger-real-release-report.txt`. Remove it with
@@ -40,26 +41,33 @@ service state and transport, and restore both after testing.
 
 ## 2. App lock and screen protection (spec §9)
 
-Until the UI has a lock screen, the placeholder shows the lock state (", locked"). Set the device settings
-through the file on a fresh disposable image containing only test data:
+The UI owns the lock screen and the Settings controls. The core owns the policy (`TimedLockGate`) and `FLAG_SECURE`
+(`AppSecurity`); the UI never sets window flags. Use a fresh disposable image containing only test data, with a
+secure Android screen lock set.
 
-- [ ] Install realDebug (`./gradlew installRealDebug`) and start it once. Then write the settings and restart:
-
-  ```bash
-  printf '{"appLockEnabled":true,"screenProtection":true}' > ds.json
-  adb push ds.json /data/local/tmp/ds.json
-  adb shell am force-stop io.github.codex07.iou
-  adb shell "run-as io.github.codex07.iou cp /data/local/tmp/ds.json no_backup/device-settings.json"
-  adb shell am start -n io.github.codex07.iou/.MainActivity
-  ```
-
-  The screen shows `IOU (real): 0 balances, locked`. `adb shell dumpsys window windows | grep SECURE` finds
-  the window, and `adb shell screencap` gives a black app surface.
-- [ ] Delete `no_backup/device-settings.json` with `run-as` and restart: no lock, no `FLAG_SECURE`.
-- [ ] **On a real phone, once the UI's lock screen exists:** turn app lock on, and on return after the timeout
-  `BiometricPrompt` (fingerprint or device credential) covers everything. Under the timeout there is no
-  prompt; with "immediately" every return prompts. With screen protection on, the Recents thumbnail is
-  blank and screenshots are refused.
+- [ ] Settings → App lock: turn it on. The system prompt appears first; after you authenticate the switch is on and
+  the open app stays unlocked.
+- [ ] Settings → Saved timeout: the row and the picker describe locking after the app has been in the background
+  for the chosen time, and "Immediately" locking on every return. Pick each of Immediately, 1, 5 and 15 minutes in
+  turn and check:
+  - return within the timeout: no unlock screen;
+  - return after the timeout (wait it out): the unlock screen covers everything, and **Unlock** shows the system
+    prompt;
+  - Immediately: every return shows the unlock screen.
+- [ ] Cold start (force-stop, then launch) with app lock on: the unlock screen appears. Cancelling the prompt keeps
+  the content covered and **Unlock** can retry.
+- [ ] Rotate during the system prompt, and return from a document picker (backup/restore/import): no spurious
+  lock inside the timeout, and no stuck prompt.
+- [ ] Settings → Screen protection on: screenshots are refused, the Recents thumbnail is blank, and
+  `adb shell dumpsys window windows | grep SECURE` finds the window. Off: screenshots work and the flag is gone.
+  Check the first frame of a cold start and the Recents thumbnail in both states.
+- [ ] Turn app lock off (needs an unlocked app): no unlock screen on return or cold start.
+- [ ] Data management lifecycles (real flavor, synthetic data on a disposable AVD): restore a backup and watch the
+  screen close; the snackbar then shows the restore outcome ("Restore complete..."), not only the generic
+  "ledger was replaced" text. Kill the app during a pre-commit restore (for example with a gated test build or an
+  early `adb shell am force-stop`), relaunch and unlock: the original ledger is intact and one dialog says
+  "The last restore was interrupted. Nothing changed." After **Done**, relaunch: no dialog. A normal launch and a
+  completed restore show no such dialog. Open an import preview, press Back and discard: no import session stays open.
 
 ## 3. Auto Backup (spec §9, §14 item 5)
 
@@ -149,6 +157,19 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   not split the semicolon files correctly; use the explicit import procedure above. These results cover
   those versions and the tested files.
 - [ ] XLSX export arrives in M2 (spec §7.3); check it then.
+- [ ] On a real-flavor build (Settings > Backup & data management), with synthetic data only:
+  - Create backup with encryption off: the warning and its acknowledgement are required; the picker
+    suggests `iou-backup.json`; the result says the backup was saved. Pulled file starts with `{` and holds
+    the ledger.
+  - Create backup with encryption on: the picker suggests `iou-backup.ioub`; the pulled file starts with
+    `IOUB`.
+  - Export normalized CSV: the picker suggests `iou-export.zip`; the file is a ZIP with `manifest.json`.
+    Export a report: `iou-export.csv`. The Format field offers CSV only, with a line that XLSX arrives later.
+  - Restore a backup: the confirmation says the ledger is replaced; the result says it was replaced.
+    Undo last restore says the same. Import a normalized ZIP: no "Simulation scenarios" are listed; the
+    commit confirmation and result say the ledger changed; undoing the import reports complete or partial.
+  - Nothing on these screens calls real data simulated or empty. The fake flavor keeps its simulation labels
+    and the `IOU-SIMULATION-EMPTY-*.txt` names.
 
 ## 7. Signed release APK (spec §2.4, §10)
 
@@ -160,3 +181,39 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   `adb install -r iou-vX.Y.Z.apk`. The upgrade succeeds without uninstalling, and the app starts and shows
   the same test ledger. Keep debug and signed-release builds on separate images because they use different
   signing keys.
+
+## 8. Compose UI integration pass (PR #1 merge, branch `integrate/compose-ui`)
+
+Run on 2026-11-06 on a disposable API 37 AVD (`IOU_Integration_Review`), realDebug, synthetic data only ("MergeTester").
+Only items marked passed were observed; everything unchecked is still open.
+
+Passed on the emulator (2026-11-06):
+
+- [x] Real first-run setup shows no simulation notice; person and loan creation; force-stop and reopen keeps the data.
+- [x] Backup with encryption on: `iou-backup.ioub` (1146 bytes, `IOUB` header). Backup with encryption off: `iou-backup.json` (4356 bytes,
+  real JSON including identity), after the plaintext warning and acknowledgement.
+- [x] Normalized export is a ZIP ("Exported 3 rows"); the report CSV is correct; the Format field offers CSV only with the XLSX note.
+- [x] Restore, with a rotation between picking the file and confirming: balance restored and the outcome snackbar shown. Undo restore
+  brought the earlier balance back.
+- [x] App lock turned on with the device PIN. 1-minute timeout: returning after 10 s stayed unlocked, after 70 s showed the unlock screen.
+  Immediately: every return locks. Returning from a document picker with Immediately locks, and the picker result is delivered after unlock.
+- [x] Import preview of the app's own ZIP (3 duplicates); Back discards it. The draft survives rotation, and the form reopens blank after discard.
+- [x] No crash entries in the log buffer during the pass.
+
+Open items (not done, or only partly covered):
+
+- [ ] App lock on, screen protection off: the Recents thumbnail shows content. This is by design: per spec §9, `FLAG_SECURE` follows
+  screen protection only, never app lock. Confirm that with protection on the thumbnail is blank.
+- [ ] Interrupted restore notice: kill the app during a pre-commit restore, relaunch and unlock; expect the single "The last restore was
+  interrupted. Nothing changed." dialog (the ViewModel path is covered by JVM tests; the on-device path was not run).
+- [ ] Nested group creation from a personal `NeedsGroup` keeps the parent form's draft when it returns.
+- [ ] Biometric success, cancel and lockout paths on a device with a biometric sensor (the emulator had none; only the PIN path ran).
+- [ ] Screenshots and Recents with screen protection on (refused and blank), including the first frame of a cold start.
+- [ ] Fake-flavor walkthrough (simulation labels, demo data, canned import scenarios).
+- [ ] Repeated open, cancel and save of the same form (new transaction, person, group): each visit starts blank and no draft survives a
+  pop (route ViewModels are cleared when a route leaves the stack).
+- [ ] Remaining validation matrix cases: expense split modes and FX choices on a device, settlement drafts, and an import round trip with a
+  foreign identity, invalid rows and undo.
+- [ ] Compose instrumentation suite (`androidTest`): carried over. This merge relies on JVM tests and the passes above; destination
+  disposal, semantics, system pickers and lifecycle ordering still have no automated device test.
+- [ ] Known core follow-up (not a UI defect): the import screen shows the SAF document id instead of the file's display name.

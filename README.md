@@ -2,7 +2,7 @@
 
 An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" threads in WhatsApp with exact, auditable balances.
 
-> **Status:** Milestone 1 is complete (v0.1.0), and every finding of the [M1 implementation review](docs/reviews/2026-11-06-m1-implementation-review.md) has been fixed since. The real flavor is a working ledger on Room, with groups, history and revert, merges, FX, encrypted backups, CSV export and import, app lock and screen protection. The Compose screens are in review in [PR #1](https://github.com/Code-X07/IOU-App/pull/1). Milestone 2 (importing group rows, XLSX export) starts after that PR is merged.
+> **Status:** Milestone 1 is complete (v0.1.0), and every finding of the [M1 implementation review](docs/reviews/2026-11-06-m1-implementation-review.md) has been fixed since. The real flavor is a working ledger on Room, with groups, history and revert, merges, FX, encrypted backups, CSV export and import, app lock and screen protection. The Compose UI from PR #1 is integrated on the `integrate/compose-ui` branch (pending merge; it supersedes #1) after the [integration review](docs/reviews/2026-11-06-pr1-integration-review.md), whose findings are resolved there. Current limits: XLSX export and group-row CSV import arrive in Milestone 2, and some on-device checks are still open (section 8 of the [manual test checklist](docs/manual-test-checklist.md)): biometric paths, screenshots with screen protection, the interrupted-restore notice and the fake-flavor walkthrough. There is no Compose instrumentation suite yet. Milestone 2 starts after the UI is merged.
 
 ## What it does (MVP)
 
@@ -29,7 +29,7 @@ Later phases add pay/request helpers (EPC QR, Revolut links), automatic detectio
 - [UI contributor guide](docs/ui-contributor-guide.md)
 - [Manual test checklist](docs/manual-test-checklist.md), run before each release
 - [Architecture decision records](docs/adr/README.md)
-- Implementation reviews: [M0](docs/reviews/2026-11-04-m0-implementation-review.md), [M1](docs/reviews/2026-11-06-m1-implementation-review.md)
+- Implementation reviews: [M0](docs/reviews/2026-11-04-m0-implementation-review.md), [M1](docs/reviews/2026-11-06-m1-implementation-review.md), [PR #1 integration](docs/reviews/2026-11-06-pr1-integration-review.md)
 
 ## Tech
 
@@ -43,6 +43,7 @@ Needs JDK 21. From `android/`:
 ./gradlew installFakeDebug        # in-memory fake with demo data, for UI work
 ./gradlew installRealDebug        # the real app on Room
 ./gradlew testFakeDebugUnitTest testRealDebugUnitTest
+./gradlew lintFakeDebug lintRealDebug
 ```
 
 The two flavors install side by side (the fake has the `.fake` application ID suffix). Release builds are signed in CI from a version tag.

@@ -30,10 +30,11 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Lint, unit tests (incl. domain purity check), debug builds
+      - name: Lint (both flavors), unit tests (incl. domain purity check), debug builds
         run: >
           ./gradlew --no-daemon
           lintFakeDebug
+          lintRealDebug
           testFakeDebugUnitTest
           testRealDebugUnitTest
           assembleFakeDebug

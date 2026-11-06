@@ -34,6 +34,8 @@ import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import java.time.Clock
 import java.time.ZoneOffset
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.CoroutineContext
@@ -42,6 +44,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -147,6 +151,33 @@ class RealImportTest {
         backend.apis.backup.createBackup(backup, null).orFail()
         backend.apis.backup.restoreBackup(backup, null).orFail()
         api.refreshPreview(stranded) shouldBe LedgerResult.Err(LedgerError.LedgerReplaced)
+        api.openSessions shouldBe 0
+    }
+
+    @Test
+    fun `a parse cancelled after its session is installed but before the caller gets the preview keeps no session`() = runTest {
+        val backend = harness.start()
+        backend.setUp()
+        // The parse's compute steps queue here and run only when this test runs them, on the test thread.
+        val compute = LinkedBlockingQueue<Runnable>()
+        val dispatcher = object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) { compute.put(block) }
+        }
+        val api = RealImportExportApi(backend.store, harness.documents, LedgerExport("test"), computeDispatcher = dispatcher)
+        val source = exported(backend)
+        val delivered = AtomicBoolean(false)
+        val caller = launch { api.parseImport(source); delivered.set(true) }
+        runCurrent()
+        // Run the parse until it installs its session. That step also finishes the parse, which queues the caller's
+        // resumption on the test scheduler; the test does not yield, so the caller has not received the preview yet.
+        while (api.openSessions == 0) {
+            checkNotNull(compute.poll(10, TimeUnit.SECONDS)) { "parse never installed its session" }.run()
+        }
+        compute.isEmpty() shouldBe true
+        delivered.get() shouldBe false
+        caller.cancel()
+        caller.join()
+        delivered.get() shouldBe false
         api.openSessions shouldBe 0
     }
 
