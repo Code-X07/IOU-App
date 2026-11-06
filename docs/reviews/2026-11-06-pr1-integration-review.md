@@ -1,6 +1,7 @@
 # PR #1 integration review: `feat/compose-ui` into `main`
 
-**Review date:** 2026-11-06 (Asia/Calcutta)  
+**Review date:** 2026-11-06 (Asia/Calcutta)
+
 **Decision:** **Not ready to merge.** Resolve the build/integration blockers and behavioral findings below, then validate the final combined commit. Neither the remote PR nor the original application checkout was modified by this review.
 
 ## Reviewed branches and scope
