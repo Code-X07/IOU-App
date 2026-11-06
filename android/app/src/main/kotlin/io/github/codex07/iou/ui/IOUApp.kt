@@ -23,6 +23,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.codex07.iou.ui.navigation.RouteStores
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.codex07.iou.R
 import io.github.codex07.iou.ui.components.AdvancedDialog
@@ -61,6 +66,19 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
     val session: BrowseSessionViewModel = hiltViewModel()
     val observedGeneration by session.generation.collectAsStateWithLifecycle()
     val generation = ledgerGeneration ?: observedGeneration
+    val routeStores: RouteStores = viewModel()
+    val activity = run {
+        var context = LocalContext.current
+        while (context !is ComponentActivity) context = (context as android.content.ContextWrapper).baseContext
+        context
+    }
+    var previousKeys by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(stack, generation?.value) {
+        routeStores.retainOnly(stack.toSet())
+        val keys = stack.map { it + "@" + generation?.value.orEmpty() }.toSet()
+        (previousKeys - keys).forEach { holder.removeState(it) }
+        previousKeys = keys
+    }
     var lastGeneration by rememberSaveable { mutableStateOf<String?>(null) }
     val replacementOutcome by settingsModel.replacements.outcome.collectAsStateWithLifecycle()
     val restoreInterrupted by settingsModel.restoreInterrupted.collectAsStateWithLifecycle()
@@ -153,10 +171,11 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
             PageEntrance(scene) {
                     holder.SaveableStateProvider((route ?: selected.name) + "@" + generation?.value.orEmpty()) {
                         if (route != null) {
+                          CompositionLocalProvider(LocalViewModelStoreOwner provides routeStores.owner(route, activity)) {
                             val id = route.substringAfter(':')
                             when (route.substringBefore(':')) {
                                 "form-data" -> {
-                                    val vm: DataManagementViewModel = hiltViewModel(key = route)
+                                    val vm: DataManagementViewModel = hiltViewModel()
                                     LaunchedEffect(route) { vm.open(route.split(':').getOrNull(2) ?: "backup") }
                                     DataManagementScreen(vm, hidden) { stack = stack.dropLast(1) }
                                 }
@@ -168,7 +187,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                     val key = route.substringAfter(':')
                                     when (val prepared = advanced.form(key)) {
                                         is PreparedForm.Repayment -> {
-                                            val vm: EntryFormViewModel = hiltViewModel(key = route)
+                                            val vm: EntryFormViewModel = hiltViewModel()
                                             LaunchedEffect(route) { vm.openSettlement(prepared.draft) }
                                             val form by vm.state.collectAsStateWithLifecycle()
                                             val status by vm.status.collectAsStateWithLifecycle()
@@ -179,7 +198,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                         }
                                         is PreparedForm.Recovery -> {
                                             if (prepared.draft.draft is VersionDraft.OfEntry) {
-                                                val vm: EntryFormViewModel = hiltViewModel(key = route)
+                                                val vm: EntryFormViewModel = hiltViewModel()
                                                 LaunchedEffect(route) { vm.openRecovery(prepared.draft) }
                                                 val form by vm.state.collectAsStateWithLifecycle()
                                                 val status by vm.status.collectAsStateWithLifecycle()
@@ -188,7 +207,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                                     saved = { savedId -> vm.finish(); advanced.forget(key); stack = stack.dropLast(1); if (stack.lastOrNull() != "entry:$savedId") stack = stack + "entry:$savedId" },
                                                     createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
                                             } else {
-                                                val vm: MetadataFormViewModel = hiltViewModel(key = route)
+                                                val vm: MetadataFormViewModel = hiltViewModel()
                                                 LaunchedEffect(route) { vm.openRecovery(prepared.draft) }
                                                 val form by vm.state.collectAsStateWithLifecycle()
                                                 val status by vm.status.collectAsStateWithLifecycle()
@@ -207,7 +226,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                     }
                                 }
                                 "form-merge" -> {
-                                    val vm: MergeViewModel = hiltViewModel(key = route)
+                                    val vm: MergeViewModel = hiltViewModel()
                                     LaunchedEffect(route) { vm.open(route.split(':').getOrNull(2).orEmpty()) }
                                     val form by vm.state.collectAsStateWithLifecycle()
                                     val status by vm.status.collectAsStateWithLifecycle()
@@ -216,20 +235,20 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                         merged = { canonical -> vm.end(); stack = stack.dropLast(1); if (stack.lastOrNull()?.startsWith("person:") == true) stack = stack.dropLast(1); stack = stack + "person:$canonical" })
                                 }
                                 "members" -> {
-                                    val vm: MembersViewModel = hiltViewModel(key = route)
+                                    val vm: MembersViewModel = hiltViewModel()
                                     LaunchedEffect(id) { vm.open(id) }
                                     val members by vm.state.collectAsStateWithLifecycle()
                                     MembersScreen(members, hidden, vm::retry, advanced::request)
                                 }
                                 "form-person", "form-handle", "form-group" -> {
                                     val parts = route.split(':')
-                                    val vm: MetadataFormViewModel = hiltViewModel(key = route)
+                                    val vm: MetadataFormViewModel = hiltViewModel()
                                     val kind = when (parts[0]) { "form-person" -> MetadataKind.PERSON; "form-handle" -> MetadataKind.HANDLE; else -> MetadataKind.GROUP }
                                     val entity = if (kind == MetadataKind.HANDLE) parts.getOrNull(3)?.takeIf { it.isNotBlank() } else parts.getOrNull(2)?.takeIf { it.isNotBlank() }
                                     val owner = if (kind == MetadataKind.HANDLE) parts.getOrNull(2) else null
                                     val members = if (kind == MetadataKind.GROUP) parts.getOrNull(3).orEmpty().split(',').filter { it.isNotBlank() }.map(::PersonId).toSet() else emptySet()
                                     val parent = stack.dropLast(1).lastOrNull()?.takeIf { it.startsWith("form-entry:") || it.startsWith("form-entryedit:") || it.startsWith("form-prepared:") }
-                                    val parentVm: EntryFormViewModel? = if (parent != null) hiltViewModel(key = parent) else null
+                                    val parentVm: EntryFormViewModel? = if (parent != null) hiltViewModel(viewModelStoreOwner = routeStores.owner(parent, activity)) else null
                                     LaunchedEffect(route) { vm.open(kind, entity, owner, members) }
                                     val form by vm.state.collectAsStateWithLifecycle()
                                     val status by vm.status.collectAsStateWithLifecycle()
@@ -248,7 +267,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                 }
                                 "form-entry", "form-entryedit" -> {
                                     val parts = route.split(':')
-                                    val vm: EntryFormViewModel = hiltViewModel(key = route)
+                                    val vm: EntryFormViewModel = hiltViewModel()
                                     LaunchedEffect(route) { vm.open(parts.getOrNull(2) ?: "expense", if (parts[0] == "form-entryedit") parts.getOrNull(2) else null) }
                                     val form by vm.state.collectAsStateWithLifecycle()
                                     val status by vm.status.collectAsStateWithLifecycle()
@@ -260,20 +279,20 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                         }, createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
                                 }
                                 "group" -> {
-                                    val vm: GroupDetailViewModel = hiltViewModel(key = route)
+                                    val vm: GroupDetailViewModel = hiltViewModel()
                                     LaunchedEffect(id) { vm.open(id) }
                                     val detail by vm.state.collectAsStateWithLifecycle()
                                     GroupDetailScreen(detail, hidden, vm::retry, openPerson, openEntry, onEdit = { stack = stack + formRoute("group", id) }, request = advanced::request,
                                         onMembers = { stack = stack + "members:$id" }, onRecordPlan = advanced::preparePlan)
                                 }
                                 "entry" -> {
-                                    val vm: EntryDetailViewModel = hiltViewModel(key = route)
+                                    val vm: EntryDetailViewModel = hiltViewModel()
                                     LaunchedEffect(id) { vm.open(id) }
                                     val detail by vm.state.collectAsStateWithLifecycle()
                                     EntryDetailScreen(detail, hidden, vm::retry, openPerson, openGroup, onEdit = { stack = stack + formRoute("entryedit", id) }, request = advanced::request)
                                 }
                                 "person" -> {
-                                    val vm: PersonDetailViewModel = hiltViewModel(key = route)
+                                    val vm: PersonDetailViewModel = hiltViewModel()
                                     LaunchedEffect(id) { vm.open(id) }
                                     val detail by vm.state.collectAsStateWithLifecycle()
                                     PersonDetailScreen(detail, hidden, vm::retry, openGroup, openEntry,
@@ -283,6 +302,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                         request = advanced::request, onMerge = { stack = stack + formRoute("merge", id) }, onRecordPlan = advanced::preparePlan)
                                 }
                             }
+                          }
                         } else when (selected) {
                             Destination.Overview -> OverviewScreen(state, hidden,
                                 onNavigate = { selectedName = it.name }, onFeature = { feature -> when (feature) { addPersonLabel -> addPerson(); createGroupLabel -> addGroup(); addExpenseLabel -> addEntry("expense"); else -> if (feature == backupControlsLabel) stack = stack + formRoute("data", "backup") else unfinished = feature } }, onRetry = viewModel::retry,
