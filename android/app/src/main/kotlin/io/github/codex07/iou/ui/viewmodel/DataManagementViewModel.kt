@@ -18,6 +18,8 @@ class DataManagementViewModel @Inject constructor(
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(DataState())
     val state = mutableState.asStateFlow()
+    /** True while any ViewModel's restore or undo-restore runs, so a screen can show its controls disabled. */
+    val replacementRunning: StateFlow<Boolean> = replacements.running
     val catalog = combine(settings.observeSettings(), backup.observeBackupReminder(), backup.observeUndoRestoreAvailable(),
         transfer.observeImportBatches(), combine(people.observePeople(true), groups.observeGroups(true)) { p, g -> p to g }) { config, reminder, undo, batches, records ->
         DataCatalog(config, reminder, undo, batches, records.first, records.second)
@@ -37,7 +39,7 @@ class DataManagementViewModel @Inject constructor(
     private var undoBatch: ImportBatchId? = null
     private val watcher = viewModelScope.launch {
         backup.observeLedgerGeneration().catch {
-            epoch++; job?.cancel(); clearPrepared(); mutableState.value = DataState(loading = false, mode = state.value.mode, error = LedgerError.LedgerReplaced)
+            epoch++; job?.cancel(); clearPrepared(); mutableState.value = DataState(loading = false, mode = state.value.mode, busy = replacing, error = LedgerError.LedgerReplaced)
         }.collect { current ->
             if (generation != null && current != generation) {
                 epoch++; if (!replacing) job?.cancel()

@@ -143,7 +143,8 @@ class DataLifecycleTest {
             val first = requireNotNull(vm.state.value.preview)
             vm.simulateImport("normal"); runCurrent()
             val second = requireNotNull(vm.state.value.preview)
-            if (second.id != first.id) assertEquals(listOf(first.id), discarded.map { it.id })
+            assertNotEquals(first.id, second.id)
+            assertEquals(listOf(first.id), discarded.map { it.id })
         } finally { vm.end() }
     }
 
@@ -196,5 +197,34 @@ class DataLifecycleTest {
         val vm = vm(a); vm.open("restore"); runCurrent(); vm.pickRestore(); vm.documentResult("backup")
         vm.requestRestore("testphrase".toCharArray()); vm.confirm(); runCurrent()
         assertFalse(settings.restoreInterrupted.value); vm.end()
+    }
+
+    @Test fun `a cancellation from the block while the scope is active is reported as unconfirmed`() = runTest(dispatcher) {
+        val holder = replacements(); var received: LedgerResult<Unit>? = LedgerResult.Ok(Unit); var called = 0
+        holder.run({ throw CancellationException("inner") }, "done") { received = it; called++ }; runCurrent()
+        assertFalse(holder.running.value); assertEquals(1, called); assertNull(received)
+        assertTrue(holder.outcome.value!!.contains("could not be confirmed"))
+        assertTrue(holder.run({ LedgerResult.Ok(Unit) }, "again") { }, "A new replacement can start afterwards")
+    }
+
+    @Test fun `a second screen starts nothing and reports its controls unavailable while another restore runs`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val gate = CompletableDeferred<Unit>(); val holder = replacements(); var invoked = 0
+        val first = vm(a, gated(a, generations(a), gate), holder = holder)
+        val counting = object : BackupApi by a.backup {
+            override suspend fun restoreBackup(source: DocumentRef, passphrase: CharArray?): LedgerResult<Unit> { invoked++; return LedgerResult.Ok(Unit) }
+            override suspend fun undoLastRestore(): LedgerResult<Unit> { invoked++; return LedgerResult.Ok(Unit) }
+        }
+        val second = vm(a, counting, holder = holder)
+        try {
+            assertFalse(second.replacementRunning.value)
+            startRestore(first); runCurrent()
+            assertTrue(holder.running.value); assertTrue(second.replacementRunning.value)
+            second.open("restore"); runCurrent()
+            second.requestUndoRestore(); second.confirm(); second.pickRestore(); runCurrent()
+            assertNull(second.state.value.confirmation); assertNull(second.state.value.picker)
+            assertEquals(0, invoked); assertFalse(second.state.value.busy)
+            gate.complete(Unit); runCurrent()
+            assertFalse(second.replacementRunning.value)
+        } finally { gate.complete(Unit); runCurrent(); first.end(); second.end() }
     }
 }

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -40,7 +41,9 @@ class LedgerReplacements(private val scope: CoroutineScope) {
             try {
                 result = block()
             } catch (cancel: CancellationException) {
-                mutableRunning.value = false; throw cancel
+                // Scope cancellation ends the app; any other cancellation is an unconfirmed outcome, not a stranded caller.
+                if (!scope.isActive) { mutableRunning.value = false; throw cancel }
+                result = null
             } catch (_: Exception) {
                 result = null
             }

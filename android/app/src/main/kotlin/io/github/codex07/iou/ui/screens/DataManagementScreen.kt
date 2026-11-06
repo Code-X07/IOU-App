@@ -30,6 +30,7 @@ import io.github.codex07.iou.ui.viewmodel.DataManagementViewModel
 @Composable
 fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val replacementRunning by vm.replacementRunning.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val services = vm.services
     var phrase by remember { mutableStateOf("") }
@@ -54,7 +55,7 @@ fun DataManagementScreen(vm: DataManagementViewModel, hidden: Boolean, close: ()
             try { documents.launch(intent) } catch (_: Exception) { vm.documentFailure() }
         }
     }
-    val enabled = !state.loading && !state.busy && state.picker == null
+    val enabled = !state.loading && !state.busy && state.picker == null && !replacementRunning
     val title = when (state.mode) { "backup" -> "Create backup"; "restore" -> "Restore & undo"; "export" -> "Export data"; "import" -> "Import data"; else -> "Import history" }
     Scaffold(topBar = { TopAppBar(title = { Text(title, Modifier.semantics { heading() }) },
         navigationIcon = { IconButton(onClick = vm::requestLeave) { Icon(IouIcons.Back, "Back") } }) }) { insets ->

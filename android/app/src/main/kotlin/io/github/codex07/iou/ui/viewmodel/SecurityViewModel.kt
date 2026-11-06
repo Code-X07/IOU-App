@@ -43,7 +43,7 @@ class SecurityViewModel @Inject constructor(private val settings: SettingsApi, b
         }
         viewModelScope.launch {
             combine(settings.observeSettings(), settings.observeLockRequired()) { config, lock -> config to lock }
-                .catch { mutableState.update { it.copy(settingsFailed = true, message = "Security settings are unavailable. Reopen the app.") } }
+                .catch { authJob?.cancel(); mutableState.update { it.copy(settingsFailed = true, request = null, busy = false, message = "Security settings are unavailable. Reopen the app.") } }
                 .collect { (config, lock) -> mutableState.update { it.copy(loading = false, enabled = config.appLockEnabled,
                     backendLocked = lock, screenProtection = config.screenProtection) } }
         }

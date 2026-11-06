@@ -24,7 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.LocalActivity
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.codex07.iou.ui.navigation.RouteStores
@@ -67,11 +67,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
     val observedGeneration by session.generation.collectAsStateWithLifecycle()
     val generation = ledgerGeneration ?: observedGeneration
     val routeStores: RouteStores = viewModel()
-    val activity = run {
-        var context = LocalContext.current
-        while (context !is ComponentActivity) context = (context as android.content.ContextWrapper).baseContext
-        context
-    }
+    val activity = LocalActivity.current as ComponentActivity
     var previousKeys by remember { mutableStateOf(emptySet<String>()) }
     LaunchedEffect(stack, generation?.value) {
         routeStores.retainOnly(stack.toSet())

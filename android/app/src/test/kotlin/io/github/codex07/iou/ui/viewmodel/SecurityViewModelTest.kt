@@ -75,4 +75,28 @@ class SecurityViewModelTest {
         runCurrent()
         assertTrue(vm.state.value.covered, "A settings update cannot restore the failed generation observer")
     }
+
+    @Test fun `settings observation failure while authentication is pending clears the request and stays covered`() = runTest(dispatcher) {
+        val apis = FakeApis.seeded()
+        val failSettings = CompletableDeferred<Unit>()
+        val settings = object : SettingsApi by apis.settings {
+            override fun observeSettings() = flow {
+                emit(apis.settings.observeSettings().first())
+                failSettings.await()
+                throw IllegalStateException("Settings observation failed")
+            }
+        }
+        val vm = SecurityViewModel(settings, apis.backup)
+        runCurrent()
+        vm.foreground()
+        vm.begin(AuthPurpose.ENABLE_LOCK, true, true)
+        assertTrue(vm.state.value.request != null)
+
+        failSettings.complete(Unit)
+        runCurrent()
+        assertTrue(vm.state.value.request == null)
+        assertFalse(vm.state.value.busy)
+        assertTrue(vm.state.value.settingsFailed)
+        assertTrue(vm.state.value.covered)
+    }
 }

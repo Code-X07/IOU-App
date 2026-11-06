@@ -13,24 +13,28 @@ import androidx.lifecycle.viewmodel.CreationExtras
  * so open routes survive rotation.
  */
 class RouteStores : ViewModel() {
-    private val stores = mutableMapOf<String, ViewModelStore>()
+    private class Entry(val store: ViewModelStore, val owner: ViewModelStoreOwner)
 
-    fun <P> owner(route: String, parent: P): ViewModelStoreOwner where P : ViewModelStoreOwner, P : HasDefaultViewModelProviderFactory {
-        val store = stores.getOrPut(route) { ViewModelStore() }
-        return object : ViewModelStoreOwner, HasDefaultViewModelProviderFactory {
-            override val viewModelStore: ViewModelStore get() = store
-            override val defaultViewModelProviderFactory: ViewModelProvider.Factory get() = parent.defaultViewModelProviderFactory
-            override val defaultViewModelCreationExtras: CreationExtras get() = parent.defaultViewModelCreationExtras
-        }
-    }
+    private val entries = mutableMapOf<String, Entry>()
+
+    fun <P> owner(route: String, parent: P): ViewModelStoreOwner where P : ViewModelStoreOwner, P : HasDefaultViewModelProviderFactory =
+        entries.getOrPut(route) {
+            val store = ViewModelStore()
+            Entry(store, object : ViewModelStoreOwner, HasDefaultViewModelProviderFactory {
+                override val viewModelStore: ViewModelStore get() = store
+                override val defaultViewModelProviderFactory: ViewModelProvider.Factory get() = parent.defaultViewModelProviderFactory
+                override val defaultViewModelCreationExtras: CreationExtras get() = parent.defaultViewModelCreationExtras
+            })
+        }.owner
 
     fun retainOnly(routes: Set<String>) {
-        val gone = stores.keys.filter { it !in routes }
-        gone.forEach { stores.remove(it)?.clear() }
+        val gone = entries.keys.filter { it !in routes }
+        gone.forEach { entries.remove(it)?.store?.clear() }
     }
 
+    /** Public because Kotlin cannot narrow the inherited protected `onCleared` to internal; tests call it directly. */
     public override fun onCleared() {
-        stores.values.forEach { it.clear() }
-        stores.clear()
+        entries.values.forEach { it.store.clear() }
+        entries.clear()
     }
 }

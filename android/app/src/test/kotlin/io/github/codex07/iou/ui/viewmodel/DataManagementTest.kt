@@ -91,6 +91,7 @@ class DataManagementTest {
     @Test fun `file access and restore failures have explicit messages that do not leak detail`() {
         val access = LedgerError.FileAccessFailed("content://private/path").userMessage()
         assertTrue(access.contains("could not be accessed") && access.contains("incomplete") && access.contains("another location"))
+        assertTrue(access.contains("usable backup"))
         assertFalse(access.contains("private"))
         val restore = LedgerError.RestoreFailed("secret-detail").userMessage()
         assertTrue(restore.contains("nothing was changed"))
@@ -129,8 +130,8 @@ class DataManagementTest {
         assertTrue(ExportFields(scope = "person:id").request().errorOrNull() is LedgerError.InvalidField)
         assertTrue(ExportFields(from = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
         assertTrue(ExportFields(format = ExportFormat.XLSX, excelFriendly = true).request().errorOrNull() is LedgerError.InvalidField)
-        for (scope in listOf("full", "person:id", "group:id")) for (format in listOf(ExportFormat.CSV)) {
-            assertTrue(ExportFields(ExportShape.REPORT, format, scope, "2026-01-01", "2026-12-31").request() is LedgerResult.Ok)
+        for (scope in listOf("full", "person:id", "group:id")) {
+            assertTrue(ExportFields(ExportShape.REPORT, ExportFormat.CSV, scope, "2026-01-01", "2026-12-31").request() is LedgerResult.Ok)
         }
         assertTrue(ExportFields(ExportShape.REPORT, from = "2026-12-31", to = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
         assertEquals("zip", ExportFields().extension()); assertEquals("application/zip", ExportFields().mime())
@@ -277,22 +278,26 @@ class DataManagementTest {
         try {
             val backend = harness.start(); SeedData.populate(backend.store); val a = backend.apis
             val vm = DataManagementViewModel(a.backup, a.importExport, a.settings, a.people, a.groups, dispatcher, DataServices.Real, replacements())
-            vm.open("backup"); vm.state.first { !it.loading }
+            vm.open("backup"); awaitState(vm) { !it.loading }
             vm.encryption(false); vm.beginBackup(charArrayOf(), charArrayOf(), true); vm.documentResult("plain.json")
-            vm.state.first { !it.busy && it.message != null }
+            awaitState(vm) { !it.busy && it.message != null }
             assertEquals("Backup saved to your chosen document.", vm.state.value.message)
             val plain = harness.documents.file(DocumentRef("plain.json")).readBytes()
             assertTrue(plain.isNotEmpty() && plain[0] == '{'.code.toByte()); assertFalse(String(plain, 0, 4, Charsets.US_ASCII) == "IOUB")
 
             vm.encryption(true); vm.beginBackup("testphrase".toCharArray(), "testphrase".toCharArray(), false); vm.documentResult("secret.ioub")
-            vm.state.first { !it.busy && it.message != null && it.picker == null && harness.documents.file(DocumentRef("secret.ioub")).exists() }
+            awaitState(vm) { !it.busy && it.message != null && it.picker == null && harness.documents.file(DocumentRef("secret.ioub")).exists() }
             assertEquals("IOUB", String(harness.documents.file(DocumentRef("secret.ioub")).readBytes(), 0, 4, Charsets.US_ASCII))
 
             vm.pickExport(); assertEquals("iou-export.zip", vm.state.value.picker!!.name); assertEquals("application/zip", vm.state.value.picker!!.mime)
             vm.documentResult("export.zip")
-            vm.state.first { !it.busy && it.message?.startsWith("Exported") == true }
+            awaitState(vm) { !it.busy && it.message?.startsWith("Exported") == true }
             java.util.zip.ZipFile(harness.documents.file(DocumentRef("export.zip"))).use { assertNotNull(it.getEntry("manifest.json")) }
             vm.end()
         } finally { harness.stop() }
     }
+
+    /** Waits for [condition] in real time (the virtual clock would skip the wait while real I/O runs) so a regression fails instead of hanging. */
+    private suspend fun awaitState(vm: DataManagementViewModel, condition: (DataState) -> Boolean) =
+        withContext(Dispatchers.Default) { withTimeout(10_000) { vm.state.first(condition) } }
 }

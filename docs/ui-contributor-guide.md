@@ -81,7 +81,7 @@ The core runs the policy and the window flag; you build the lock screen (spec §
 
 ## Route-scoped ViewModels
 
-`IOUApp` keeps its own navigation stack, so each stacked route gets its own `ViewModelStore` (`ui/navigation/RouteStores.kt`) and is composed under `LocalViewModelStoreOwner`. Call `hiltViewModel()` with no key inside a route; the ViewModel is cleared when the route leaves the stack, so a popped form's draft and payment fields are gone on the next visit. A nested form reaches its parent's ViewModel with `hiltViewModel(viewModelStoreOwner = routeStores.owner(parentRoute, activity))`. Root-level and tab ViewModels (Overview, settings, security, Advanced, browse session, tab lists) stay activity-scoped. Rotation keeps open routes; a ledger generation change empties the stack and clears all of them.
+`IOUApp` keeps its own navigation stack, so each stacked route gets its own `ViewModelStore` (`ui/navigation/RouteStores.kt`) and is composed under `LocalViewModelStoreOwner`. Call `hiltViewModel()` with no key inside a route; the ViewModel is cleared when the route leaves the stack, so a popped form's draft and payment fields are gone on the next visit. A nested form reaches its parent's ViewModel with `hiltViewModel(viewModelStoreOwner = routeStores.owner(parentRoute, activity))`. Root-level and tab ViewModels (Overview, settings, security, Advanced, browse session, tab lists) stay activity-scoped. Rotation keeps open routes; a ledger generation change empties the stack and clears all of them. Route ViewModels must not use `SavedStateHandle`: the route owner reuses the activity's creation extras, so a handle would be shared per class and outlive the route.
 
 ## Changing the contract
 

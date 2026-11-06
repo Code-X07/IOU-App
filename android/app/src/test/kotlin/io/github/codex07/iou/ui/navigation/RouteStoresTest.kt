@@ -42,6 +42,7 @@ class RouteStoresTest {
         assertTrue(b.cleared)
         assertFalse(a.cleared)
         assertSame(a, stores.probe("form-entry:a:expense"))
+        assertSame(stores.owner("form-entry:a:expense", activity), stores.owner("form-entry:a:expense", activity))
     }
 
     @Test fun reopenedRouteGetsAFreshViewModel() {

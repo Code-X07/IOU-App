@@ -41,9 +41,10 @@ fun IouRoot(security: SecurityViewModel, requestAuthentication: (AuthPurpose) ->
                     Column(Modifier.fillMaxSize().safeDrawingPadding().padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(IouIcons.Shield, null, Modifier.size(52.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("IOU", style = MaterialTheme.typography.headlineLarge)
-                        if (protection.loading) CircularProgressIndicator()
+                        if (protection.unavailable) Unit
+                        else if (protection.loading) CircularProgressIndicator()
                         else if (!protection.foreground) Text("Private financial records")
-                        else if (!protection.unavailable) {
+                        else {
                             Text("Unlock to view your financial records")
                             Button(onClick = { requestAuthentication(AuthPurpose.UNLOCK) }, enabled = protection.request == null && !protection.busy) { Text("Unlock") }
                         }
