@@ -13,5 +13,7 @@
 | [0009](0009-alias-edit-tokens-for-unmerge.md) | Each merged alias exposes its own edit token for unmerge | accepted | 2026-11-02 |
 | [0010](0010-shared-store-with-room-write-through.md) | Both flavors run on one in-memory store; Room is its write-through journal | accepted | 2026-11-04 |
 | [0011](0011-device-settings-json-file.md) | Device-local settings live in a JSON file, not DataStore | accepted | 2026-11-04 |
+| [0012](0012-expense-payers-and-contribution-effects.md) | Expenses have payer rows; effects come from per-person contributions | accepted | 2026-11-07 |
+| [0013](0013-recurring-expenses-as-ledger-records.md) | Recurring expenses are ledger records, posted in the foreground and by a background worker | accepted | 2026-11-07 |
 
 Full design: [MVP design spec](../superpowers/specs/2026-11-02-iou-mvp-design.md). For a new ADR, copy [template.md](template.md).
