@@ -926,13 +926,49 @@ with:
 
 The seed only adds an entry to an existing group, so the counts other tests take from the seed (overview rows, people, groups) don't change; tests that count entries derive the number from the state.
 
+One test does depend on every seeded expense having one payer: Part 1's version-1 backup test in `test/.../data/BackupFormatTest.kt` turns the seeded backup into a version-1 document, and a version-1 backup can't hold a two-payer expense. Leave that expense and its rows out of the version-1 document. Replace the whole test `a version-1 backup reads as the same ledger with one payer per expense` with (add the import `io.github.codex07.iou.ledger.model.EntryId`):
+
+```kotlin
+    @Test
+    fun `a version-1 backup reads as the same ledger with one payer per expense`() {
+        val written = format.write(rows, "0.1.0", T0, null)
+        val content = (format.read(written, null) as LedgerResult.Ok).value.content
+        val document = Json.parseToJsonElement(written.toString(Charsets.UTF_8)).jsonObject
+        val v2Rows = document.getValue("rows").jsonObject
+        val payerRows = v2Rows.getValue("payers").jsonArray.map { it.jsonObject }
+        // A version-1 backup holds single-payer expenses only: the seed's two-payer expense and its rows stay out.
+        val multi = payerRows.groupBy { it.getValue("expenseId") }.filterValues { it.size > 1 }.keys
+        val payerOf = payerRows.associate { it.getValue("expenseId") to it.getValue("personId") }
+        fun JsonObject.kept(key: String) = getValue(key) !in multi
+        fun table(name: String, key: String) = JsonArray(v2Rows.getValue(name).jsonArray.map { it.jsonObject }.filter { it.kept(key) })
+        val v1Expenses = v2Rows.getValue("expenses").jsonArray.map { it.jsonObject }.filter { it.kept("id") }.map { expense ->
+            JsonObject(expense - "payerSplit" + ("payerPersonId" to payerOf.getValue(expense.getValue("id"))))
+        }
+        val v1Rows = v2Rows - "payers" + mapOf(
+            "expenses" to JsonArray(v1Expenses),
+            "shares" to table("shares", "expenseId"),
+            "revisions" to table("revisions", "entityId"),
+        )
+        val v1 = JsonObject(document + mapOf("schemaVersion" to JsonPrimitive(1), "rows" to JsonObject(v1Rows)))
+
+        val read = format.read(v1.toString().toByteArray(), null)
+
+        val left = multi.map { EntryId(it.jsonPrimitive.content) }.toSet()
+        left.size shouldBe 1
+        (read as LedgerResult.Ok).value.content.state shouldBe content.state.copy(expenses = content.state.expenses - left)
+        read.value.rows.payers.size shouldBe content.state.expenses.size - 1
+    }
+```
+
+It needs the import `kotlinx.serialization.json.jsonPrimitive` as well; revision rows name their entity in `entityId` (`RevisionRow`).
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.fake.SeedDataTest" --tests "io.github.codex07.iou.fake.FakeLedgerApiContractTest"`
 Expected: PASS.
 
-Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.data.RealLedgerApiContractTest"`
-Expected: PASS, the same three contract tests against the real flavor.
+Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.data.RealLedgerApiContractTest" --tests "io.github.codex07.iou.data.BackupFormatTest"`
+Expected: PASS, the same three contract tests against the real flavor, and the backup tests with the two-payer seed.
 
 - [ ] **Step 5: Run the full check**
 
