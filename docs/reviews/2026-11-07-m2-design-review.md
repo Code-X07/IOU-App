@@ -21,3 +21,15 @@ All four were verified against the spec text and fixed in the spec and ADR-0013.
 | 2 | Strict order stays. Auto-post runs only while the **next** occurrence is on or after `autoPostFrom`; a backlog of older dates blocks auto-post for that schedule (newer dates included) until the user posts or skips through it, and the due notification says so. | §3.2, §5.7 "A backlog stops auto-post", notifications; AC 31–32 |
 | 3 | The handled date is the later of `handledThrough` and the `recurringOn` of every expense posted from the schedule, deleted ones included. Taking an older `handledThrough` therefore can't make a posted date due again. | §5.7 "Handled through", "Deleting a posted expense", §7.4; AC 35 |
 | 4 | One op-level rule: every write after which a schedule auto-posts (not deleted, `autoPost` on, not on hold) when it didn't before sets `autoPostFrom` to today. It covers create, update (switching auto-post on, or editing away the archived group or person), revert, restore, unarchive, import and import undo. `autoPostFrom` became local state: exported, never compared or taken on import. | §3.2, §5.3, §5.7 "On hold", "Auto-post starts", §7.4; AC 31–32 |
+
+## Second round (2026-11-07): issues caused by the fixes
+
+5. **[Medium] Import undo leaves undone occurrences counted as handled** (§5.4, §5.7 "Handled through"). Counting deleted posted expenses kept an occurrence handled after import undo soft-deleted the expense the import had brought: a confirm-first schedule at October, imported with a November expense and progress, then undone at once, skipped November silently.
+6. **[Medium] The import cut-off rule conflicted with the general auto-post transition rule** (§5.7, §7.4). §5.7 reset `autoPostFrom` only on a change into auto-posting, §7.4 on any import of an auto-posting schedule. "Take incoming" of an older `handledThrough` on an already auto-posting schedule gave two outcomes: November re-posted at once, or waiting for confirmation.
+
+### Resolution
+
+| Finding | Fix | Where |
+| --- | --- | --- |
+| 5 | The handled date counts only **non-deleted** posted expenses. Deleting a posted expense through the `api` raises `handledThrough` to its `recurringOn` in the same write, so a user's delete still never makes the date due again. Import undo deletes its expenses outside that path and reverts the schedule's `handledThrough`, so the pre-import due list comes back exactly. | §5.4, §5.7 "Handled through", "Deleting a posted expense"; AC 35 |
+| 6 | Two changes remove the ambiguity. (a) Import only moves `handledThrough` forward (the later of local and incoming, independent of the row's choice), so an import can't rewind a schedule. (b) One cut-off rule for every path: every write to a schedule except posting and skipping sets `autoPostFrom` to today when the schedule auto-posts afterwards, whether or not it did before. | §3.2, §5.3, §5.7 "The cut-off rule", §7.4; AC 35 |
