@@ -15,6 +15,8 @@ Two new features are coming in M2: expenses paid by several people, and recurrin
 
 - New `RecurringApi`: list schedules (filter for "on hold"), schedule detail, save a `RecurringDraft` (expense template + repeat every N weeks/months/years, start, optional end, auto-post on/off), delete/restore, the due list, `occurrenceDraft`, `postOccurrence`, `skipOccurrences`.
 - Each schedule either posts by itself or shows due dates to confirm. Due dates are posted or skipped oldest first; posting an out-of-order date gives `OccurrenceNotDue(next)`.
+- Auto-post never posts old dates by itself: dates from before the schedule was created, from a hold, or from before auto-post was switched on wait in the due list, and auto-post for that schedule pauses until they are posted or skipped. Worth a line in the due list ("confirm these to resume auto-posting").
+- Changing a schedule's pattern skips nothing: the next date is the first one of the new pattern after the last handled date. The schedule read model gives the next occurrence; showing it on the edit screen before saving avoids surprises.
 - A schedule whose group or one of its people is archived is "on hold". Please show held schedules on a separate screen, not in the main schedule list.
 - Posted expenses are normal expenses with `recurringId` / `recurringOn`, so you can mark them and link to their schedule.
 - History and revert work through the existing `revertTo` / `draftFromVersion`.
