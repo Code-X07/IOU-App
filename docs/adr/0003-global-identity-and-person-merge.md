@@ -14,6 +14,8 @@ The me person's UUID is generated once at first launch and is the user's permane
 
 *Amended 2026-11-02 after an external review:* the first version kept aliases flat by re-pointing a source's aliases to the target. Unmerging the source then left those aliases attached to the target, so merge → unmerge did not restore balances. The tree model fixes this.
 
+*Amended 2026-11-07 for recurring expenses (spec §5.7, ADR-0013):* a merge or unmerge that takes a schedule off hold (an archived person merged into an active one, or an active person split off an archived one) also writes that schedule's resume in the same journal entry, so the dates that passed during the hold wait for confirmation instead of being auto-posted. A resume changes no person, membership or entry, so unmerge still restores the balances, memberships and canonical IDs exactly; a resumed schedule is simply on hold again afterwards.
+
 ## Alternatives Considered
 
 ### Alternative 1: ID mapping/translation layer added in phase 5
