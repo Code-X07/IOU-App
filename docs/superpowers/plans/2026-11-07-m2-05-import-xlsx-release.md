@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **Normalized shape (spec §7.2):** schema 2 tables in order `people, payment_handles, groups, group_members, fx_snapshots, transfers, recurring_expenses, recurring_participants, expenses, expense_shares, expense_payers`. `recurring_participants` has `recurring_id, role, position, person_id, input_value` (`position` counted per role). `expenses` gains `recurring_id, recurring_on` after `note`. A schema-1 file has exactly the schema-1 tables, and its expenses have no schedule link.
-- **Classification (spec §7.4):** by UUID, new / duplicate / conflict; sync columns ignored except the deleted state. Groups own memberships the way people own handles: the same cascades, the same "deleted with / restored with <owner>" preview rows, the same `deletedAt` 1 ns before the owner's for owned rows the file shows deleted apart.
+- **Classification (spec §7.4):** by UUID, new / duplicate / conflict; sync columns ignored except the deleted state. Groups own memberships the way people own handles: the same cascades, the same "deleted with / restored with <owner>" preview rows, the same `deletedAt` 1 ns before the owner's for owned rows the file shows deleted apart. When the import deletes an owner, an owned row already deleted here that the file shows deleted with it (even as a duplicate) gets the owner's new `deletedAt` and is listed "deleted with <owner>"; undo gives it back its own.
 - **Schedules (spec §7.4):** a `recurring_expenses` row and its participants are one unit. `handled_through` is never a choice: the import writes the later of local and incoming, whatever the row's choice (a forced change in the preview); an older incoming value is ignored. `auto_post_from` is never compared or taken: a new schedule gets the import day, an existing one keeps its local value, and the cut-off rule (Part 3's `finalize`) sets it to the import day whenever the import writes a schedule that auto-posts afterwards.
 - **Commit order (spec §7.5 step 6):** creates and updates: people, payment handles, groups, memberships, FX snapshots, schedules, entries; then deletions: entries, schedules, owned rows deleted on their own, then owners with their cascade.
 - **Blame (spec §7.5 step 3):** people, handles, groups and memberships answer first (incoming active entries and schedules left out); entries and schedules answer for the rest. A new row (person, group or schedule) is left out together with the rows that reference it.
@@ -465,11 +465,14 @@ import io.github.codex07.iou.api.ImportRowKey
 import io.github.codex07.iou.ledger.engine.LedgerEngine
 import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.GroupId
+import io.github.codex07.iou.ledger.model.HandleId
 import io.github.codex07.iou.ledger.model.LedgerState
+import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.testutil.ImportBench
 import io.github.codex07.iou.testutil.ME
+import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.TestLedger
 import io.github.codex07.iou.testutil.eur
 import io.kotest.matchers.collections.shouldContain
@@ -569,6 +572,38 @@ class GroupImportTest {
     }
 
     @Test
+    fun `taking a person's deletion moves a handle deleted here earlier into their cascade when the export deleted them together`() = runTest {
+        val x = PersonId("person-x")
+        val handleId = HandleId("handle-x")
+        val handleKey = ImportRowKey(EntityType.PAYMENT_HANDLE, handleId.value)
+        val local = TestLedger().run {
+            me()
+            handle(person("X"), deleted = true, id = handleId.value)
+            state
+        }.let { state ->
+            val handle = state.handles.getValue(handleId)
+            state.with(handle.copy(meta = handle.meta.copy(deletedAt = T0.minusSeconds(3_600))))
+        }
+        val source = TestLedger().run {
+            me()
+            handle(person("X", deleted = true), deleted = true, id = handleId.value)
+            state
+        }
+        val bench = ImportBench(local)
+        val take = ImportChoices(takeIncoming = setOf(ImportRowKey(EntityType.PERSON, x.value)))
+        val preview = bench.preview(source)
+
+        bench.io.applyChoices(preview, take).rows.single { it.key == handleKey }.choice shouldBe ImportRowChoice.DeletedWith("X")
+        bench.commit(preview, take)
+
+        val person = bench.state.people.getValue(x)
+        person.meta.deletedAt shouldBe bench.now
+        bench.state.handles.getValue(handleId).meta.deletedAt shouldBe bench.now
+        with(bench) { people.restorePerson(x, token(person)).ok() }
+        bench.state.handles.getValue(handleId).isDeleted shouldBe false
+    }
+
+    @Test
     fun `a group entry naming someone without a membership is an invalid row`() = runTest {
         val source = TestLedger().run {
             me()
@@ -587,7 +622,7 @@ class GroupImportTest {
 }
 ```
 
-The membership rows of the third test are conflicts of their own (the file shows them deleted with the group), so they are listed before the choice too; taking the group turns their choice into "deleted with Flat". The revision reasons come from the group's delete cascade: `reasonConflict` of the group, then " with Flat".
+The membership rows of the third test are conflicts of their own (the file shows them deleted with the group), so they are listed before the choice too; taking the group turns their choice into "deleted with Flat". The revision reasons come from the group's delete cascade: `reasonConflict` of the group, then " with Flat". In the fourth test the handle was deleted an hour before its person here, but the export shows both deleted at once: the handle is a duplicate (only its `deletedAt` differs, and sync columns are not compared), yet deleting the person moves it into the person's cascade (`joinsCascade`, `Writer.regroup`), so restoring the person brings it back as in the source.
 
 In `test/.../io/ImportReaderTest.kt`, replace the test `an export decodes to the same records, except group rows until M2` (from its `@Test` line through its closing brace) with:
 
@@ -1067,7 +1102,7 @@ class ImportAnalysis private constructor(
     val invalid: List<InvalidRow>,
     private val duplicates: Int,
     private val mappedKeys: Set<ImportRowKey>,
-    /** When the file shows each of its owners (people and groups) deleted, duplicates of local rows included. */
+    /** When the file shows each owner and owned row (people, handles, groups, memberships) deleted, duplicates included. */
     private val sourceDeletedAt: Map<ImportRowKey, Instant?>,
 ) {
     private val owners: List<Classified<*>> get() = people + groups
@@ -1135,7 +1170,7 @@ class ImportAnalysis private constructor(
             val name = ownerName(owner.key)
             val local = Owners.owned(state, owner.key)
             val touched = when (action) {
-                OwnerAction.DELETE -> local.filter { !it.isDeleted }.map { it to ImportRowChoice.DeletedWith(name) }
+                OwnerAction.DELETE -> local.filter { !it.isDeleted || joinsCascade(it, owner.key) }.map { it to ImportRowChoice.DeletedWith(name) }
                 OwnerAction.RESTORE -> local.filter { it.meta.deletedAt == owner.local!!.meta.deletedAt }.map { it to ImportRowChoice.RestoredWith(name) }
                 else -> emptyList()
             }
@@ -1285,6 +1320,13 @@ class ImportAnalysis private constructor(
             Owners.owned(writer.current, row.key).filter { !it.isDeleted }.forEach {
                 writer.delete(it.rowKey, now, "$reason with ${ownerName(row.key)}")
             }
+            // Owned rows deleted here earlier, on their own, that the file shows deleted with the owner join its
+            // cascade, so restoring the owner brings back what went together in the source.
+            if (action == OwnerAction.DELETE) {
+                Owners.owned(state, row.key).filter { joinsCascade(it, row.key) }.forEach {
+                    writer.regroup(it.rowKey, now, "$reason with ${ownerName(row.key)}")
+                }
+            }
         }
         return PlanResult(writer.changes, snapshots, writer.current.applyingSnapshots(snapshots))
     }
@@ -1303,6 +1345,16 @@ class ImportAnalysis private constructor(
      */
     private fun deletedApart(row: Classified<*>) =
         row.record.isDeleted && row.record.meta.deletedAt != sourceDeletedAt[Owners.ownerOf(row.record)]
+
+    /**
+     * An owned row already deleted locally that the file shows deleted together with its owner [ownerKey] (same
+     * `deletedAt` in the file, even where the row duplicates the local one). When the import deletes the owner, the
+     * row gets the owner's new `deletedAt` (spec §7.4); the preview lists it as "deleted with <owner>".
+     */
+    private fun joinsCascade(owned: LedgerEntity, ownerKey: ImportRowKey): Boolean {
+        val ownerAt = sourceDeletedAt[ownerKey] ?: return false
+        return owned.isDeleted && sourceDeletedAt[owned.rowKey] == ownerAt
+    }
 
     private fun mapping(row: Classified<*>) = if (mappedFrom != null && row.key in mappedKeys) ", source identity ${mappedFrom.value} mapped to me" else ""
 
@@ -1346,6 +1398,12 @@ class ImportAnalysis private constructor(
         fun restore(key: ImportRowKey, reason: String) {
             val entity = find(key)
             if (entity.isDeleted) write(entity.withMeta(next(entity, null)), RevisionAction.RESTORED, reason)
+        }
+
+        /** Moves an already deleted row's `deletedAt` to [at], the `deletedAt` of the owner whose cascade it joins. */
+        fun regroup(key: ImportRowKey, at: Instant, reason: String) {
+            val entity = find(key)
+            if (entity.isDeleted && entity.meta.deletedAt != at) write(entity.withMeta(next(entity, at)), RevisionAction.UPDATED, reason)
         }
     }
 
@@ -1392,7 +1450,8 @@ class ImportAnalysis private constructor(
             val handles = incoming.handles.map { row -> row.mapped { it.copy(personId = mapped(it.personId)) } }
             val groups = incoming.groups
             val members = incoming.members.map { row -> row.mapped { it.copy(personId = mapped(it.personId)) } }
-            val sourceDeletedAt = (people.map { it.record } + groups.map { it.record }).associate { it.rowKey to it.meta.deletedAt }
+            val sourceDeletedAt = (people.map { it.record } + handles.map { it.record } + groups.map { it.record } + members.map { it.record })
+                .associate { it.rowKey to it.meta.deletedAt }
             val transfers = incoming.transfers.map { row -> row.mapped { it.copy(fromPersonId = mapped(it.fromPersonId), toPersonId = mapped(it.toPersonId)) } }
             val expenses = incoming.expenses.map { row ->
                 row.mapped { e ->
@@ -1580,7 +1639,7 @@ with:
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.io.*" --tests "io.github.codex07.iou.data.RealImportTest"`
-Expected: PASS: the four group tests, the updated reader test, and every M1 import test unchanged.
+Expected: PASS: the five group tests, the updated reader test, and every M1 import test unchanged.
 
 Then: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest`
 Expected: PASS. A real-flavor contract test that imports an own export of a ledger with groups now finds its group rows as duplicates instead of invalid rows; if one asserted the old invalid rows, update it to expect none and say so in the report.
@@ -2475,17 +2534,45 @@ class ImportUndoTest {
         bench.state.people.getValue(x).isDeleted shouldBe false
         bench.state.handles.getValue(handleId).isDeleted shouldBe true
     }
+
+    @Test
+    fun `undoing an import that moved an earlier deleted handle into its person's cascade gives the handle its own deletedAt back`() = runTest {
+        val x = PersonId("person-x")
+        val handleId = HandleId("handle-x")
+        val earlier = T0.minusSeconds(3_600)
+        val local = TestLedger().run {
+            me()
+            handle(person("X"), deleted = true, id = handleId.value)
+            state
+        }.let { state ->
+            val handle = state.handles.getValue(handleId)
+            state.with(handle.copy(meta = handle.meta.copy(deletedAt = earlier)))
+        }
+        val source = TestLedger().run {
+            me()
+            handle(person("X", deleted = true), deleted = true, id = handleId.value)
+            state
+        }
+        val bench = ImportBench(local)
+        val batch = bench.import(source, ImportChoices(takeIncoming = setOf(ImportRowKey(EntityType.PERSON, x.value))))
+        bench.state.handles.getValue(handleId).meta.deletedAt shouldBe bench.now
+
+        bench.undo(batch).skipped shouldBe emptyList()
+
+        bench.state.people.getValue(x).isDeleted shouldBe false
+        bench.state.handles.getValue(handleId).meta.deletedAt shouldBe earlier
+    }
 }
 ```
 
-In the last test the handle was deleted an hour before its person. The import restores the person (its cascade takes no handle, since none shares its `deletedAt`) and the handle by its own choice; undo deletes the handle on its own and then the person, each with its own pre-import `deletedAt`, so restoring the person leaves the handle deleted.
+In the fifth test the handle was deleted an hour before its person. The import restores the person (its cascade takes no handle, since none shares its `deletedAt`) and the handle by its own choice; undo deletes the handle on its own and then the person, each with its own pre-import `deletedAt`, so restoring the person leaves the handle deleted. In the last test the export shows the handle deleted together with its person, so the import moved it into the person's cascade; undo restores the person with that cascade but gives the handle back its own pre-import `deletedAt`, so it stays deleted as before the import.
 
-In the last test, deleting Al's expense alone leaves Al at +€100 and deleting the repayment alone at −€100 (rule 4), so neither applies on its own; tried together they bring Al back to 0. The group, its memberships, Al (still named by an active membership) and Bea (named by the new transfer) stay, each with "would break rule 10".
+In the fourth test, deleting Al's expense alone leaves Al at +€100 and deleting the repayment alone at −€100 (rule 4), so neither applies on its own; tried together they bring Al back to 0. The group, its memberships, Al (still named by an active membership) and Bea (named by the new transfer) stay, each with "would break rule 10".
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.io.ImportUndoTest"`
-Expected: FAIL: the M1 undo touches no group, membership or schedule rows (the first three tests find them active), and it has no tied steps (the fourth test finds `e-al` and `t-al` active); it deletes the restored person and handle with the undo time, so the last test finds both at `now`.
+Expected: FAIL: the M1 undo touches no group, membership or schedule rows (the first three tests find them active), and it has no tied steps (the fourth test finds `e-al` and `t-al` active); it deletes the restored person and handle with the undo time, so the fifth test finds both at `now`; and it restores an owner's whole cascade, so the last test finds the handle the import moved into the person's cascade active.
 
 - [ ] **Step 3: Rewrite the undo**
 
@@ -2585,9 +2672,10 @@ object ImportUndo {
                 if (entity.isDeleted) null else change(entity, entity, now)
             } else {
                 val pre = row.pre ?: return null
-                // A row the import restored gets its own pre-import deletedAt back, which keeps it apart from (or
-                // together with) its owner's cascade exactly as before the import (spec §5.2).
-                val deletedAt = if (pre.isDeleted) (entity.meta.deletedAt ?: pre.meta.deletedAt) else null
+                // A row deleted before the import gets its own pre-import deletedAt back, whether the import restored
+                // it or moved it into an owner's cascade, so it is apart from (or together with) its owner's cascade
+                // exactly as before the import (spec §5.2).
+                val deletedAt = if (pre.isDeleted) pre.meta.deletedAt else null
                 change(entity, pre, deletedAt).takeIf { it.entity.meta.deletedAt != entity.meta.deletedAt || pre.withMeta(entity.meta) != entity }
             }
         }
@@ -2658,7 +2746,12 @@ object ImportUndo {
             val deletedAt = if (row.created) now else row.pre?.meta?.deletedAt ?: now
             val changes = when {
                 deleting -> (listOf(owner) + cascade).map { change(it, beforeImport(it), deletedAt) }
-                restoring -> (listOf(owner) + cascade).map { change(it, beforeImport(it), null) }
+                // An owned row deleted before the import that the import moved into this cascade stays deleted, at
+                // its own pre-import deletedAt; the rest come back with the owner.
+                restoring -> (listOf(owner) + cascade).map { entity ->
+                    val pre = touched[entity.rowKey]?.pre?.takeIf { entity !== owner && it.isDeleted }
+                    change(entity, beforeImport(entity), pre?.meta?.deletedAt)
+                }
                 row.created -> emptyList()
                 else -> listOfNotNull(ownUndo(key))
             }
@@ -2741,12 +2834,12 @@ object ImportUndo {
 }
 ```
 
-What changed against M1: rows are keyed by `ImportRowKey` and found through `LedgerState.entity`; schedules get their own step after the entries (a schedule the import created is deleted, one it changed or moved forward gets its pre-import template, `handledThrough` and deleted state back; the cut-off rule in `finalize` then sets `autoPostFrom` where it auto-posts); memberships join handles and groups join people through `Owners`; all steps are built first and the whole set is validated once; and the step-by-step fallback tries tied entry steps together. A row or owner the import restored is deleted again with its own pre-import `deletedAt`, not the undo time (M1 used `now`, which made an owner and a handle deleted apart share a `deletedAt` after the undo, so restoring the owner brought the handle back too); an owner's cascade shares the owner's. `IdentityResolver.hasMembership` and `isActiveMember` take a canonical person, which `resolver.canonical` gives.
+What changed against M1: rows are keyed by `ImportRowKey` and found through `LedgerState.entity`; schedules get their own step after the entries (a schedule the import created is deleted, one it changed or moved forward gets its pre-import template, `handledThrough` and deleted state back; the cut-off rule in `finalize` then sets `autoPostFrom` where it auto-posts); memberships join handles and groups join people through `Owners`; all steps are built first and the whole set is validated once; and the step-by-step fallback tries tied entry steps together. A row or owner the import restored is deleted again with its own pre-import `deletedAt`, not the undo time (M1 used `now`, which made an owner and a handle deleted apart share a `deletedAt` after the undo, so restoring the owner brought the handle back too); an owner's cascade shares the owner's. Restoring an owner the import deleted gives a handle or membership that was already deleted before the import (and that the import moved into the cascade) its pre-import `deletedAt` back instead of restoring it. `IdentityResolver.hasMembership` and `isActiveMember` take a canonical person, which `resolver.canonical` gives.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.io.*" --tests "io.github.codex07.iou.data.RealImportTest"`
-Expected: PASS: five undo tests, and every M1 undo test (`undo of a moved transfer and its old counterparty's deletion puts both back`, `undo of an import that restored a person and their handle with new values puts the old values back`, `undo deletes what the import created and the balances are back`, `undo skips an owner whose owned rows changed since the import`) unchanged.
+Expected: PASS: six undo tests, and every M1 undo test (`undo of a moved transfer and its old counterparty's deletion puts both back`, `undo of an import that restored a person and their handle with new values puts the old values back`, `undo deletes what the import created and the balances are back`, `undo skips an owner whose owned rows changed since the import`) unchanged.
 
 Then: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest`
 Expected: PASS.

@@ -12,8 +12,8 @@
 
 - **Room schema 2 (spec §3.2):** `recurring_expense` (the schedule's columns plus sync columns; `autoPost` as INTEGER) and `recurring_participant` (key `recurringId, role, personId`; `position`, `inputValue`), created by the same hand-written `Migration(1, 2)`, which also gives `expense` the nullable `recurringId` and `recurringOn` columns (index, locked decision 3). Rows are written with `REPLACE`, never `@Upsert`.
 - **Snapshots (spec §5.5):** a schedule snapshot holds its row and its participant rows; the schema-1 upcaster gives expenses `recurringId` / `recurringOn` = null. Backups carry `schedules` and `participants`; a participant row whose schedule is missing makes the backup `CorruptFile`.
-- **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped.
-- **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every change of the due list whatever wrote it (an archive through `PeopleApi` / `GroupsApi`, a merge, a revert), every process `ON_START`, every successful `RecurringApi` write, every app-lock switch (`RecurringNotices.redraw`), and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`). Date-relative reads (`observeDue`, `observeSchedules`, `observeSchedule`) also start over when a pass runs for a new day (`RecurringRunner.today`).
+- **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped, including one put on hold while its rate was being fetched.
+- **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every change of the due list whatever wrote it (an archive through `PeopleApi` / `GroupsApi`, a merge, a revert), every process `ON_START`, every successful `RecurringApi` write, and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`). Date-relative reads (`observeDue`, `observeSchedules`, `observeSchedule`) also start over when a pass runs for a new day (`RecurringRunner.today`). An app-lock switch (`RecurringNotices.redraw`) is not a pass: it runs `RecurringRunner.redraw()`, which reports the current due list at once without posting or waiting for a running pass. A post re-checks under the write lock that the schedule still auto-posts (a hold started during a rate request leaves its token valid) and posts nothing otherwise.
 - **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same.
 - **Permissions:** the real flavor's manifest adds `POST_NOTIFICATIONS`; the UI asks for it (the friend's work, `docs/m2-ui-contract-changes.md`).
 - No `ui/` file changes.
@@ -561,7 +561,7 @@ git commit -m "Store schedules and posted-expense links in Room schema 2, snapsh
 
 **Interfaces:**
 - Consumes: `Recurrence`, `RecurringOps.post` / `save` / `skip`, `LedgerViews.occurrenceDraft` / `dueOccurrences` (Part 3); `EntryOps.requiredEffectCurrency`; `QuoteSource`; `LedgerStore.currentViews` / `write` / `today` / `snapshot` / `ready`; `StoreGroupsApi.setGroupArchived` (a test).
-- Produces: `data class PostedOccurrence(schedule: RecurringId, description: String, occurrence: LocalDate, amount: Money)`; `fun interface RecurringNotices { suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>); val redraw: Flow<Unit> (default empty) }` with `RecurringNotices.None`; `class RecurringRunner(store, quotes, notices = None)` with `run(): List<PostedOccurrence>`, `request()`, `start(scope): Job`, `today: StateFlow<LocalDate>`, `errors: StateFlow<Map<RecurringId, RecurringRunner.Failure>>`, `RecurringRunner.Failure(occurrence, error)`, `RecurringRunner.withErrors(due, failures)`.
+- Produces: `data class PostedOccurrence(schedule: RecurringId, description: String, occurrence: LocalDate, amount: Money)`; `fun interface RecurringNotices { suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>); val redraw: Flow<Unit> (default empty) }` with `RecurringNotices.None`; `class RecurringRunner(store, quotes, notices = None)` with `run(): List<PostedOccurrence>`, `request()`, `redraw()`, `start(scope): Job`, `today: StateFlow<LocalDate>`, `errors: StateFlow<Map<RecurringId, RecurringRunner.Failure>>`, `RecurringRunner.Failure(occurrence, error)`, `RecurringRunner.withErrors(due, failures)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -601,6 +601,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.runCurrent
@@ -734,28 +735,73 @@ class RecurringRunnerTest {
     }
 
     @Test
-    fun `a redraw signal asks for a pass, and every pass moves today`() = runTest {
-        val clock = MovingClock(Instant.parse("2026-11-30T10:00:00Z"))
-        val store = LedgerStore(clock, SequentialIds("run"), DeviceId("device-test"), initial = LedgerContent(TestLedger().apply { me() }.state))
+    fun `a schedule put on hold while its rate is fetched is not posted`() = runTest {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val flat = ledger.group("Flat", currency = EUR, fxMode = FxMode.CONVERT, members = listOf(ME, x))
+        val rent = ledger.schedule(ME, sek(100_000), listOf(ME, x), group = flat, autoPost = true)
+        val store = store(ledger.state, "2026-01-01")
+        val runner = RecurringRunner(
+            store,
+            QuoteSource { date, from, to ->
+                // The user archives the group while the request is out.
+                StoreGroupsApi(store).setGroupArchived(flat, true, EditToken(store.loaded().generation, 1)) shouldBe LedgerResult.Ok(Unit)
+                LedgerResult.Ok(FxQuote(from, to, "0.08765", date, FxSource.ECB_FRANKFURTER, isStale = true))
+            },
+        )
+
+        runner.run() shouldBe emptyList()
+        store.loaded().state.expenses.values.none { it.recurringId == rent } shouldBe true
+        runner.errors.value shouldBe emptyMap()
+    }
+
+    @Test
+    fun `a redraw signal reports the due list at once, while a pass still waits for a rate`() = runTest {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val flat = ledger.group("Flat", currency = EUR, fxMode = FxMode.CONVERT, members = listOf(ME, x))
+        val rent = ledger.schedule(ME, sek(100_000), listOf(ME, x), group = flat, autoPost = true)
+        val store = store(ledger.state, "2026-01-01")
+        val network = CompletableDeferred<Unit>()
         val signals = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-        var passes = 0
+        val reports = mutableListOf<List<RecurringId>>()
         val notices = object : RecurringNotices {
             override suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>) {
-                passes++
+                reports += due.map { it.schedule }
             }
 
             override val redraw: Flow<Unit> = signals
         }
-        val runner = RecurringRunner(store, noRates, notices)
+        val runner = RecurringRunner(
+            store,
+            QuoteSource { _, from, to ->
+                network.await()
+                LedgerResult.Err(LedgerError.RateRequired(from, to))
+            },
+            notices,
+        )
         runner.start(backgroundScope)
         runCurrent()
-        val before = passes
+        reports shouldBe emptyList()
+
+        signals.tryEmit(Unit)
+        runCurrent()
+        reports shouldBe listOf(listOf(rent))
+
+        network.complete(Unit)
+        runCurrent()
+        runner.errors.value.keys shouldBe setOf(rent)
+    }
+
+    @Test
+    fun `every pass moves today`() = runTest {
+        val clock = MovingClock(Instant.parse("2026-11-30T10:00:00Z"))
+        val store = LedgerStore(clock, SequentialIds("run"), DeviceId("device-test"), initial = LedgerContent(TestLedger().apply { me() }.state))
+        val runner = RecurringRunner(store, noRates)
         runner.today.value shouldBe d("2026-11-30")
 
         clock.at = Instant.parse("2026-12-01T10:00:00Z")
-        signals.tryEmit(Unit)
-        runCurrent()
-        passes shouldBe before + 1
+        runner.run()
         runner.today.value shouldBe d("2026-12-01")
     }
 
@@ -770,7 +816,7 @@ class RecurringRunnerTest {
 }
 ```
 
-The runner and `LedgerStore` without a journal never leave the test dispatcher, so `runCurrent()` runs every requested pass to the end.
+The runner and `LedgerStore` without a journal never leave the test dispatcher, so `runCurrent()` runs every requested pass to the end, or to where a test's quote source waits.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -809,7 +855,7 @@ fun interface RecurringNotices {
 
     /**
      * Emits when what is drawn must change although the ledger did not (app lock switched on or off); the runner
-     * asks for a pass on each emission, and that pass redraws.
+     * reports again at once on each emission ([RecurringRunner.redraw]), without a pass.
      */
     val redraw: Flow<Unit> get() = emptyFlow()
 
@@ -834,9 +880,12 @@ import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.OccurrenceDraft
 import io.github.codex07.iou.api.map
 import io.github.codex07.iou.ledger.engine.Recurrence
+import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.ledger.ops.EntryOps
+import io.github.codex07.iou.ledger.ops.Planned
 import io.github.codex07.iou.ledger.ops.RecurringOps
+import io.github.codex07.iou.ledger.ops.WritePlan
 import io.github.codex07.iou.ledger.views.LedgerViews
 import io.github.codex07.iou.ledger.views.dueOccurrences
 import io.github.codex07.iou.ledger.views.occurrenceDraft
@@ -870,6 +919,7 @@ class RecurringRunner(
     data class Failure(val occurrence: LocalDate, val error: LedgerError)
 
     private val pass = Mutex()
+    private val report = Mutex()
     private val failures = MutableStateFlow<Map<RecurringId, Failure>>(emptyMap())
     private val requests = Channel<Unit>(Channel.CONFLATED)
     private val day = MutableStateFlow(store.today())
@@ -896,8 +946,20 @@ class RecurringRunner(
             .sortedBy { it.value }
         for (id in ids) runSchedule(id, today, posted)?.let { failed[id] = it }
         failures.value = failed
-        notices.afterRun(withErrors(store.currentViews().dueOccurrences(today), failed), posted)
+        report.withLock { notices.afterRun(withErrors(store.currentViews().dueOccurrences(today), failed), posted) }
         posted
+    }
+
+    /**
+     * Reports the current due list, with the last failures, at once: no posting, and no waiting for a pass, which can
+     * sit on rate requests. Used for [RecurringNotices.redraw], so an app-lock switch redacts within moments (spec
+     * §5.7). Reports never overlap; a pass already running reports again when it ends.
+     */
+    suspend fun redraw() {
+        if (store.currentViews().state.meOrNull == null) return
+        report.withLock {
+            notices.afterRun(withErrors(store.currentViews().dueOccurrences(store.today()), failures.value), emptyList())
+        }
     }
 
     /** Asks for a pass soon; requests made while one is waiting fold into it. Needs [start] to have run. */
@@ -909,8 +971,8 @@ class RecurringRunner(
      * Runs requested passes in [scope], and requests one for every new ledger generation (the start-up load, a restore,
      * an undo of a restore), every change of the import batches (an import, an import undo), every change of the due
      * list, whatever wrote it (an archive or unarchive through `PeopleApi` / `GroupsApi`, a merge, a revert, a post or
-     * skip), and every [RecurringNotices.redraw]. A pass that posts changes the due list and so is followed by one
-     * more, which finds nothing left to post.
+     * skip). Every [RecurringNotices.redraw] runs [redraw] instead of a pass. A pass that posts changes the due list
+     * and so is followed by one more, which finds nothing left to post.
      */
     fun start(scope: CoroutineScope): Job = scope.launch {
         launch {
@@ -925,7 +987,17 @@ class RecurringRunner(
             }
         }
         launch { store.ready.map { it.dueOccurrences(store.today()) }.distinctUntilChanged().collect { request() } }
-        launch { notices.redraw.collect { request() } }
+        launch {
+            notices.redraw.collect {
+                try {
+                    redraw()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Drawing failed (e.g. the notified file can't be written); the next pass reports again.
+                }
+            }
+        }
         store.snapshot.map { it.generation to it.importBatches }.distinctUntilChanged().collect { request() }
     }
 
@@ -945,8 +1017,17 @@ class RecurringRunner(
                 is LedgerResult.Ok -> result.value
                 is LedgerResult.Err -> return Failure(next, result.error)
             }
-            when (val result = store.write { RecurringOps.post(it, id, prepared.occurrence, draft, prepared.token) }) {
-                is LedgerResult.Ok -> posted += PostedOccurrence(id, schedule.description, prepared.occurrence, draft.total)
+            val result = store.write<EntryId?> { ctx ->
+                // A hold can start while the rate is fetched and leaves the schedule's version alone, so the token
+                // still matches: check again under the write lock, and post nothing when it no longer auto-posts.
+                val live = ctx.state.schedules[id]
+                if (live == null || !Recurrence.autoPosts(live, ctx.state)) LedgerResult.Ok(Planned(null, WritePlan.Empty))
+                else RecurringOps.post(ctx, id, prepared.occurrence, draft, prepared.token)
+            }
+            when (result) {
+                is LedgerResult.Ok -> if (result.value == null) return null else {
+                    posted += PostedOccurrence(id, schedule.description, prepared.occurrence, draft.total)
+                }
                 is LedgerResult.Err -> return Failure(next, result.error)
             }
         }
@@ -975,7 +1056,7 @@ A lost race shows as `StaleVersion`; the other writer's post moved the schedule 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.store.RecurringRunnerTest"`
-Expected: PASS, 7 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2009,9 +2090,9 @@ import kotlinx.coroutines.withContext
 
 /**
  * The real flavor's notifications (spec §5.7): "due" per schedule, one "posted" summary per pass, redacted while app
- * lock is on ([settings]). Switching app lock on or off asks for a pass ([redraw]), which redraws the due
- * notifications silently and, when it goes on, removes a detailed posted summary. Without the notification permission
- * nothing is shown and nothing new is recorded, so the notifications appear once it is granted.
+ * lock is on ([settings]). Switching app lock on or off makes the runner report at once ([redraw]), which redraws
+ * the due notifications silently and, when it goes on, removes a detailed posted summary. Without the notification
+ * permission nothing is shown and nothing new is recorded, so the notifications appear once it is granted.
  */
 class AndroidRecurringNotices(
     private val context: Context,
