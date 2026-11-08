@@ -2546,14 +2546,16 @@ fun LedgerViews.scheduleSummary(schedule: RecurringExpense, today: LocalDate): S
 fun LedgerViews.schedule(id: RecurringId, today: LocalDate): ScheduleDetail? {
     val schedule = state.schedules[id] ?: return null
     val summary = scheduleSummary(schedule, today)
+    val due = dueDates(schedule, today)
     return ScheduleDetail(
         generation = generation,
         summary = summary,
         token = token(schedule),
         editDraft = scheduleDraftOf(schedule),
         handledThrough = Recurrence.handledDate(schedule, state),
-        due = dueDates(schedule, today),
-        confirmToResume = confirmToResume(schedule, summary.next),
+        due = due,
+        // From the due dates, as in the due list: a held or deleted schedule has none, so it never asks to confirm.
+        confirmToResume = confirmToResume(schedule, due.firstOrNull()),
         posted = state.expenses.values
             .filter { it.recurringId == id && !it.isDeleted }
             .sortedWith(compareByDescending<Expense> { it.occurredOn }.thenByDescending { it.meta.createdAt }.thenByDescending { it.id.value })

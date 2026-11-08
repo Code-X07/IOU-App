@@ -142,4 +142,25 @@ class ScheduleViewsTest {
 
         h.views().draftFromVersion(EntityRef(EntityType.RECURRING_EXPENSE, id.value), 1).ok() shouldBe VersionDraft.OfSchedule(draft)
     }
+
+    @Test
+    fun `a held or deleted schedule with a backlog does not ask to confirm older dates`() {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val bea = ledger.person("Bea", archived = true)
+        val start = d("2026-03-01")
+        val from = d("2026-04-10")
+        val active = ledger.schedule(ME, eur(1_000), listOf(ME, x), startOn = start, autoPost = true, autoPostFrom = from)
+        val held = ledger.schedule(ME, eur(1_000), listOf(ME, bea), startOn = start, autoPost = true, autoPostFrom = from)
+        val deleted = ledger.schedule(ME, eur(1_000), listOf(ME, x), startOn = start, autoPost = true, autoPostFrom = from, deleted = true)
+        val views = OpsHarness(ledger.state).views()
+        val today = d("2026-04-20")
+
+        views.schedule(active, today)!!.confirmToResume shouldBe true
+        for (id in listOf(held, deleted)) {
+            val detail = views.schedule(id, today)!!
+            detail.due shouldBe emptyList()
+            detail.confirmToResume shouldBe false
+        }
+    }
 }
