@@ -55,3 +55,17 @@ Two findings, both real.
 | --- | --- | --- |
 | 1 | `writeOwned`'s CONFLICT branch gains the case of an owner kept deleted. The owned row (deleted here, since its owner is) gets the owner's local `deletedAt` through `Writer.regroup`, unless the file shows it deleted apart. In that case it stays apart, or moves 1 ns before the owner if it was deleted with the owner here. Import undo already gives such a row its pre-import `deletedAt` back (`ownUndo`, round 2). Test: a new `GroupImportTest` case where the person is kept deleted and the export shows the handle active; the preview, the shared `deletedAt` and the restore are all checked. | Plan Part 5 Task 1, Global Constraints |
 | 2 | Without me, `run()` clears the failures and reports an empty due list with no posts, and `redraw()` reports an empty due list. The notifier then cancels every notification it recorded. Test: a ledger without me reports an empty list from both. | Plan Part 4 Task 2, Global Constraints; spec §5.7 "a restore re-syncs all of them" |
+
+# M2 plan review, round 4 (2026-11-08)
+
+One finding, real.
+
+## Findings
+
+1. **[Medium] Duplicates skip the cascade grouping under an owner kept deleted** (Part 5, `ImportAnalysis.plan`). `classify` drops rows whose business fields and deleted state match, because `deletedAt` is never compared. The round-3 handling for an owner kept deleted therefore reached only conflicts. Example: locally a person and their handle were deleted together; the export has both deleted, with the handle deleted first; the import leaves the person deleted. The handle kept the person's `deletedAt`, so restoring the person brought it back. This contradicts §7.4.
+
+## Resolution (2026-11-08)
+
+| Finding | Fix | Where |
+| --- | --- | --- |
+| 1 | The kept-owner rule moves into a local `groupUnderKeptOwner`, which the CONFLICT branch now calls. After the owned rows are written, the plan also walks every owner in the file that the import leaves deleted here (`OwnerAction.NONE`, deleted locally). For each local owned row that the file contains but that isn't a classified row, it applies the same rule from the file's `deletedAt` values. Duplicates are still not shown in the preview, since their visible state doesn't change. Undo already gives such a row its own pre-import `deletedAt` back (`ownUndo`). Test: a new `GroupImportTest` case where both rows are duplicates and the export shows the handle deleted apart; the handle ends 1 ns before the person, and restoring the person leaves it deleted. | Plan Part 5 Task 1, Global Constraints; spec §7.4 "The owner ends deleted" |
