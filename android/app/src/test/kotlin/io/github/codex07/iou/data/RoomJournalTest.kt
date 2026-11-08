@@ -35,8 +35,6 @@ import io.github.codex07.iou.testutil.eur
 import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.TestDatabases
 import io.github.codex07.iou.testutil.TestLedger
-import io.github.codex07.iou.testutil.D0
-import io.github.codex07.iou.testutil.eur
 import io.kotest.assertions.throwables.shouldThrowAny
 import io.kotest.matchers.shouldBe
 import java.time.Clock

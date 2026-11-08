@@ -8,6 +8,7 @@ import io.github.codex07.iou.ledger.rules.LedgerValidator
 import io.github.codex07.iou.ledger.rules.WriteOp
 import io.github.codex07.iou.store.LedgerContent
 import java.time.Instant
+import java.time.LocalDate
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -80,6 +81,14 @@ class BackupFormat(
             require(document.rows.payers.all { it.expenseId in expenseIds }) { "Payer references a missing expense" }
             val scheduleIds = document.rows.schedules.map { it.id }.toSet()
             require(document.rows.participants.all { it.recurringId in scheduleIds }) { "Participant references a missing schedule" }
+            // The rules skip deleted schedules, but their dates are still computed (history, details), and
+            // `Recurrence` requires a valid interval.
+            for (schedule in document.rows.schedules) {
+                require(schedule.interval in 1..99) { "Schedule ${schedule.id} has interval ${schedule.interval}" }
+                require(schedule.endOn == null || LocalDate.parse(schedule.endOn) >= LocalDate.parse(schedule.startOn)) {
+                    "Schedule ${schedule.id} ends before it starts"
+                }
+            }
             // The rate cache isn't ledger data, but `FxService.load` reads it once the restore has committed.
             for (rate in document.rows.rates.map { it.toCachedRate().rate }) {
                 require(FxConverter.validateRate(rate) is LedgerResult.Ok) { "Invalid cached rate $rate" }

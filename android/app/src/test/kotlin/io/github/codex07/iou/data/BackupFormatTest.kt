@@ -12,6 +12,8 @@ import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.SEK
 import io.github.codex07.iou.testutil.SequentialIds
 import io.github.codex07.iou.testutil.T0
+import io.github.codex07.iou.testutil.TestLedger
+import io.github.codex07.iou.testutil.eur
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldStartWith
@@ -182,5 +184,18 @@ class BackupFormatTest {
         val orphan = rows.copy(participants = rows.participants + RecurringParticipantRow("gone", "SHARE", "p-1", 0, null))
 
         format.read(format.write(orphan, "0.1.0", T0, null), null).error()::class shouldBe LedgerError.CorruptFile::class
+    }
+
+    @Test
+    fun `a deleted schedule with an invalid interval or end is rejected`() {
+        val ledger = TestLedger()
+        val me = ledger.me()
+        val id = ledger.schedule(me, eur(1_000), listOf(me), deleted = true)
+        val row = ledger.state.schedules.getValue(id).toRow()
+        for (bad in listOf(row.copy(interval = 0), row.copy(endOn = "2025-01-01"))) {
+            val backup = rows.copy(schedules = rows.schedules + bad)
+
+            format.read(format.write(backup, "0.1.0", T0, null), null).error()::class shouldBe LedgerError.CorruptFile::class
+        }
     }
 }
