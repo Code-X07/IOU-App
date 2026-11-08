@@ -2677,7 +2677,7 @@ class ImportUndoTest {
     fun `when the whole undo breaks a rule, entries tied by a removed member still go back together`() = runTest {
         val bench = ImportBench(empty())
         val batch = bench.import(trip())
-        // A transfer added after the import keeps the group and Bea alive: deleting either would break rule 10.
+        // A transfer added after the import keeps the group and Bea alive: deleting the group would break rules 3 and 10, deleting Bea rule 10.
         with(bench) {
             ledger.saveTransfer(TransferDraft(ME, PersonId("person-bea"), eur(500), groupId = trip, occurredOn = D0), SaveMode.Create(basis())).ok()
         }
