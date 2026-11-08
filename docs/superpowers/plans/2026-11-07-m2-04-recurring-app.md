@@ -14,7 +14,7 @@
 - **Snapshots (spec §5.5):** a schedule snapshot holds its row and its participant rows; the schema-1 upcaster gives expenses `recurringId` / `recurringOn` = null. Backups carry `schedules` and `participants`; a participant row whose schedule is missing makes the backup `CorruptFile`.
 - **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped, including one put on hold while its rate was being fetched. A ledger without me (before setup, or after undoing a restore onto a fresh install) posts nothing, and the pass and `redraw()` report an empty due list, which clears the notifications of a discarded ledger.
 - **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every change of the due list whatever wrote it (an archive through `PeopleApi` / `GroupsApi`, a merge, a revert), every process `ON_START`, every successful `RecurringApi` write, and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`). Date-relative reads (`observeDue`, `observeSchedules`, `observeSchedule`) also start over when a pass runs for a new day (`RecurringRunner.today`). An app-lock switch (`RecurringNotices.redraw`) is not a pass: it runs `RecurringRunner.redraw()`, which reports the current due list at once without posting or waiting for a running pass. A post re-checks under the write lock that the schedule still auto-posts (a hold started during a rate request leaves its token valid) and posts nothing otherwise.
-- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts, and when the group shrinks to one schedule the summary is removed (Android removes its children with it) and the schedule left is redrawn silently; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same; while the permission is missing or a channel is blocked nothing is recorded as shown, so everything due is drawn again once it can be. A due notification is redrawn silently when only what it shows changes (description, amount, count, app lock), since the record keeps a digest of the drawn text next to the alert key.
+- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts, and when the group shrinks to one schedule the summary is removed (Android removes its children with it) and the schedule left is redrawn silently; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same; while the permission is missing or a channel is blocked nothing is recorded as shown, so everything due is drawn again once it can be. A switch that is turned off and on again between two passes is caught by `NotificationBlockReceiver` (app and channel block-state broadcasts), which clears the due record and asks for a pass. A due notification is redrawn silently when only what it shows changes (description, amount, count, app lock), since the record keeps a digest of the drawn text next to the alert key.
 - **Permissions:** the real flavor's manifest adds `POST_NOTIFICATIONS`; the UI asks for it (the friend's work, `docs/m2-ui-contract-changes.md`).
 - No `ui/` file changes.
 
@@ -2102,6 +2102,11 @@ class RecurringNotifiedFile(private val file: File) {
 
     @Serializable
     private data class Stored(val due: Map<String, String> = emptyMap(), val detailedPosted: Boolean = false)
+
+    companion object {
+        /** The record's file name in `noBackupFilesDir`. */
+        const val NAME = "recurring-notified.json"
+    }
 }
 ```
 
@@ -2241,7 +2246,7 @@ class AndroidRecurringNotices(
         const val EXTRA_OPEN = "iou.open"
         const val OPEN_DUE = "due"
         const val EXTRA_SCHEDULE = "iou.schedule"
-        private const val DUE_CHANNEL = "recurring-due"
+        internal const val DUE_CHANNEL = "recurring-due"
         private const val POSTED_CHANNEL = "recurring-posted"
         private const val DUE_GROUP = "io.github.codex07.iou.DUE"
         private const val GROUP_SUMMARY_TAG = "due-summary"
@@ -2372,6 +2377,46 @@ class RecurringPostWorker(context: Context, params: WorkerParameters) : Coroutin
 }
 ```
 
+Create `real/.../data/NotificationBlockReceiver.kt` (path `android/app/src/real/kotlin/io/github/codex07/iou/data/NotificationBlockReceiver.kt`):
+
+```kotlin
+package io.github.codex07.iou.data
+
+import android.app.NotificationManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import java.io.File
+
+/**
+ * Spec §5.7: Android may remove the due notifications while the app's notifications or the due channel are blocked,
+ * and the user can unblock them again before any runner pass sees the blocked state. Android tells the app about
+ * both changes (API 28+, minSdk is 30), so on either the due part of the record is cleared, and an unblock asks for a
+ * pass, which draws everything due again. The posted summary's flag stays: removing a summary that is gone is harmless.
+ */
+class NotificationBlockReceiver : BroadcastReceiver() {
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == NotificationManager.ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED &&
+            intent.getStringExtra(NotificationManager.EXTRA_NOTIFICATION_CHANNEL_ID) != AndroidRecurringNotices.DUE_CHANNEL
+        ) {
+            return
+        }
+        val file = RecurringNotifiedFile(File(context.noBackupFilesDir, RecurringNotifiedFile.NAME))
+        file.write(file.read().copy(due = emptyMap()))
+        if (!intent.getBooleanExtra(NotificationManager.EXTRA_BLOCKED_STATE, true)) {
+            val pass = OneTimeWorkRequestBuilder<RecurringPostWorker>().build()
+            WorkManager.getInstance(context).enqueueUniqueWork("${RecurringPostWorker.NAME}-now", ExistingWorkPolicy.REPLACE, pass)
+        }
+    }
+}
+```
+
+On Android 13 and later the app-level switch is the `POST_NOTIFICATIONS` permission, and revoking it ends the process. Device check 8 confirms that the unblock broadcast still reaches the receiver after a re-grant. If some Android version does not send it, the gap is only that a due notification stays missing until its schedule's alert key changes; the due list in the app is unaffected. Report that and leave the receiver in.
+
 In `real/.../di/BackendModule.kt`, add the import `io.github.codex07.iou.data.RecurringPostWorker` and replace:
 
 ```kotlin
@@ -2401,6 +2446,33 @@ with:
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 ```
 
+and replace:
+
+```xml
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
+</manifest>
+```
+
+with:
+
+```xml
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
+
+    <application>
+        <!-- Block-state changes of the app's notifications and of its channels (spec §5.7). Exported because the
+             system sends them; a broadcast from anything else only clears the due record and asks for a pass. -->
+        <receiver
+            android:name=".data.NotificationBlockReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.app.action.APP_BLOCK_STATE_CHANGED" />
+                <action android:name="android.app.action.NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
+```
+
 - [ ] **Step 5: Run the tests and the full check**
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.store.RecurringNoticePlannerTest" --tests "io.github.codex07.iou.data.RecurringNotifiedFileTest"`
@@ -2425,6 +2497,7 @@ Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug bu
 5. Deny or revoke the notification permission and run the worker: the date is still posted, nothing is shown.
 6. Tap a due notification: `MainActivity` opens with `iou.open = "due"` (and `iou.schedule` for one schedule); `adb shell dumpsys activity activities | grep iou.open` shows the extra if the UI does not yet handle it.
 7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34). Then post every due occurrence of one of them in the app: its notification goes, and the other schedule's notification is still shown (silently redrawn, without the group).
+8. With a due notification showing, switch the app's notifications off in Android settings and on again without opening the app (on Android 13+ this revokes and re-grants the permission). Within about a minute the due notification is back. Repeat with only the "Recurring expenses due" channel switched off and on.
 
 - [ ] Result recorded:
 ```

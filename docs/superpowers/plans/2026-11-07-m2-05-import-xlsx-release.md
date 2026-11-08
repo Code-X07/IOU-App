@@ -1420,6 +1420,7 @@ class ImportAnalysis private constructor(
         writeOwned(members)
         // Duplicates are not classified rows (business fields and deleted state match, and `deletedAt` is never
         // compared), but under an owner kept deleted the file's `deletedAt` still decides which cascade they are in.
+        // Only owners in the map are visited, so the rows of a rejected (skipped) owner stay as they are.
         val classifiedKeys = rows.map { it.key }.toSet()
         for (ownerKey in sourceDeletedAt.keys.filter { it.type == EntityType.PERSON || it.type == EntityType.GROUP }) {
             if ((ownerActions[ownerKey] ?: OwnerAction.NONE) != OwnerAction.NONE) continue

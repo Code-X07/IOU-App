@@ -105,3 +105,19 @@ Four findings, each verified against the plan code. All four were real and worth
 | 2 | While notifications are disabled, or after a `SecurityException`, nothing is recorded as shown. A blocked due channel records no due notifications; a blocked posted channel records no detailed posted summary. Neither channel draws while blocked. The first pass that can draw again shows everything that is due; this alerts once. | Plan Part 4 Task 4 (notifier and its KDoc), Global Constraints; spec §5.7 "Due" |
 | 3 | `ownUndo`: a row the batch created that is still deleted, in the cascade (same `deletedAt`) of an owner the batch didn't create, moves to the undo time. Test: a new `ImportUndoTest` case where a handle is created deleted under a person kept deleted; after the undo, restoring the person leaves the handle deleted. | Plan Part 5 Task 4, Global Constraints; spec §5.4 "Owner deleted by the import" |
 | 4 | `keptDeletedAt` now keeps the file's `deletedAt` only for kept classified rows and duplicates, owners included. Without its owner's time, an owned row the file shows deleted counts as deleted apart. Test: a new `GroupImportTest` case where the export's person has a blank name and is skipped; the duplicate handle stays in the local person's cascade. | Plan Part 5 Task 1, Global Constraints |
+
+# M2 plan review, round 7 (2026-11-08)
+
+Two findings about round 6's fixes. The first was real. The second was not, though it pointed at a misleading comment.
+
+## Findings
+
+1. **[Medium] Re-granting notifications still fails when no pass sees the off state** (Part 4, `AndroidRecurringNotices.afterRun`). Round 6 cleared the record only when a runner pass found notifications disabled or a channel blocked. If the user switches notifications (or the due channel) off and on again between two passes, Android may remove the notification while the record keeps its key, so the next pass draws nothing.
+2. **[Medium, not reproduced] A rejected owner can still regroup a duplicate owned row** (Part 5, the duplicate pass in `ImportAnalysis.plan`). The finding assumed that the loop visits a rejected owner and then computes `apart` against its missing time. It doesn't: the loop runs over `sourceDeletedAt.keys`, and inside `plan` that map is `keptDeletedAt`, which round 6 filtered to kept and duplicate rows. A rejected owner is therefore never visited, its rows are left as they are, and the test `a skipped invalid person row leaves its handle in the local cascade` matches the code. The round-6 comment "counts as deleted apart" refers to `deletedApart` in the NEW and CONFLICT branches, not to this pass, which made the misreading easy.
+
+## Resolution (2026-11-08)
+
+| Finding | Fix | Where |
+| --- | --- | --- |
+| 1 | New `NotificationBlockReceiver` (real flavor, in the manifest, exported because the system sends the broadcasts) for `APP_BLOCK_STATE_CHANGED` and, for the due channel, `NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED` (API 28+, minSdk 30). On either change it clears the record's due part; on an unblock it enqueues a one-time `RecurringPostWorker` run. `RecurringNotifiedFile.NAME` and `AndroidRecurringNotices.DUE_CHANNEL` (now internal) are shared with the receiver. That the broadcast arrives after an Android 13+ permission re-grant is unverified on paper, so new device check 8 covers it, and the plan says what to do if it doesn't. | Plan Part 4 Task 4 (receiver, manifest, file constant), Global Constraints, manual check 9.8; spec §5.7 "Due" |
+| 2 | No behavior change. A comment on the duplicate pass now says that only owners in the map are visited, so a rejected owner's rows stay as they are. | Plan Part 5 Task 1 |
