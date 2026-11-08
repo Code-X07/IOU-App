@@ -12,8 +12,10 @@ import io.github.codex07.iou.io.LedgerExport
 import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.money.CurrencyCode
+import io.github.codex07.iou.store.DeviceSettingsStore
 import io.github.codex07.iou.store.DocumentStore
 import io.github.codex07.iou.store.LedgerStore
+import io.github.codex07.iou.store.RecurringNotices
 import io.github.codex07.iou.store.RecurringRunner
 import io.github.codex07.iou.store.StoreFxApi
 import io.github.codex07.iou.store.StoreGroupsApi
@@ -63,6 +65,7 @@ class RealBackend(
     elapsed: () -> Duration = { System.nanoTime().nanoseconds },
     zone: () -> ZoneId = { clock.zone },
     rateCache: (DatabaseProvider) -> RateCache = ::RoomRateCache,
+    notices: (DeviceSettingsStore) -> RecurringNotices = { RecurringNotices.None },
 ) {
     val files = DbFiles(databaseDir)
     val databases = LedgerDatabases(files, openDatabase, ids)
@@ -72,7 +75,7 @@ class RealBackend(
     val restores = RestoreProcedure(store, files, databases, fx, ids, restoreHook)
 
     /** Auto-posting (spec §5.7) with rates from the lookup chain; `RecurringTriggers` and the worker drive it. */
-    val runner = RecurringRunner(store, fx)
+    val runner = RecurringRunner(store, fx, notices(device))
 
     /** The app-lock policy; `security.AppSecurity` feeds it the process lifecycle. */
     val lock = TimedLockGate(device, elapsed)
@@ -153,6 +156,9 @@ class RealBackend(
                 appVersion = BuildConfig.VERSION_NAME,
                 elapsed = { SystemClock.elapsedRealtime().milliseconds },
                 zone = { ZoneId.systemDefault() },
+                notices = { device ->
+                    AndroidRecurringNotices(app, RecurringNotifiedFile(File(app.noBackupFilesDir, "recurring-notified.json")), device.settings)
+                },
             )
         }
     }

@@ -8,6 +8,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import io.github.codex07.iou.api.Apis
 import io.github.codex07.iou.data.RateRefreshWorker
+import io.github.codex07.iou.data.RecurringPostWorker
 import io.github.codex07.iou.data.RealBackend
 import io.github.codex07.iou.store.DeviceSettingsStore
 import io.github.codex07.iou.store.RecurringRunner
@@ -22,7 +23,10 @@ object BackendModule {
     @Provides
     @Singleton
     fun backend(@ApplicationContext context: Context): RealBackend =
-        RealBackend.android(context).also { RateRefreshWorker.schedule(context) }
+        RealBackend.android(context).also {
+            RateRefreshWorker.schedule(context)
+            RecurringPostWorker.schedule(context)
+        }
 
     @Provides
     @Singleton

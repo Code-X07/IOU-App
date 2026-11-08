@@ -217,3 +217,17 @@ Open items (not done, or only partly covered):
 - [ ] Compose instrumentation suite (`androidTest`): carried over. This merge relies on JVM tests and the passes above; destination
   disposal, semantics, system pickers and lifecycle ordering still have no automated device test.
 - [ ] Known core follow-up (not a UI defect): the import screen shows the SAF document id instead of the file's display name.
+
+## 9. Recurring expenses on the device (spec §5.7, AC 29 and 34)
+
+Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug build.
+
+1. Create an auto-post schedule whose first date is today, close the app, open it again: the expense is posted once; reopening posts nothing more (AC 29).
+2. Grant notifications. With the app closed, run the worker on demand: `adb shell cmd jobscheduler run -f io.github.codex07.iou <job id>` (find the id with `adb shell dumpsys jobscheduler | grep -A2 io.github.codex07.iou`). An auto-post date that came due is posted and one "Recurring expenses posted" notification appears.
+3. A confirm-first schedule that becomes due shows one "due" notification; running the worker again does not repeat it; posting the date in the app removes it.
+4. Turn app lock on and repeat 2–3: neither notification names a person, an amount or a description. Then, with a detailed due and a detailed posted notification showing (lock off), switch app lock on in the app: the due notification is redrawn without its description or amount and makes no sound, and the posted one is removed.
+5. Deny or revoke the notification permission and run the worker: the date is still posted, nothing is shown.
+6. Tap a due notification: `MainActivity` opens with `iou.open = "due"` (and `iou.schedule` for one schedule); `adb shell dumpsys activity activities | grep iou.open` shows the extra if the UI does not yet handle it.
+7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34). Then post every due occurrence of one of them in the app: its notification goes, and the other schedule's notification is still shown (silently redrawn, without the group).
+
+- [ ] Result recorded:

@@ -10,8 +10,11 @@ class IouApplication : Application() {
 
     @Inject lateinit var security: AppSecurity
 
+    @Inject lateinit var recurring: RecurringTriggers
+
     override fun onCreate() {
         super.onCreate()
         security.install(this)
+        recurring.install()
     }
 }
