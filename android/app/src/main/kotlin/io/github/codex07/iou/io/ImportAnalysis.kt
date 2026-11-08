@@ -449,7 +449,7 @@ class ImportAnalysis private constructor(
 
     companion object {
         private val PREVIEW_BATCH = ImportBatchId("preview")
-        private val PREVIEW_DAY: LocalDate = LocalDate.EPOCH
+        private val PREVIEW_DAY: LocalDate = LocalDate.of(1970, 1, 1) // not LocalDate.EPOCH: API 34, minSdk is 30
         private val NEUTRAL = SyncMeta(Instant.EPOCH, Instant.EPOCH, PersonId(""))
 
         /** Business fields and deleted state equal: the sync columns are ignored (spec §7.4). */
