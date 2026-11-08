@@ -9,6 +9,7 @@ data class LedgerState(
     val transfers: Map<EntryId, Transfer> = emptyMap(),
     val expenses: Map<EntryId, Expense> = emptyMap(),
     val fxSnapshots: Map<FxSnapshotId, FxSnapshot> = emptyMap(),
+    val schedules: Map<RecurringId, RecurringExpense> = emptyMap(),
 ) {
     /** The single me person. Throws if the state is corrupt; validators check that first (rule 15). */
     val me: Person get() = people.values.single { it.isMe }
@@ -26,6 +27,7 @@ data class LedgerState(
         EntityType.GROUP_MEMBER -> members[MembershipId(id)]
         EntityType.TRANSFER -> transfers[EntryId(id)]
         EntityType.EXPENSE -> expenses[EntryId(id)]
+        EntityType.RECURRING_EXPENSE -> schedules[RecurringId(id)]
     }
 
     /** Inserts or replaces [entity] in its table. */
@@ -36,6 +38,7 @@ data class LedgerState(
         is GroupMember -> copy(members = members + (entity.id to entity))
         is Transfer -> copy(transfers = transfers + (entity.id to entity))
         is Expense -> copy(expenses = expenses + (entity.id to entity))
+        is RecurringExpense -> copy(schedules = schedules + (entity.id to entity))
     }
 
     fun with(snapshot: FxSnapshot): LedgerState = copy(fxSnapshots = fxSnapshots + (snapshot.id to snapshot))

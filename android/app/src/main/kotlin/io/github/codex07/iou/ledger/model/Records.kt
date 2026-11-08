@@ -42,11 +42,16 @@ data class ImportBatch(
     val undoneAt: Instant? = null,
 )
 
-/** One row a write creates or changes, already carrying its new sync columns. One revision each. */
+/**
+ * One row a write creates or changes, already carrying its new sync columns. One revision each.
+ * [keepsCutOff] marks a schedule change that only moves `handledThrough` forward (posting, skipping, the raise
+ * when a posted expense is deleted): the cut-off rule leaves its `autoPostFrom` as it is (spec §5.7).
+ */
 data class Change(
     val entity: LedgerEntity,
     val action: RevisionAction,
     val reason: String? = null,
+    val keepsCutOff: Boolean = false,
 )
 
 /** One field of a revision diff or an import conflict; values are display strings. */

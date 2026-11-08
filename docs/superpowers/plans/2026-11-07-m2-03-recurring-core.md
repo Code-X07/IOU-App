@@ -157,7 +157,8 @@ class RecurrenceTest {
         val ledger = TestLedger().apply { me() }
         val x = ledger.person("X")
         val y = ledger.person("Y")
-        val before = ledger.state.schedules.getValue(ledger.schedule(ME, eur(1_000), listOf(ME, x)))
+        val beforeId = ledger.schedule(ME, eur(1_000), listOf(ME, x))
+        val before = ledger.state.schedules.getValue(beforeId)
         val after = before.copy(
             interval = 2,
             handledThrough = d("2026-03-01"),

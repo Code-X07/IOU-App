@@ -12,6 +12,7 @@ import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.Transfer
 
@@ -68,6 +69,9 @@ internal object EditRules {
                 is Person -> checkPerson(before, after, old as Person?, new, ::add)
 
                 is PaymentHandle -> Unit
+
+                // Template edits break no edit rule; posting checks its expense like any other create (spec §5.7).
+                is RecurringExpense -> Unit
             }
         }
         return out

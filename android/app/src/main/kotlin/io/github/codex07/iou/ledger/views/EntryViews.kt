@@ -44,6 +44,7 @@ import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.ledger.model.TransferKind
@@ -179,6 +180,7 @@ fun LedgerViews.subject(ref: EntityRef): String = when (val entity = state.entit
     is GroupMember -> "${rawRef(entity.personId).displayName} in ${groupRef(entity.groupId).name}"
     is Transfer -> "Transfer on ${entity.occurredOn}"
     is Expense -> entity.description
+    is RecurringExpense -> entity.description
     null -> ref.id
 }
 

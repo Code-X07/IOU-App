@@ -23,8 +23,14 @@ enum class PayerSplit {
 
 enum class FxSource { ECB_FRANKFURTER, USER_ENTERED, BANK_ACTUAL }
 
-enum class EntityType { PERSON, PAYMENT_HANDLE, GROUP, GROUP_MEMBER, TRANSFER, EXPENSE }
+enum class EntityType { PERSON, PAYMENT_HANDLE, GROUP, GROUP_MEMBER, TRANSFER, EXPENSE, RECURRING_EXPENSE }
 
 enum class RevisionAction { CREATED, UPDATED, DELETED, RESTORED }
 
 enum class ImportSource { OWN_NORMALIZED_CSV }
+
+/** A schedule's repeat unit (spec §3.2): occurrences are `startOn` plus n × interval of these. */
+enum class RecurrenceUnit { WEEK, MONTH, YEAR }
+
+/** Whether a schedule's template row is a payer or a participant (spec §3.2). */
+enum class ParticipantRole { PAYER, SHARE }

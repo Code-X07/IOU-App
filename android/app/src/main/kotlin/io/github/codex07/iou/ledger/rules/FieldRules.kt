@@ -12,6 +12,7 @@ import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.Transfer
@@ -55,6 +56,7 @@ object FieldRules {
             is PaymentHandle -> listOfNotNull(blank(entity.label, "label"), handleValue(entity))
             is Group -> listOfNotNull(blank(entity.name, "name"))
             is GroupMember -> emptyList()
+            is RecurringExpense -> emptyList() // Task 2
             is Transfer -> listOfNotNull(amount(entity.amount), amount(entity.effectAmount))
             is Expense -> listOfNotNull(
                 blank(entity.description, "description"),

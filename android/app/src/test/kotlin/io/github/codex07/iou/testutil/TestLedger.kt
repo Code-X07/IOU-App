@@ -16,10 +16,15 @@ import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.MembershipId
+import io.github.codex07.iou.ledger.model.ParticipantRole
 import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurrenceUnit
+import io.github.codex07.iou.ledger.model.RecurringExpense
+import io.github.codex07.iou.ledger.model.RecurringId
+import io.github.codex07.iou.ledger.model.RecurringParticipant
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.SyncMeta
 import io.github.codex07.iou.ledger.model.Transfer
@@ -109,9 +114,10 @@ class TestLedger {
         members: List<PersonId> = listOf(ME),
         deleted: Boolean = false,
         id: String = "group-${name.lowercase()}",
+        archived: Boolean = false,
     ): GroupId {
         val groupId = GroupId(id)
-        state = state.with(Group(groupId, name, currency, fxMode, meta = testMeta(deleted)))
+        state = state.with(Group(groupId, name, currency, fxMode, archivedAt = if (archived) T0 else null, meta = testMeta(deleted)))
         members.forEach { member(groupId, it, deleted = deleted) }
         return groupId
     }
@@ -177,6 +183,9 @@ class TestLedger {
         id: String = nextId("expense"),
         payers: List<ExpensePayer>? = null,
         payerSplit: PayerSplit = PayerSplit.EQUAL,
+        occurredOn: LocalDate = D0,
+        recurring: RecurringId? = null,
+        recurringOn: LocalDate? = null,
     ): EntryId {
         val entryId = EntryId(id)
         val exactAsShares = splitType == SplitType.EXACT && inputs.isEmpty() && total == effectTotal
@@ -186,9 +195,38 @@ class TestLedger {
                 payers = payers ?: ExpensePayer.single(payer, effectTotal.amountMinor), description = "Expense $id",
                 total = total, effectTotal = effectTotal, fxSnapshotId = fx, splitType = splitType,
                 shares = shares.map { (person, share) -> ExpenseShare(person, share, if (exactAsShares) share else inputs[person]) },
-                occurredOn = D0, meta = testMeta(deleted),
+                occurredOn = occurredOn, meta = testMeta(deleted), recurringId = recurring, recurringOn = recurringOn,
             ),
         )
         return entryId
+    }
+
+    /** A schedule: [payer] pays (EQUAL), [participants] share (EQUAL); monthly from [startOn] by default. */
+    fun schedule(
+        payer: PersonId,
+        total: Money,
+        participants: List<PersonId>,
+        group: GroupId? = null,
+        unit: RecurrenceUnit = RecurrenceUnit.MONTH,
+        interval: Int = 1,
+        startOn: LocalDate = D0,
+        endOn: LocalDate? = null,
+        handledThrough: LocalDate? = null,
+        autoPost: Boolean = false,
+        autoPostFrom: LocalDate = D0,
+        deleted: Boolean = false,
+        id: String = nextId("schedule"),
+    ): RecurringId {
+        val scheduleId = RecurringId(id)
+        state = state.with(
+            RecurringExpense(
+                id = scheduleId, groupId = group, description = "Schedule $id", total = total, splitType = SplitType.EQUAL,
+                participants = listOf(RecurringParticipant(ParticipantRole.PAYER, payer)) +
+                    participants.map { RecurringParticipant(ParticipantRole.SHARE, it) },
+                unit = unit, interval = interval, startOn = startOn, endOn = endOn, handledThrough = handledThrough,
+                autoPostFrom = autoPostFrom, autoPost = autoPost, meta = testMeta(deleted),
+            ),
+        )
+        return scheduleId
     }
 }

@@ -9,6 +9,7 @@ import java.util.UUID
 @JvmInline value class EntryId(val value: String) { override fun toString(): String = value }
 @JvmInline value class FxSnapshotId(val value: String) { override fun toString(): String = value }
 @JvmInline value class ImportBatchId(val value: String) { override fun toString(): String = value }
+@JvmInline value class RecurringId(val value: String) { override fun toString(): String = value }
 @JvmInline value class RevisionId(val value: String) { override fun toString(): String = value }
 @JvmInline value class DeviceId(val value: String) { override fun toString(): String = value }
 

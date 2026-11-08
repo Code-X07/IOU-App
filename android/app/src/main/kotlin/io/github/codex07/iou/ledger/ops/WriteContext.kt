@@ -7,13 +7,19 @@ import io.github.codex07.iou.ledger.model.LedgerGeneration
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.PersonId
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 
-/** Everything an op may read: the current state, the live generation, the time and an ID source. */
+/**
+ * Everything an op may read: the current state, the live generation, the time, an ID source, and [today], the
+ * user's calendar date (the store passes `LedgerStore.today()`, in the device zone; index locked decision 6).
+ */
 data class WriteContext(
     val state: LedgerState,
     val generation: LedgerGeneration,
     val now: Instant,
     val ids: IdGenerator,
+    val today: LocalDate = now.atZone(ZoneOffset.UTC).toLocalDate(),
 ) {
     val meId: PersonId get() = state.me.id
 }

@@ -163,10 +163,58 @@ data class Expense(
     override val occurredOn: LocalDate,
     override val note: String? = null,
     override val meta: SyncMeta,
+    /** The schedule this expense was posted from (spec §5.7); set exactly when [recurringOn] is. */
+    val recurringId: RecurringId? = null,
+    /** The occurrence date it fills; never changed by an edit or a revert. */
+    val recurringOn: LocalDate? = null,
 ) : Entry {
     override val entityType: EntityType get() = EntityType.EXPENSE
     override val paid: Money get() = total
     override val effect: Money get() = effectTotal
     override val personIds: Set<PersonId> get() = payers.map { it.personId }.toSet() + shares.map { it.personId }
     override fun withMeta(meta: SyncMeta): Expense = copy(meta = meta)
+}
+
+/** One template payer or participant of a schedule (spec §3.2): owned and versioned with it, like a share. */
+data class RecurringParticipant(
+    val role: ParticipantRole,
+    val personId: PersonId,
+    /** As for an [ExpensePayer] (PAYER) or an [ExpenseShare] (SHARE); null for EQUAL. */
+    val inputValue: Long? = null,
+)
+
+/**
+ * A schedule (spec §3.2, §5.7, ADR-0013): an expense template and a repeat pattern. It stores no rate and no
+ * effect amounts. [handledThrough] is the last occurrence posted or skipped; auto-post runs only while the next
+ * occurrence is on or after [autoPostFrom] (the cut-off rule).
+ */
+data class RecurringExpense(
+    val id: RecurringId,
+    val groupId: GroupId? = null,
+    val description: String,
+    val category: Category? = null,
+    val note: String? = null,
+    val total: Money,
+    val payerSplit: PayerSplit = PayerSplit.EQUAL,
+    val splitType: SplitType,
+    /** PAYER rows, then SHARE rows, each in their stored order. */
+    val participants: List<RecurringParticipant>,
+    val unit: RecurrenceUnit,
+    val interval: Int,
+    val startOn: LocalDate,
+    val endOn: LocalDate? = null,
+    val handledThrough: LocalDate? = null,
+    val autoPostFrom: LocalDate,
+    val autoPost: Boolean,
+    override val meta: SyncMeta,
+) : LedgerEntity {
+    override val entityType: EntityType get() = EntityType.RECURRING_EXPENSE
+    override val entityId: String get() = id.value
+    val payerRows: List<RecurringParticipant> get() = participants.filter { it.role == ParticipantRole.PAYER }
+    val shareRows: List<RecurringParticipant> get() = participants.filter { it.role == ParticipantRole.SHARE }
+
+    /** Every person the template references, as stored (not resolved through merges). */
+    val personIds: Set<PersonId> get() = participants.map { it.personId }.toSet()
+
+    override fun withMeta(meta: SyncMeta): RecurringExpense = copy(meta = meta)
 }

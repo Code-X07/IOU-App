@@ -6,9 +6,11 @@ import io.github.codex07.iou.ledger.model.Group
 import io.github.codex07.iou.ledger.model.GroupId
 import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.LedgerEntity
+import io.github.codex07.iou.ledger.model.ParticipantRole
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.money.Money
 
@@ -103,6 +105,8 @@ object RevisionDiff {
                 plain("note", entity.note)
             }
             is Expense -> {
+                plain("schedule", entity.recurringId?.value)
+                plain("recurringOn", entity.recurringOn?.toString())
                 plain("description", entity.description)
                 plain("category", entity.category?.name)
                 plain("total", entity.total.toString())
@@ -126,6 +130,27 @@ object RevisionDiff {
                     val amount = Money(payer.paidMinor, entity.effectTotal.currency).toString()
                     fields["paid[$id]"] = DiffField("paid[$name]", amount, amount)
                     payer.inputValue?.let { fields["paidInput[$id]"] = DiffField("paidInput[$name]", it.toString(), it.toString()) }
+                }
+            }
+            // autoPostFrom is local state (spec §7.4): never diffed or compared.
+            is RecurringExpense -> {
+                plain("description", entity.description)
+                plain("category", entity.category?.name)
+                plain("total", entity.total.toString())
+                plain("payerSplit", entity.payerSplit.name)
+                plain("splitType", entity.splitType.name)
+                group("group", entity.groupId)
+                plain("note", entity.note)
+                plain("unit", entity.unit.name)
+                plain("interval", entity.interval.toString())
+                plain("startOn", entity.startOn.toString())
+                plain("endOn", entity.endOn?.toString())
+                plain("handledThrough", entity.handledThrough?.toString())
+                plain("autoPost", yesNo(entity.autoPost))
+                for (row in entity.participants) {
+                    val key = if (row.role == ParticipantRole.PAYER) "payer" else "participant"
+                    val value = row.inputValue?.toString() ?: "yes"
+                    fields["$key[${row.personId.value}]"] = DiffField("$key[${names.person(row.personId)}]", value, value)
                 }
             }
         }

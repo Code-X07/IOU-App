@@ -10,10 +10,12 @@ import io.github.codex07.iou.ledger.model.LedgerGeneration
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.RevisionId
+import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.ME
 import io.github.codex07.iou.testutil.SequentialIds
 import io.github.codex07.iou.testutil.T0
 import java.time.Instant
+import java.time.LocalDate
 
 /** Applies plans the way the fake and LedgerWriter do: rows replaced, one revision per change. */
 class OpsHarness(initial: LedgerState) {
@@ -24,15 +26,16 @@ class OpsHarness(initial: LedgerState) {
     var lastPlan: WritePlan? = null
         private set
     var now: Instant = T0.plusSeconds(60)
+    var today: LocalDate = D0
     private val ids = SequentialIds("op")
 
     init {
         val entities: List<LedgerEntity> = initial.people.values + initial.handles.values + initial.groups.values +
-            initial.members.values + initial.entries
+            initial.members.values + initial.entries + initial.schedules.values
         entities.forEach { record(it, RevisionAction.CREATED, null) }
     }
 
-    fun ctx(): WriteContext = WriteContext(state, generation, now, ids)
+    fun ctx(): WriteContext = WriteContext(state, generation, now, ids, today)
 
     fun <T> run(op: (WriteContext) -> LedgerResult<Planned<T>>): LedgerResult<T> {
         val result = op(ctx())

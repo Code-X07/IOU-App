@@ -11,6 +11,7 @@ import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.RevisionId
 import io.github.codex07.iou.ledger.model.Transfer
@@ -74,6 +75,8 @@ object SnapshotCodec {
             is GroupMember -> Snapshot(CURRENT_SCHEMA, member = entity.toRow())
             is Transfer -> Snapshot(CURRENT_SCHEMA, transfer = entity.toRow())
             is Expense -> Snapshot(CURRENT_SCHEMA, expense = entity.toRow(), shares = entity.shareRows(), payers = entity.payerRows())
+            // Persisted from M2 Part 4; until then no schedule can reach the real flavor's journal.
+            is RecurringExpense -> throw UnsupportedOperationException("Schedule snapshots are stored from M2 Part 4")
         },
     )
 
