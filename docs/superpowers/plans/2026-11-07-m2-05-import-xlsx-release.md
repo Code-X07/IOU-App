@@ -2686,7 +2686,7 @@ class ImportUndoTest {
 
         val state = bench.state
         listOf("e-al", "t-al", "e-bea").all { state.entry(EntryId(it))!!.isDeleted } shouldBe true
-        result.skipped shouldContain SkippedRow(ImportRowKey(EntityType.GROUP, trip.value), "would break rule 10")
+        result.skipped shouldContain SkippedRow(ImportRowKey(EntityType.GROUP, trip.value), "would break rule 3")
         result.skipped shouldContain SkippedRow(ImportRowKey(EntityType.PERSON, "person-bea"), "would break rule 10")
         state.groups.getValue(trip).isDeleted shouldBe false
         LedgerEngine.compute(state).groupNet(trip, al) shouldBe emptyMap()
@@ -2781,7 +2781,7 @@ class ImportUndoTest {
 
 In the fifth test the handle was deleted an hour before its person. The import restores the person (its cascade takes no handle, since none shares its `deletedAt`) and the handle by its own choice; undo deletes the handle on its own and then the person, each with its own pre-import `deletedAt`, so restoring the person leaves the handle deleted. In the last test the export shows the handle deleted together with its person, so the import moved it into the person's cascade; undo restores the person with that cascade but gives the handle back its own pre-import `deletedAt`, so it stays deleted as before the import. In the seventh test the import created the handle deleted, in the cascade of a person it left deleted; undo can't delete it again, so it moves it to the undo time, out of the person's cascade.
 
-In the fourth test, deleting Al's expense alone leaves Al at +€100 and deleting the repayment alone at −€100 (rule 4), so neither applies on its own; tried together they bring Al back to 0. The group, its memberships, Al (still named by an active membership) and Bea (named by the new transfer) stay, each with "would break rule 10".
+In the fourth test, deleting Al's expense alone leaves Al at +€100 and deleting the repayment alone at −€100 (rule 4), so neither applies on its own; tried together they bring Al back to 0. The group and its memberships stay with "would break rule 3" (the validator reports the lowest broken rule first: the new transfer would have no membership left, and also sit in a deleted group, rule 10); Al (still named by an active membership) and Bea (named by the new transfer) stay with "would break rule 10".
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
