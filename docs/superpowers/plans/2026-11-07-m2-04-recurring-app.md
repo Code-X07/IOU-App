@@ -12,7 +12,7 @@
 
 - **Room schema 2 (spec §3.2):** `recurring_expense` (the schedule's columns plus sync columns; `autoPost` as INTEGER) and `recurring_participant` (key `recurringId, role, personId`; `position`, `inputValue`), created by the same hand-written `Migration(1, 2)`, which also gives `expense` the nullable `recurringId` and `recurringOn` columns (index, locked decision 3). Rows are written with `REPLACE`, never `@Upsert`.
 - **Snapshots (spec §5.5):** a schedule snapshot holds its row and its participant rows; the schema-1 upcaster gives expenses `recurringId` / `recurringOn` = null. Backups carry `schedules` and `participants`; a participant row whose schedule is missing makes the backup `CorruptFile`.
-- **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped, including one put on hold while its rate was being fetched.
+- **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped, including one put on hold while its rate was being fetched. A ledger without me (before setup, or after undoing a restore onto a fresh install) posts nothing, and the pass and `redraw()` report an empty due list, which clears the notifications of a discarded ledger.
 - **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every change of the due list whatever wrote it (an archive through `PeopleApi` / `GroupsApi`, a merge, a revert), every process `ON_START`, every successful `RecurringApi` write, and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`). Date-relative reads (`observeDue`, `observeSchedules`, `observeSchedule`) also start over when a pass runs for a new day (`RecurringRunner.today`). An app-lock switch (`RecurringNotices.redraw`) is not a pass: it runs `RecurringRunner.redraw()`, which reports the current due list at once without posting or waiting for a running pass. A post re-checks under the write lock that the schedule still auto-posts (a hold started during a rate request leaves its token valid) and posts nothing otherwise.
 - **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same.
 - **Permissions:** the real flavor's manifest adds `POST_NOTIFICATIONS`; the UI asks for it (the friend's work, `docs/m2-ui-contract-changes.md`).
@@ -794,6 +794,17 @@ class RecurringRunnerTest {
     }
 
     @Test
+    fun `a ledger without me, as after undoing a restore onto a fresh install, reports an empty due list`() = runTest {
+        val reported = mutableListOf<Pair<List<DueOccurrence>, List<PostedOccurrence>>>()
+        val runner = RecurringRunner(store(LedgerState(), "2026-01-01"), noRates, RecurringNotices { due, posted -> reported += due to posted })
+
+        runner.run() shouldBe emptyList()
+        runner.redraw()
+
+        reported shouldBe List(2) { emptyList<DueOccurrence>() to emptyList<PostedOccurrence>() }
+    }
+
+    @Test
     fun `every pass moves today`() = runTest {
         val clock = MovingClock(Instant.parse("2026-11-30T10:00:00Z"))
         val store = LedgerStore(clock, SequentialIds("run"), DeviceId("device-test"), initial = LedgerContent(TestLedger().apply { me() }.state))
@@ -932,10 +943,18 @@ class RecurringRunner(
      */
     val today: StateFlow<LocalDate> = day.asStateFlow()
 
-    /** One pass; waits for the start-up load. Returns what it posted. Passes never overlap. */
+    /**
+     * One pass; waits for the start-up load. Returns what it posted. Passes never overlap. A ledger without me (before
+     * setup, or after undoing a restore onto a fresh install) posts nothing but still reports an empty due list, so
+     * notifications of a discarded ledger go away (spec §5.7).
+     */
     suspend fun run(): List<PostedOccurrence> = pass.withLock {
         val start = store.currentViews()
-        if (start.state.meOrNull == null) return@withLock emptyList()
+        if (start.state.meOrNull == null) {
+            failures.value = emptyMap()
+            report.withLock { notices.afterRun(emptyList(), emptyList()) }
+            return@withLock emptyList()
+        }
         val today = store.today()
         day.value = today
         val posted = mutableListOf<PostedOccurrence>()
@@ -956,9 +975,10 @@ class RecurringRunner(
      * §5.7). Reports never overlap; a pass already running reports again when it ends.
      */
     suspend fun redraw() {
-        if (store.currentViews().state.meOrNull == null) return
         report.withLock {
-            notices.afterRun(withErrors(store.currentViews().dueOccurrences(store.today()), failures.value), emptyList())
+            val views = store.currentViews()
+            val due = if (views.state.meOrNull == null) emptyList() else withErrors(views.dueOccurrences(store.today()), failures.value)
+            notices.afterRun(due, emptyList())
         }
     }
 
@@ -1056,7 +1076,7 @@ A lost race shows as `StaleVersion`; the other writer's post moved the schedule 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.store.RecurringRunnerTest"`
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 6: Commit**
 

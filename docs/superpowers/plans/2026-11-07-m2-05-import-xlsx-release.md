@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **Normalized shape (spec §7.2):** schema 2 tables in order `people, payment_handles, groups, group_members, fx_snapshots, transfers, recurring_expenses, recurring_participants, expenses, expense_shares, expense_payers`. `recurring_participants` has `recurring_id, role, position, person_id, input_value` (`position` counted per role). `expenses` gains `recurring_id, recurring_on` after `note`. A schema-1 file has exactly the schema-1 tables, and its expenses have no schedule link.
-- **Classification (spec §7.4):** by UUID, new / duplicate / conflict; sync columns ignored except the deleted state. Groups own memberships the way people own handles: the same cascades, the same "deleted with / restored with <owner>" preview rows, the same `deletedAt` 1 ns before the owner's for owned rows the file shows deleted apart. When the import deletes an owner, an owned row already deleted here that the file shows deleted with it (even as a duplicate) gets the owner's new `deletedAt` and is listed "deleted with <owner>"; undo gives it back its own.
+- **Classification (spec §7.4):** by UUID, new / duplicate / conflict; sync columns ignored except the deleted state. Groups own memberships the way people own handles: the same cascades, the same "deleted with / restored with <owner>" preview rows, the same `deletedAt` 1 ns before the owner's for owned rows the file shows deleted apart. When the import deletes an owner, an owned row already deleted here that the file shows deleted with it (even as a duplicate) gets the owner's new `deletedAt` and is listed "deleted with <owner>"; undo gives it back its own. Under an owner kept deleted, an existing owned row the file shows active (or deleted with the owner) also gets the owner's local `deletedAt`, as a new one does.
 - **Schedules (spec §7.4):** a `recurring_expenses` row and its participants are one unit. `handled_through` is never a choice: the import writes the later of local and incoming, whatever the row's choice (a forced change in the preview); an older incoming value is ignored. `auto_post_from` is never compared or taken: a new schedule gets the import day, an existing one keeps its local value, and the cut-off rule (Part 3's `finalize`) sets it to the import day whenever the import writes a schedule that auto-posts afterwards.
 - **Commit order (spec §7.5 step 6):** creates and updates: people, payment handles, groups, memberships, FX snapshots, schedules, entries; then deletions: entries, schedules, owned rows deleted on their own, then owners with their cascade.
 - **Blame (spec §7.5 step 3):** people, handles, groups and memberships answer first (incoming active entries and schedules left out); entries and schedules answer for the rest. A new row (person, group or schedule) is left out together with the rows that reference it.
@@ -604,6 +604,37 @@ class GroupImportTest {
     }
 
     @Test
+    fun `a handle the export shows active joins the cascade of a person kept deleted here`() = runTest {
+        val x = PersonId("person-x")
+        val handleId = HandleId("handle-x")
+        val handleKey = ImportRowKey(EntityType.PAYMENT_HANDLE, handleId.value)
+        val local = TestLedger().run {
+            me()
+            handle(person("X", deleted = true), deleted = true, id = handleId.value)
+            state
+        }.let { state ->
+            val handle = state.handles.getValue(handleId)
+            state.with(handle.copy(meta = handle.meta.copy(deletedAt = T0.minusSeconds(3_600))))
+        }
+        val source = TestLedger().run {
+            me()
+            handle(person("X"), id = handleId.value)
+            state
+        }
+        val bench = ImportBench(local)
+        val preview = bench.preview(source)
+
+        preview.rows.single { it.key == handleKey }.choice shouldBe ImportRowChoice.DeletedWith("X")
+        bench.commit(preview)
+
+        val person = bench.state.people.getValue(x)
+        person.meta.deletedAt shouldBe T0
+        bench.state.handles.getValue(handleId).meta.deletedAt shouldBe T0
+        with(bench) { people.restorePerson(x, token(person)).ok() }
+        bench.state.handles.getValue(handleId).isDeleted shouldBe false
+    }
+
+    @Test
     fun `a group entry naming someone without a membership is an invalid row`() = runTest {
         val source = TestLedger().run {
             me()
@@ -622,7 +653,7 @@ class GroupImportTest {
 }
 ```
 
-The membership rows of the third test are conflicts of their own (the file shows them deleted with the group), so they are listed before the choice too; taking the group turns their choice into "deleted with Flat". The revision reasons come from the group's delete cascade: `reasonConflict` of the group, then " with Flat". In the fourth test the handle was deleted an hour before its person here, but the export shows both deleted at once: the handle is a duplicate (only its `deletedAt` differs, and sync columns are not compared), yet deleting the person moves it into the person's cascade (`joinsCascade`, `Writer.regroup`), so restoring the person brings it back as in the source.
+The membership rows of the third test are conflicts of their own (the file shows them deleted with the group), so they are listed before the choice too; taking the group turns their choice into "deleted with Flat". The revision reasons come from the group's delete cascade: `reasonConflict` of the group, then " with Flat". In the fourth test the handle was deleted an hour before its person here, but the export shows both deleted at once: the handle is a duplicate (only its `deletedAt` differs, and sync columns are not compared), yet deleting the person moves it into the person's cascade (`joinsCascade`, `Writer.regroup`), so restoring the person brings it back as in the source. In the fifth test the person stays deleted (no choice taken) and the export shows the handle active: the handle takes the person's local `deletedAt` (`Writer.regroup`), so it comes back with the person.
 
 In `test/.../io/ImportReaderTest.kt`, replace the test `an export decodes to the same records, except group rows until M2` (from its `@Test` line through its closing brace) with:
 
@@ -1279,6 +1310,14 @@ class ImportAnalysis private constructor(
                         when {
                             // Its deleted state isn't a choice here ("deleted with <owner>"), whether or not it is taken.
                             ownerAction == OwnerAction.DELETE -> if (deletedApart(row)) ownedDeletions += row to now.minusNanos(1)
+                            // Under an owner kept deleted (so the row is deleted here too) it takes the owner's deletedAt,
+                            // so it comes back with the owner, unless the file shows it deleted apart: then it stays apart,
+                            // or moves 1 ns before the owner if it was deleted with the owner here (spec §7.4).
+                            ownerAction == OwnerAction.NONE && ownerLocal?.isDeleted == true -> {
+                                val ownerAt = ownerLocal.meta.deletedAt!!
+                                if (!deletedApart(row)) writer.regroup(row.key, ownerAt, "${reasonConflict(row)} with ${ownerName(ownerKey)}")
+                                else if (local.meta.deletedAt == ownerAt) writer.regroup(row.key, ownerAt.minusNanos(1), "${reasonConflict(row)}, deleted in the source")
+                            }
                             row.key in take && forcedBy(row.record, local, take) == null && local.isDeleted != row.record.isDeleted ->
                                 if (row.record.isDeleted) ownedDeletions += row to now else writer.restore(row.key, reasonConflict(row))
                         }
@@ -1400,7 +1439,7 @@ class ImportAnalysis private constructor(
             if (entity.isDeleted) write(entity.withMeta(next(entity, null)), RevisionAction.RESTORED, reason)
         }
 
-        /** Moves an already deleted row's `deletedAt` to [at], the `deletedAt` of the owner whose cascade it joins. */
+        /** Moves an already deleted row's `deletedAt` to [at]: its owner's, to join the cascade, or 1 ns before it, to leave it. */
         fun regroup(key: ImportRowKey, at: Instant, reason: String) {
             val entity = find(key)
             if (entity.isDeleted && entity.meta.deletedAt != at) write(entity.withMeta(next(entity, at)), RevisionAction.UPDATED, reason)
@@ -1639,7 +1678,7 @@ with:
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.io.*" --tests "io.github.codex07.iou.data.RealImportTest"`
-Expected: PASS: the five group tests, the updated reader test, and every M1 import test unchanged.
+Expected: PASS: the six group tests, the updated reader test, and every M1 import test unchanged.
 
 Then: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest`
 Expected: PASS. A real-flavor contract test that imports an own export of a ledger with groups now finds its group rows as duplicates instead of invalid rows; if one asserted the old invalid rows, update it to expect none and say so in the report.
