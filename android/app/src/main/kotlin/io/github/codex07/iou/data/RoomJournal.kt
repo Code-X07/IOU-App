@@ -7,6 +7,7 @@ import io.github.codex07.iou.ledger.model.Group
 import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.store.JournalEntry
 import io.github.codex07.iou.store.LedgerContent
@@ -45,6 +46,12 @@ class RoomJournal(private val databases: DatabaseProvider) : LedgerJournal {
                 dao.insertShares(expense.shareRows())
                 dao.deletePayers(expense.id.value)
                 dao.insertPayers(expense.payerRows())
+            }
+            val schedules = entities.filterIsInstance<RecurringExpense>()
+            dao.upsertSchedules(schedules.map { it.toRow() })
+            for (schedule in schedules) {
+                dao.deleteParticipants(schedule.id.value)
+                dao.insertParticipants(schedule.participantRows())
             }
             dao.insertRevisions(entry.revisions.map { it.toRow() })
             dao.upsertImportBatches(entry.importBatches.map { it.toRow() })

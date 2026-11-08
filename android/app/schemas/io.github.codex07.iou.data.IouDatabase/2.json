@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "dc5ae3587a620321c702a5e5112f35d0",
+    "identityHash": "2e4434da4db325e0b5c2f3fda8df3e7c",
     "entities": [
       {
         "tableName": "person",
@@ -458,7 +458,7 @@
       },
       {
         "tableName": "expense",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `groupId` TEXT, `payerSplit` TEXT NOT NULL, `description` TEXT NOT NULL, `category` TEXT, `totalMinor` INTEGER NOT NULL, `currency` TEXT NOT NULL, `effectTotalMinor` INTEGER NOT NULL, `effectCurrency` TEXT NOT NULL, `fxSnapshotId` TEXT, `splitType` TEXT NOT NULL, `occurredOn` TEXT NOT NULL, `note` TEXT, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `authorId` TEXT NOT NULL, `deletedAt` TEXT, `version` INTEGER NOT NULL, `importBatchId` TEXT, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `groupId` TEXT, `payerSplit` TEXT NOT NULL, `description` TEXT NOT NULL, `category` TEXT, `totalMinor` INTEGER NOT NULL, `currency` TEXT NOT NULL, `effectTotalMinor` INTEGER NOT NULL, `effectCurrency` TEXT NOT NULL, `fxSnapshotId` TEXT, `splitType` TEXT NOT NULL, `occurredOn` TEXT NOT NULL, `note` TEXT, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `authorId` TEXT NOT NULL, `deletedAt` TEXT, `version` INTEGER NOT NULL, `importBatchId` TEXT, `recurringId` TEXT, `recurringOn` TEXT, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -566,6 +566,16 @@
           {
             "fieldPath": "importBatchId",
             "columnName": "importBatchId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "recurringId",
+            "columnName": "recurringId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "recurringOn",
+            "columnName": "recurringOn",
             "affinity": "TEXT"
           }
         ],
@@ -920,11 +930,191 @@
             "rateDate"
           ]
         }
+      },
+      {
+        "tableName": "recurring_expense",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `groupId` TEXT, `description` TEXT NOT NULL, `category` TEXT, `note` TEXT, `totalMinor` INTEGER NOT NULL, `currency` TEXT NOT NULL, `payerSplit` TEXT NOT NULL, `splitType` TEXT NOT NULL, `unit` TEXT NOT NULL, `interval` INTEGER NOT NULL, `startOn` TEXT NOT NULL, `endOn` TEXT, `handledThrough` TEXT, `autoPostFrom` TEXT NOT NULL, `autoPost` INTEGER NOT NULL, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `authorId` TEXT NOT NULL, `deletedAt` TEXT, `version` INTEGER NOT NULL, `importBatchId` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupId",
+            "columnName": "groupId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "totalMinor",
+            "columnName": "totalMinor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payerSplit",
+            "columnName": "payerSplit",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "splitType",
+            "columnName": "splitType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unit",
+            "columnName": "unit",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "interval",
+            "columnName": "interval",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startOn",
+            "columnName": "startOn",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endOn",
+            "columnName": "endOn",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "handledThrough",
+            "columnName": "handledThrough",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "autoPostFrom",
+            "columnName": "autoPostFrom",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoPost",
+            "columnName": "autoPost",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authorId",
+            "columnName": "authorId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletedAt",
+            "columnName": "deletedAt",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "version",
+            "columnName": "version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importBatchId",
+            "columnName": "importBatchId",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "recurring_participant",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recurringId` TEXT NOT NULL, `role` TEXT NOT NULL, `personId` TEXT NOT NULL, `position` INTEGER NOT NULL, `inputValue` INTEGER, PRIMARY KEY(`recurringId`, `role`, `personId`))",
+        "fields": [
+          {
+            "fieldPath": "recurringId",
+            "columnName": "recurringId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "personId",
+            "columnName": "personId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputValue",
+            "columnName": "inputValue",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "recurringId",
+            "role",
+            "personId"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'dc5ae3587a620321c702a5e5112f35d0')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2e4434da4db325e0b5c2f3fda8df3e7c')"
     ]
   }
 }

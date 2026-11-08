@@ -8,6 +8,7 @@ import io.github.codex07.iou.ledger.model.HandleId
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.MembershipId
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.money.CurrencyCode
 import io.github.codex07.iou.store.LedgerContent
 import io.github.codex07.iou.store.LedgerSettings
@@ -28,6 +29,8 @@ data class LedgerRows(
     val expenses: List<ExpenseRow> = emptyList(),
     val shares: List<ShareRow> = emptyList(),
     val payers: List<PayerRow> = emptyList(),
+    val schedules: List<RecurringExpenseRow> = emptyList(),
+    val participants: List<RecurringParticipantRow> = emptyList(),
     val fxSnapshots: List<FxSnapshotRow> = emptyList(),
     val revisions: List<RevisionRow> = emptyList(),
     val importBatches: List<ImportBatchRow> = emptyList(),
@@ -38,6 +41,7 @@ data class LedgerRows(
     fun toContent(): LedgerContent {
         val sharesByExpense = shares.groupBy { it.expenseId }
         val payersByExpense = payers.groupBy { it.expenseId }
+        val participantsBySchedule = participants.groupBy { it.recurringId }
         val state = LedgerState(
             people = people.associate { PersonId(it.id) to it.toPerson() },
             handles = handles.associate { HandleId(it.id) to it.toHandle() },
@@ -48,6 +52,7 @@ data class LedgerRows(
                 EntryId(it.id) to it.toExpense(sharesByExpense[it.id].orEmpty(), payersByExpense[it.id].orEmpty())
             },
             fxSnapshots = fxSnapshots.associate { FxSnapshotId(it.id) to it.toSnapshot() },
+            schedules = schedules.associate { RecurringId(it.id) to it.toSchedule(participantsBySchedule[it.id].orEmpty()) },
         )
         val values = settings.associate { it.key to it.value }
         val defaults = LedgerSettings()
@@ -77,6 +82,8 @@ data class LedgerRows(
         unique("expense", expenses) { it.id }
         unique("expense_share", shares) { it.expenseId to it.personId }
         unique("expense_payer", payers) { it.expenseId to it.personId }
+        unique("recurring_expense", schedules) { it.id }
+        unique("recurring_participant", participants) { Triple(it.recurringId, it.role, it.personId) }
         unique("fx_snapshot", fxSnapshots) { it.id }
         unique("entry_revision", revisions) { it.id }
         unique("import_batch", importBatches) { it.id }
@@ -94,6 +101,8 @@ data class LedgerRows(
         dao.upsertExpenses(expenses)
         dao.insertShares(shares)
         dao.insertPayers(payers)
+        dao.upsertSchedules(schedules)
+        dao.insertParticipants(participants)
         dao.insertFxSnapshots(fxSnapshots)
         dao.insertRevisions(revisions)
         dao.upsertImportBatches(importBatches)
@@ -111,6 +120,8 @@ data class LedgerRows(
             expenses = dao.expenses(),
             shares = dao.shares(),
             payers = dao.payers(),
+            schedules = dao.schedules(),
+            participants = dao.participants(),
             fxSnapshots = dao.fxSnapshots(),
             revisions = dao.revisions(),
             importBatches = dao.importBatches(),
@@ -130,6 +141,8 @@ data class LedgerRows(
                 expenses = state.expenses.values.map { it.toRow() },
                 shares = state.expenses.values.flatMap { it.shareRows() },
                 payers = state.expenses.values.flatMap { it.payerRows() },
+                schedules = state.schedules.values.map { it.toRow() },
+                participants = state.schedules.values.flatMap { it.participantRows() },
                 fxSnapshots = state.fxSnapshots.values.map { it.toRow() },
                 revisions = content.revisions.map { it.toRow() },
                 importBatches = content.importBatches.map { it.toRow() },

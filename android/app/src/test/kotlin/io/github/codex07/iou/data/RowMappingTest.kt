@@ -25,7 +25,12 @@ import io.github.codex07.iou.ledger.model.MembershipId
 import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
+import io.github.codex07.iou.ledger.model.ParticipantRole
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurrenceUnit
+import io.github.codex07.iou.ledger.model.RecurringExpense
+import io.github.codex07.iou.ledger.model.RecurringId
+import io.github.codex07.iou.ledger.model.RecurringParticipant
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.RevisionId
 import io.github.codex07.iou.ledger.model.SplitType
@@ -34,10 +39,12 @@ import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.ledger.model.TransferMethod
 import io.github.codex07.iou.money.Money
+import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.JPY
 import io.github.codex07.iou.testutil.ME
 import io.github.codex07.iou.testutil.SEK
+import io.github.codex07.iou.testutil.testMeta
 import io.github.codex07.iou.testutil.eur
 import io.github.codex07.iou.testutil.sek
 import io.kotest.assertions.throwables.shouldThrow
@@ -127,5 +134,29 @@ class RowMappingTest {
 
         SnapshotCodec.decode(v1.toString()) shouldBe single
         SnapshotCodec.decode(SnapshotCodec.encode(person).replace("\"schema\":2", "\"schema\":1")) shouldBe person
+    }
+
+    @Test
+    fun `a schedule maps to its rows and back with each role's order kept, and so does an expense's link`() {
+        val schedule = RecurringExpense(
+            id = RecurringId("r-1"), groupId = GroupId("g-1"), description = "Rent", category = Category.RENT, note = "Flat",
+            total = Money(400, JPY), payerSplit = PayerSplit.EXACT, splitType = SplitType.SHARES,
+            participants = listOf(
+                RecurringParticipant(ParticipantRole.PAYER, PersonId("p-2"), 300),
+                RecurringParticipant(ParticipantRole.PAYER, PersonId("p-1"), 100),
+                RecurringParticipant(ParticipantRole.SHARE, PersonId("p-1"), 2),
+                RecurringParticipant(ParticipantRole.SHARE, ME, 1),
+            ),
+            unit = RecurrenceUnit.WEEK, interval = 2, startOn = D0, endOn = D0.plusDays(70), handledThrough = D0.plusDays(14),
+            autoPostFrom = D0, autoPost = true, meta = testMeta(),
+        )
+
+        schedule.participantRows().map { it.role to it.position } shouldBe listOf("PAYER" to 0, "PAYER" to 1, "SHARE" to 0, "SHARE" to 1)
+        schedule.toRow().toSchedule(schedule.participantRows().reversed()) shouldBe schedule
+        SnapshotCodec.decode(SnapshotCodec.encode(schedule)) shouldBe schedule
+
+        val posted = expense.copy(recurringId = RecurringId("r-1"), recurringOn = D0)
+        posted.toRow().toExpense(posted.shareRows(), posted.payerRows()) shouldBe posted
+        SnapshotCodec.decode(SnapshotCodec.encode(posted)) shouldBe posted
     }
 }

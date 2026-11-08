@@ -19,7 +19,10 @@ import kotlinx.serialization.json.jsonObject
  */
 object Migrations {
 
-    /** Room schema 1 → 2 (spec §3.2), written by hand. One migration for all of M2 (index, locked decision 3). */
+    /**
+     * Room schema 1 → 2 (spec §3.2), written by hand. One migration for all of M2 (index, locked decision 3). It also
+     * creates the `recurring_expense` and `recurring_participant` tables and adds the expense link columns (spec §3.2).
+     */
     val MIGRATION_1_2 = object : Migration(1, 2) {
         override fun migrate(connection: SQLiteConnection) {
             connection.execSQL(
@@ -37,7 +40,7 @@ object Migrations {
                     "`effectTotalMinor` INTEGER NOT NULL, `effectCurrency` TEXT NOT NULL, `fxSnapshotId` TEXT, " +
                     "`splitType` TEXT NOT NULL, `occurredOn` TEXT NOT NULL, `note` TEXT, `createdAt` TEXT NOT NULL, " +
                     "`updatedAt` TEXT NOT NULL, `authorId` TEXT NOT NULL, `deletedAt` TEXT, `version` INTEGER NOT NULL, " +
-                    "`importBatchId` TEXT, PRIMARY KEY(`id`))",
+                    "`importBatchId` TEXT, `recurringId` TEXT, `recurringOn` TEXT, PRIMARY KEY(`id`))",
             )
             connection.execSQL(
                 "INSERT INTO `expense_new` (`id`, `groupId`, `payerSplit`, `description`, `category`, `totalMinor`, `currency`, " +
@@ -49,6 +52,19 @@ object Migrations {
             )
             connection.execSQL("DROP TABLE `expense`")
             connection.execSQL("ALTER TABLE `expense_new` RENAME TO `expense`")
+            connection.execSQL(
+                "CREATE TABLE IF NOT EXISTS `recurring_expense` (`id` TEXT NOT NULL, `groupId` TEXT, `description` TEXT NOT NULL, " +
+                    "`category` TEXT, `note` TEXT, `totalMinor` INTEGER NOT NULL, `currency` TEXT NOT NULL, " +
+                    "`payerSplit` TEXT NOT NULL, `splitType` TEXT NOT NULL, `unit` TEXT NOT NULL, `interval` INTEGER NOT NULL, " +
+                    "`startOn` TEXT NOT NULL, `endOn` TEXT, `handledThrough` TEXT, `autoPostFrom` TEXT NOT NULL, " +
+                    "`autoPost` INTEGER NOT NULL, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `authorId` TEXT NOT NULL, " +
+                    "`deletedAt` TEXT, `version` INTEGER NOT NULL, `importBatchId` TEXT, PRIMARY KEY(`id`))",
+            )
+            connection.execSQL(
+                "CREATE TABLE IF NOT EXISTS `recurring_participant` (`recurringId` TEXT NOT NULL, `role` TEXT NOT NULL, " +
+                    "`personId` TEXT NOT NULL, `position` INTEGER NOT NULL, `inputValue` INTEGER, " +
+                    "PRIMARY KEY(`recurringId`, `role`, `personId`))",
+            )
         }
     }
 
@@ -66,7 +82,9 @@ object Migrations {
             put("paidMinor", expense.required("effectTotalMinor"))
             put("inputValue", JsonNull)
         }
-        return JsonObject(expense - "payerPersonId" + ("payerSplit" to JsonPrimitive("EQUAL"))) to payer
+        val row = expense - "payerPersonId" +
+            mapOf("payerSplit" to JsonPrimitive("EQUAL"), "recurringId" to JsonNull, "recurringOn" to JsonNull)
+        return JsonObject(row) to payer
     }
 
     /** The `rows` object of a version-1 backup → version 2: expense rows upgraded, their payer rows added. */

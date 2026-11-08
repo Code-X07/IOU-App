@@ -18,10 +18,15 @@ import io.github.codex07.iou.ledger.model.ImportBatch
 import io.github.codex07.iou.ledger.model.ImportBatchId
 import io.github.codex07.iou.ledger.model.ImportSource
 import io.github.codex07.iou.ledger.model.MembershipId
+import io.github.codex07.iou.ledger.model.ParticipantRole
 import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurrenceUnit
+import io.github.codex07.iou.ledger.model.RecurringExpense
+import io.github.codex07.iou.ledger.model.RecurringId
+import io.github.codex07.iou.ledger.model.RecurringParticipant
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.SyncMeta
 import io.github.codex07.iou.ledger.model.Transfer
@@ -105,7 +110,8 @@ fun TransferRow.toTransfer() = Transfer(
 fun Expense.toRow(): ExpenseRow = meta.columns().let {
     ExpenseRow(id.value, groupId?.value, payerSplit.name, description, category?.name, total.amountMinor, total.currency.code,
         effectTotal.amountMinor, effectTotal.currency.code, fxSnapshotId?.value, splitType.name, occurredOn.text(), note,
-        it.createdAt, it.updatedAt, it.authorId, it.deletedAt, it.version, it.importBatchId)
+        it.createdAt, it.updatedAt, it.authorId, it.deletedAt, it.version, it.importBatchId,
+        recurringId?.value, recurringOn?.text())
 }
 
 fun Expense.shareRows(): List<ShareRow> =
@@ -124,6 +130,32 @@ fun ExpenseRow.toExpense(shares: List<ShareRow>, payers: List<PayerRow>) = Expen
     splitType = SplitType.valueOf(splitType),
     shares = shares.sortedBy { it.position }.map { ExpenseShare(PersonId(it.personId), it.shareMinor, it.inputValue) },
     occurredOn = occurredOn.date(), note = note, meta = Meta(createdAt, updatedAt, authorId, deletedAt, version, importBatchId).toMeta(),
+    recurringId = recurringId?.let(::RecurringId), recurringOn = recurringOn?.date(),
+)
+
+fun RecurringExpense.toRow(): RecurringExpenseRow = meta.columns().let {
+    RecurringExpenseRow(id.value, groupId?.value, description, category?.name, note, total.amountMinor, total.currency.code,
+        payerSplit.name, splitType.name, unit.name, interval, startOn.text(), endOn?.text(), handledThrough?.text(),
+        autoPostFrom.text(), autoPost, it.createdAt, it.updatedAt, it.authorId, it.deletedAt, it.version, it.importBatchId)
+}
+
+/** The template rows; [RecurringParticipantRow.position] counts within each role. */
+fun RecurringExpense.participantRows(): List<RecurringParticipantRow> =
+    listOf(payerRows, shareRows).flatMap { rows ->
+        rows.mapIndexed { position, row -> RecurringParticipantRow(id.value, row.role.name, row.personId.value, position, row.inputValue) }
+    }
+
+/** [participants] are this schedule's template rows, in any order; payers come first, each role in position order. */
+fun RecurringExpenseRow.toSchedule(participants: List<RecurringParticipantRow>) = RecurringExpense(
+    id = RecurringId(id), groupId = groupId?.let(::GroupId), description = description, category = category?.let(Category::valueOf),
+    note = note, total = Money(totalMinor, CurrencyCode(currency)), payerSplit = PayerSplit.valueOf(payerSplit),
+    splitType = SplitType.valueOf(splitType),
+    participants = participants
+        .sortedWith(compareBy({ ParticipantRole.valueOf(it.role) }, { it.position }))
+        .map { RecurringParticipant(ParticipantRole.valueOf(it.role), PersonId(it.personId), it.inputValue) },
+    unit = RecurrenceUnit.valueOf(unit), interval = interval, startOn = startOn.date(), endOn = endOn?.date(),
+    handledThrough = handledThrough?.date(), autoPostFrom = autoPostFrom.date(), autoPost = autoPost,
+    meta = Meta(createdAt, updatedAt, authorId, deletedAt, version, importBatchId).toMeta(),
 )
 
 fun FxSnapshot.toRow() = FxSnapshotRow(

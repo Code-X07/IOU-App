@@ -176,4 +176,11 @@ class BackupFormatTest {
             format.read(backup, null).error()::class shouldBe LedgerError.CorruptFile::class
         }
     }
+
+    @Test
+    fun `a participant row of a missing schedule is rejected`() {
+        val orphan = rows.copy(participants = rows.participants + RecurringParticipantRow("gone", "SHARE", "p-1", 0, null))
+
+        format.read(format.write(orphan, "0.1.0", T0, null), null).error()::class shouldBe LedgerError.CorruptFile::class
+    }
 }

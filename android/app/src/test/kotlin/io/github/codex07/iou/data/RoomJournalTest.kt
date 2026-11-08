@@ -4,7 +4,9 @@ import io.github.codex07.iou.api.EditToken
 import io.github.codex07.iou.api.ExpenseDraft
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.PersonDraft
+import io.github.codex07.iou.api.RecurringDraft
 import io.github.codex07.iou.api.SaveMode
+import io.github.codex07.iou.api.ScheduleSaveMode
 import io.github.codex07.iou.fake.FakeRates
 import io.github.codex07.iou.fake.SeedData
 import io.github.codex07.iou.ledger.model.Change
@@ -12,20 +14,24 @@ import io.github.codex07.iou.ledger.model.DeviceId
 import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.EntryRevision
 import io.github.codex07.iou.ledger.model.RevisionAction
+import io.github.codex07.iou.ledger.model.RecurrenceUnit
 import io.github.codex07.iou.ledger.model.RevisionId
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.ops.EntryOps
 import io.github.codex07.iou.ledger.ops.PeopleOps
+import io.github.codex07.iou.ledger.ops.RecurringOps
 import io.github.codex07.iou.store.JournalEntry
 import io.github.codex07.iou.store.LedgerContent
 import io.github.codex07.iou.store.LedgerSettings
 import io.github.codex07.iou.store.LedgerStore
 import io.github.codex07.iou.store.RateLookup
+import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.ME
 import io.github.codex07.iou.testutil.SEK
 import io.github.codex07.iou.testutil.SequentialIds
+import io.github.codex07.iou.testutil.eur
 import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.TestDatabases
 import io.github.codex07.iou.testutil.TestLedger
@@ -102,5 +108,26 @@ class RoomJournalTest {
         loaded.revisions shouldBe emptyList()
         loaded.ledgerSeq shouldBe 1
         loaded.state.fxSnapshots.keys shouldBe setOf(fx)
+    }
+
+    @Test
+    fun `a schedule and its posted expense load back, and a template edit replaces the participant rows`() = runTest {
+        val store = store()
+        store.write(beforeSetup = true) { PeopleOps.setup(it, "Me") }
+        val x = (store.write { PeopleOps.createPerson(it, PersonDraft("X"), it.generation) } as LedgerResult.Ok).value
+        val me = store.loaded().state.me.id
+        val draft = RecurringDraft(
+            payers = listOf(SplitInput(me)), description = "Rent", total = eur(90_000),
+            participants = listOf(SplitInput(me), SplitInput(x)), unit = RecurrenceUnit.MONTH, startOn = D0,
+        )
+        val id = (store.write { RecurringOps.save(it, draft, ScheduleSaveMode.Create(it.generation)) } as LedgerResult.Ok).value
+        val rent = ExpenseDraft(me, "Rent", total = eur(90_000), participants = listOf(SplitInput(me), SplitInput(x)), occurredOn = D0)
+        (store.write { RecurringOps.post(it, id, D0, rent, EditToken(it.generation, 1)) } is LedgerResult.Ok) shouldBe true
+        store.write { RecurringOps.save(it, draft.copy(payers = listOf(SplitInput(x))), ScheduleSaveMode.Update(id, EditToken(it.generation, 2))) }
+
+        val loaded = LedgerLoader.load(db)
+        loaded shouldBe store.loaded().content
+        loaded.state.schedules.getValue(id).payerRows.single().personId shouldBe x
+        loaded.state.expenses.values.single().recurringOn shouldBe D0
     }
 }

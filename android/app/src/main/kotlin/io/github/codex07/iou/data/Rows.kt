@@ -124,6 +124,8 @@ data class ExpenseRow(
     val deletedAt: String?,
     val version: Int,
     val importBatchId: String?,
+    val recurringId: String? = null,
+    val recurringOn: String? = null,
 )
 
 /** Owned by its expense (spec §3.2); [position] keeps the expense's share order. */
@@ -215,3 +217,42 @@ object SettingKeys {
     const val BACKUP_ENCRYPTION_DEFAULT = "backupEncryptionDefault"
     const val LEDGER_SEQ = "ledgerSeq"
 }
+
+/** A schedule (spec §3.2, §5.7); its template rows are [RecurringParticipantRow]s. */
+@Serializable
+@Entity(tableName = "recurring_expense")
+data class RecurringExpenseRow(
+    @PrimaryKey val id: String,
+    val groupId: String?,
+    val description: String,
+    val category: String?,
+    val note: String?,
+    val totalMinor: Long,
+    val currency: String,
+    val payerSplit: String,
+    val splitType: String,
+    val unit: String,
+    val interval: Int,
+    val startOn: String,
+    val endOn: String?,
+    val handledThrough: String?,
+    val autoPostFrom: String,
+    val autoPost: Boolean,
+    val createdAt: String,
+    val updatedAt: String,
+    val authorId: String,
+    val deletedAt: String?,
+    val version: Int,
+    val importBatchId: String?,
+)
+
+/** Owned by its schedule like [ShareRow]; [position] keeps the order within its [role] (`PAYER` or `SHARE`). */
+@Serializable
+@Entity(tableName = "recurring_participant", primaryKeys = ["recurringId", "role", "personId"])
+data class RecurringParticipantRow(
+    val recurringId: String,
+    val role: String,
+    val personId: String,
+    val position: Int,
+    val inputValue: Long?,
+)

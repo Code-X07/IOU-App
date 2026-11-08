@@ -121,7 +121,7 @@ class MigrationTest {
     /** The schema-1 expense row: `payerPersonId` instead of `payerSplit`. */
     private fun version1Expense(row: JsonObject): JsonObject {
         val payer = payerOf.getValue(row.getValue("id").jsonPrimitive.content)
-        return JsonObject(row - "payerSplit" + ("payerPersonId" to JsonPrimitive(payer)))
+        return JsonObject(row - "payerSplit" - "recurringId" - "recurringOn" + ("payerPersonId" to JsonPrimitive(payer)))
     }
 
     /** A revision row keeps its columns, but its snapshot is written in schema 1, as `v0.1.0` wrote it. */

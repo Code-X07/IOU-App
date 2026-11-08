@@ -28,6 +28,9 @@ interface LedgerDao {
     @Insert suspend fun insertShares(rows: List<ShareRow>)
     @Query("DELETE FROM expense_payer WHERE expenseId = :expenseId") suspend fun deletePayers(expenseId: String)
     @Insert suspend fun insertPayers(rows: List<PayerRow>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertSchedules(rows: List<RecurringExpenseRow>)
+    @Query("DELETE FROM recurring_participant WHERE recurringId = :recurringId") suspend fun deleteParticipants(recurringId: String)
+    @Insert suspend fun insertParticipants(rows: List<RecurringParticipantRow>)
 
     /** Snapshots are immutable (spec §3.2): a second insert of the same ID fails the transaction. */
     @Insert suspend fun insertFxSnapshots(rows: List<FxSnapshotRow>)
@@ -44,6 +47,9 @@ interface LedgerDao {
     @Query("SELECT * FROM expense") suspend fun expenses(): List<ExpenseRow>
     @Query("SELECT * FROM expense_share ORDER BY expenseId, position") suspend fun shares(): List<ShareRow>
     @Query("SELECT * FROM expense_payer ORDER BY expenseId, position") suspend fun payers(): List<PayerRow>
+    @Query("SELECT * FROM recurring_expense") suspend fun schedules(): List<RecurringExpenseRow>
+    @Query("SELECT * FROM recurring_participant ORDER BY recurringId, role, position")
+    suspend fun participants(): List<RecurringParticipantRow>
     @Query("SELECT * FROM fx_snapshot") suspend fun fxSnapshots(): List<FxSnapshotRow>
     @Query("SELECT * FROM entry_revision ORDER BY rowid") suspend fun revisions(): List<RevisionRow>
     @Query("SELECT * FROM import_batch ORDER BY rowid") suspend fun importBatches(): List<ImportBatchRow>
@@ -55,7 +61,7 @@ interface LedgerDao {
     entities = [
         PersonRow::class, HandleRow::class, GroupRow::class, MemberRow::class, TransferRow::class, ExpenseRow::class,
         ShareRow::class, PayerRow::class, FxSnapshotRow::class, RevisionRow::class, ImportBatchRow::class, AppSettingRow::class,
-        FxRateRow::class,
+        FxRateRow::class, RecurringExpenseRow::class, RecurringParticipantRow::class,
     ],
     version = 2,
     exportSchema = true,

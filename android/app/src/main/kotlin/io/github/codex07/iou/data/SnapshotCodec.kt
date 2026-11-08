@@ -64,6 +64,8 @@ object SnapshotCodec {
         val expense: ExpenseRow? = null,
         val shares: List<ShareRow>? = null,
         val payers: List<PayerRow>? = null,
+        val schedule: RecurringExpenseRow? = null,
+        val participants: List<RecurringParticipantRow>? = null,
     )
 
     fun encode(entity: LedgerEntity): String = json.encodeToString(
@@ -75,8 +77,7 @@ object SnapshotCodec {
             is GroupMember -> Snapshot(CURRENT_SCHEMA, member = entity.toRow())
             is Transfer -> Snapshot(CURRENT_SCHEMA, transfer = entity.toRow())
             is Expense -> Snapshot(CURRENT_SCHEMA, expense = entity.toRow(), shares = entity.shareRows(), payers = entity.payerRows())
-            // Persisted from M2 Part 4; until then no schedule can reach the real flavor's journal.
-            is RecurringExpense -> throw UnsupportedOperationException("Schedule snapshots are stored from M2 Part 4")
+            is RecurringExpense -> Snapshot(CURRENT_SCHEMA, schedule = entity.toRow(), participants = entity.participantRows())
         },
     )
 
@@ -96,6 +97,7 @@ object SnapshotCodec {
             ?: snapshot.member?.toMember()
             ?: snapshot.transfer?.toTransfer()
             ?: snapshot.expense?.toExpense(snapshot.shares.orEmpty(), snapshot.payers.orEmpty())
+            ?: snapshot.schedule?.toSchedule(snapshot.participants.orEmpty())
             ?: throw IllegalArgumentException("Snapshot names no entity")
     }
 }

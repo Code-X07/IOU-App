@@ -78,6 +78,8 @@ class BackupFormat(
             val expenseIds = document.rows.expenses.map { it.id }.toSet()
             require(document.rows.shares.all { it.expenseId in expenseIds }) { "Share references a missing expense" }
             require(document.rows.payers.all { it.expenseId in expenseIds }) { "Payer references a missing expense" }
+            val scheduleIds = document.rows.schedules.map { it.id }.toSet()
+            require(document.rows.participants.all { it.recurringId in scheduleIds }) { "Participant references a missing schedule" }
             // The rate cache isn't ledger data, but `FxService.load` reads it once the restore has committed.
             for (rate in document.rows.rates.map { it.toCachedRate().rate }) {
                 require(FxConverter.validateRate(rate) is LedgerResult.Ok) { "Invalid cached rate $rate" }
