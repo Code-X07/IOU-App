@@ -215,15 +215,25 @@ class LedgerWorkbook(private val export: LedgerExport) {
          * no quote at either end, at most 31 characters, "Group" when nothing is left, " (n)" when taken.
          */
         fun sheetName(name: String, used: MutableSet<String>): String {
-            val base = name.replace(Regex("""[\[\]:*?/\\]"""), " ").trim().trim('\'').trim().ifEmpty { "Group" }
-            var candidate = base.take(31)
+            val base = name.replace(Regex("""[\[\]:*?/\\\p{Cntrl}]"""), " ").let(::edges).ifEmpty { "Group" }
+            var candidate = fit(base, 31)
             var n = 1
             while (!used.add(candidate.lowercase())) {
                 n++
                 val suffix = " ($n)"
-                candidate = base.take(31 - suffix.length).trimEnd() + suffix
+                candidate = fit(base, 31 - suffix.length) + suffix
             }
             return candidate
+        }
+
+        /** Excel forbids a sheet name that starts or ends with an apostrophe; spaces at the edges are dropped too. */
+        private fun edges(text: String) = text.trim().trim('\'').trim()
+
+        /** [text] cut to [max] chars without splitting a surrogate pair, edges cleaned again; "Group" if nothing is left. */
+        private fun fit(text: String, max: Int): String {
+            var cut = text.take(max)
+            if (cut.isNotEmpty() && cut.last().isHighSurrogate()) cut = cut.dropLast(1)
+            return edges(cut).ifEmpty { "Group" }
         }
     }
 }

@@ -112,5 +112,7 @@ class LedgerWorkbookTest {
         LedgerWorkbook.sheetName("x".repeat(40), used) shouldBe "x".repeat(31)
         LedgerWorkbook.sheetName("x".repeat(40), used) shouldBe "x".repeat(27) + " (2)"
         LedgerWorkbook.sheetName("???", used) shouldBe "Group"
+        LedgerWorkbook.sheetName("y".repeat(30) + " 'z", used) shouldBe "y".repeat(30)
+        LedgerWorkbook.sheetName("line\nbreak", used) shouldBe "line break"
     }
 }
