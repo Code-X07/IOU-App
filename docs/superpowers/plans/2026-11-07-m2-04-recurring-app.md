@@ -13,8 +13,8 @@
 - **Room schema 2 (spec §3.2):** `recurring_expense` (the schedule's columns plus sync columns; `autoPost` as INTEGER) and `recurring_participant` (key `recurringId, role, personId`; `position`, `inputValue`), created by the same hand-written `Migration(1, 2)`, which also gives `expense` the nullable `recurringId` and `recurringOn` columns (index, locked decision 3). Rows are written with `REPLACE`, never `@Upsert`.
 - **Snapshots (spec §5.5):** a schedule snapshot holds its row and its participant rows; the schema-1 upcaster gives expenses `recurringId` / `recurringOn` = null. Backups carry `schedules` and `participants`; a participant row whose schedule is missing makes the backup `CorruptFile`.
 - **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped.
-- **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every process `ON_START`, every successful `RecurringApi` write, and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`).
-- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, the last notified state per schedule in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same.
+- **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every change of the due list whatever wrote it (an archive through `PeopleApi` / `GroupsApi`, a merge, a revert), every process `ON_START`, every successful `RecurringApi` write, every app-lock switch (`RecurringNotices.redraw`), and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`). Date-relative reads (`observeDue`, `observeSchedules`, `observeSchedule`) also start over when a pass runs for a new day (`RecurringRunner.today`).
+- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same.
 - **Permissions:** the real flavor's manifest adds `POST_NOTIFICATIONS`; the UI asks for it (the friend's work, `docs/m2-ui-contract-changes.md`).
 - No `ui/` file changes.
 
@@ -560,8 +560,8 @@ git commit -m "Store schedules and posted-expense links in Room schema 2, snapsh
 - Create: `main/.../store/RecurringNotices.kt`, `main/.../store/RecurringRunner.kt`, `test/.../store/RecurringRunnerTest.kt`
 
 **Interfaces:**
-- Consumes: `Recurrence`, `RecurringOps.post` / `save` / `skip`, `LedgerViews.occurrenceDraft` / `dueOccurrences` (Part 3); `EntryOps.requiredEffectCurrency`; `QuoteSource`; `LedgerStore.currentViews` / `write` / `today` / `snapshot`.
-- Produces: `data class PostedOccurrence(schedule: RecurringId, description: String, occurrence: LocalDate, amount: Money)`; `fun interface RecurringNotices { suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>) }` with `RecurringNotices.None`; `class RecurringRunner(store, quotes, notices = None)` with `run(): List<PostedOccurrence>`, `request()`, `start(scope): Job`, `errors: StateFlow<Map<RecurringId, RecurringRunner.Failure>>`, `RecurringRunner.Failure(occurrence, error)`, `RecurringRunner.withErrors(due, failures)`.
+- Consumes: `Recurrence`, `RecurringOps.post` / `save` / `skip`, `LedgerViews.occurrenceDraft` / `dueOccurrences` (Part 3); `EntryOps.requiredEffectCurrency`; `QuoteSource`; `LedgerStore.currentViews` / `write` / `today` / `snapshot` / `ready`; `StoreGroupsApi.setGroupArchived` (a test).
+- Produces: `data class PostedOccurrence(schedule: RecurringId, description: String, occurrence: LocalDate, amount: Money)`; `fun interface RecurringNotices { suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>); val redraw: Flow<Unit> (default empty) }` with `RecurringNotices.None`; `class RecurringRunner(store, quotes, notices = None)` with `run(): List<PostedOccurrence>`, `request()`, `start(scope): Job`, `today: StateFlow<LocalDate>`, `errors: StateFlow<Map<RecurringId, RecurringRunner.Failure>>`, `RecurringRunner.Failure(occurrence, error)`, `RecurringRunner.withErrors(due, failures)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -570,6 +570,7 @@ Create `test/.../store/RecurringRunnerTest.kt`:
 ```kotlin
 package io.github.codex07.iou.store
 
+import io.github.codex07.iou.api.DueOccurrence
 import io.github.codex07.iou.api.EditToken
 import io.github.codex07.iou.api.FxQuote
 import io.github.codex07.iou.api.LedgerError
@@ -581,6 +582,7 @@ import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSource
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.RecurrenceUnit
+import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.ops.RecurringOps
 import io.github.codex07.iou.ledger.views.dueOccurrences
@@ -597,11 +599,15 @@ import io.kotest.matchers.shouldBe
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
-/** Auto-posting (spec §5.7, AC 29–32). */
+/** Auto-posting and its triggers (spec §5.7, AC 29–32). */
 class RecurringRunnerTest {
 
     private fun d(text: String) = LocalDate.parse(text)
@@ -708,8 +714,63 @@ class RecurringRunnerTest {
         store.write { RecurringOps.skip(it, id, d("2026-02-01"), EditToken(it.generation, 1)) } shouldBe LedgerResult.Ok(Unit)
         runner.run().map { it.occurrence } shouldBe listOf(d("2026-03-01"))
     }
+
+    @Test
+    fun `a write outside RecurringApi that changes the due list asks for a pass, which reports the new list`() = runTest {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val flat = ledger.group("Flat", members = listOf(ME, x))
+        val rent = ledger.schedule(ME, eur(90_000), listOf(ME, x), group = flat)
+        val store = store(ledger.state, "2026-01-01")
+        val reported = mutableListOf<List<RecurringId>>()
+        val runner = RecurringRunner(store, noRates, RecurringNotices { due, _ -> reported += due.map { it.schedule } })
+        runner.start(backgroundScope)
+        runCurrent()
+        reported.last() shouldBe listOf(rent)
+
+        StoreGroupsApi(store).setGroupArchived(flat, true, EditToken(store.loaded().generation, 1)) shouldBe LedgerResult.Ok(Unit)
+        runCurrent()
+        reported.last() shouldBe emptyList()
+    }
+
+    @Test
+    fun `a redraw signal asks for a pass, and every pass moves today`() = runTest {
+        val clock = MovingClock(Instant.parse("2026-11-30T10:00:00Z"))
+        val store = LedgerStore(clock, SequentialIds("run"), DeviceId("device-test"), initial = LedgerContent(TestLedger().apply { me() }.state))
+        val signals = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        var passes = 0
+        val notices = object : RecurringNotices {
+            override suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>) {
+                passes++
+            }
+
+            override val redraw: Flow<Unit> = signals
+        }
+        val runner = RecurringRunner(store, noRates, notices)
+        runner.start(backgroundScope)
+        runCurrent()
+        val before = passes
+        runner.today.value shouldBe d("2026-11-30")
+
+        clock.at = Instant.parse("2026-12-01T10:00:00Z")
+        signals.tryEmit(Unit)
+        runCurrent()
+        passes shouldBe before + 1
+        runner.today.value shouldBe d("2026-12-01")
+    }
+
+    /** A clock the test moves (UTC). */
+    private class MovingClock(var at: Instant) : Clock() {
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+
+        override fun withZone(zone: ZoneId): Clock = this
+
+        override fun instant(): Instant = at
+    }
 }
 ```
+
+The runner and `LedgerStore` without a journal never leave the test dispatcher, so `runCurrent()` runs every requested pass to the end.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -727,6 +788,8 @@ import io.github.codex07.iou.api.DueOccurrence
 import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.money.Money
 import java.time.LocalDate
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 /** One occurrence the runner posted: what a "posted" notification lists (spec §5.7). */
 data class PostedOccurrence(
@@ -743,6 +806,12 @@ data class PostedOccurrence(
  */
 fun interface RecurringNotices {
     suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>)
+
+    /**
+     * Emits when what is drawn must change although the ledger did not (app lock switched on or off); the runner
+     * asks for a pass on each emission, and that pass redraws.
+     */
+    val redraw: Flow<Unit> get() = emptyFlow()
 
     companion object {
         val None = RecurringNotices { _, _ -> }
@@ -803,14 +872,22 @@ class RecurringRunner(
     private val pass = Mutex()
     private val failures = MutableStateFlow<Map<RecurringId, Failure>>(emptyMap())
     private val requests = Channel<Unit>(Channel.CONFLATED)
+    private val day = MutableStateFlow(store.today())
 
     val errors: StateFlow<Map<RecurringId, Failure>> = failures.asStateFlow()
+
+    /**
+     * The day the last pass ran for (the store's today until the first pass). Date-relative reads follow it, so a
+     * pass on a new day refreshes the due list and schedule read models even when it writes nothing.
+     */
+    val today: StateFlow<LocalDate> = day.asStateFlow()
 
     /** One pass; waits for the start-up load. Returns what it posted. Passes never overlap. */
     suspend fun run(): List<PostedOccurrence> = pass.withLock {
         val start = store.currentViews()
         if (start.state.meOrNull == null) return@withLock emptyList()
         val today = store.today()
+        day.value = today
         val posted = mutableListOf<PostedOccurrence>()
         val failed = LinkedHashMap<RecurringId, Failure>()
         val ids = start.state.schedules.values
@@ -830,7 +907,10 @@ class RecurringRunner(
 
     /**
      * Runs requested passes in [scope], and requests one for every new ledger generation (the start-up load, a restore,
-     * an undo of a restore) and every change of the import batches (an import, an import undo).
+     * an undo of a restore), every change of the import batches (an import, an import undo), every change of the due
+     * list, whatever wrote it (an archive or unarchive through `PeopleApi` / `GroupsApi`, a merge, a revert, a post or
+     * skip), and every [RecurringNotices.redraw]. A pass that posts changes the due list and so is followed by one
+     * more, which finds nothing left to post.
      */
     fun start(scope: CoroutineScope): Job = scope.launch {
         launch {
@@ -844,6 +924,8 @@ class RecurringRunner(
                 }
             }
         }
+        launch { store.ready.map { it.dueOccurrences(store.today()) }.distinctUntilChanged().collect { request() } }
+        launch { notices.redraw.collect { request() } }
         store.snapshot.map { it.generation to it.importBatches }.distinctUntilChanged().collect { request() }
     }
 
@@ -893,7 +975,7 @@ A lost race shows as `StaleVersion`; the other writer's post moved the schedule 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.store.RecurringRunnerTest"`
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -907,7 +989,7 @@ git commit -m "Auto-post due occurrences with a runner shared by both flavors"
 ### Task 3: `RecurringApi`, both flavors, the fake seed and the contract tests
 
 **Files:**
-- Create: `main/.../api/RecurringApi.kt`, `main/.../store/StoreRecurringApi.kt`, `test/.../api/contract/RecurringApiContract.kt`, `test/.../data/RealRecurringTest.kt`
+- Create: `main/.../api/RecurringApi.kt`, `main/.../store/StoreRecurringApi.kt`, `test/.../api/contract/RecurringApiContract.kt`, `test/.../data/RealRecurringTest.kt`, `test/.../store/StoreRecurringApiTest.kt`
 - Modify: `main/.../api/Apis.kt`, `main/.../di/ApiModule.kt`, `main/.../fake/FakeApis.kt`, `main/.../fake/SeedData.kt`, `fake/.../di/BackendModule.kt`, `real/.../di/BackendModule.kt`, `main/.../data/RealBackend.kt`, `docs/ui-contributor-guide.md`, `docs/m2-ui-contract-changes.md`
 - Modify (tests): `test/.../fake/FakeContractTests.kt`, `test/.../data/RealContractTests.kt`, `test/.../fake/SeedDataTest.kt`
 
@@ -1146,6 +1228,64 @@ and add after `the seed has a group expense with two payers` (Part 2):
     }
 ```
 
+Create `test/.../store/StoreRecurringApiTest.kt`:
+
+```kotlin
+package io.github.codex07.iou.store
+
+import io.github.codex07.iou.api.LedgerError
+import io.github.codex07.iou.api.LedgerResult
+import io.github.codex07.iou.ledger.model.DeviceId
+import io.github.codex07.iou.testutil.ME
+import io.github.codex07.iou.testutil.SequentialIds
+import io.github.codex07.iou.testutil.TestLedger
+import io.github.codex07.iou.testutil.eur
+import io.kotest.matchers.shouldBe
+import java.time.Clock
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+
+/** Date-relative reads follow the runner's passes (spec §5.7). */
+class StoreRecurringApiTest {
+
+    /** A clock the test moves (UTC). */
+    private class MovingClock(var at: Instant) : Clock() {
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+
+        override fun withZone(zone: ZoneId): Clock = this
+
+        override fun instant(): Instant = at
+    }
+
+    @Test
+    fun `an open due list shows a new day's occurrence after a pass that writes nothing`() = runTest {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        ledger.schedule(ME, eur(90_000), listOf(ME, x), startOn = LocalDate.parse("2026-12-01"))
+        val clock = MovingClock(Instant.parse("2026-11-30T10:00:00Z"))
+        val store = LedgerStore(clock, SequentialIds("api"), DeviceId("device-test"), initial = LedgerContent(ledger.state))
+        val runner = RecurringRunner(store, QuoteSource { _, from, to -> LedgerResult.Err(LedgerError.RateRequired(from, to)) })
+        val seen = mutableListOf<List<LocalDate>>()
+        backgroundScope.launch { StoreRecurringApi(store, runner).observeDue().collect { due -> seen += due.map { it.date } } }
+        runCurrent()
+        seen.last() shouldBe emptyList()
+
+        clock.at = Instant.parse("2026-12-01T10:00:00Z")
+        runner.run() shouldBe emptyList()
+        runCurrent()
+        seen.last() shouldBe listOf(LocalDate.parse("2026-12-01"))
+    }
+}
+```
+
+The schedule is confirm-first, so the pass writes nothing and the ledger flow does not emit; only the runner's new day restarts the read.
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.fake.FakeRecurringApiContractTest"`
@@ -1255,24 +1395,34 @@ import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.ledger.ops.Planned
 import io.github.codex07.iou.ledger.ops.RecurringOps
 import io.github.codex07.iou.ledger.ops.WriteContext
+import io.github.codex07.iou.ledger.views.LedgerViews
 import io.github.codex07.iou.ledger.views.dueOccurrences
 import io.github.codex07.iou.ledger.views.occurrenceDraft
 import io.github.codex07.iou.ledger.views.schedule
 import io.github.codex07.iou.ledger.views.schedules
 import java.time.LocalDate
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 
-/** [RecurringApi] for both flavors. Dates are relative to the store's today (device zone). */
+/**
+ * [RecurringApi] for both flavors. Dates are relative to the store's today (device zone), taken on every emission;
+ * the date-relative reads also start over whenever a runner pass runs for a new day ([RecurringRunner.today]), so
+ * an open due list catches up with the pass even when that pass writes nothing (spec §5.7).
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
 class StoreRecurringApi(private val store: LedgerStore, private val runner: RecurringRunner) : RecurringApi {
 
     override fun observeSchedules(includeDeleted: Boolean, onHold: Boolean?): Flow<List<ScheduleSummary>> =
-        store.read { it.schedules(includeDeleted, onHold, store.today()) }
+        dated { it.schedules(includeDeleted, onHold, store.today()) }
 
-    override fun observeSchedule(id: RecurringId): Flow<ScheduleDetail?> = store.read { it.schedule(id, store.today()) }
+    override fun observeSchedule(id: RecurringId): Flow<ScheduleDetail?> = dated { it.schedule(id, store.today()) }
 
     override fun observeDue(): Flow<List<DueOccurrence>> =
-        combine(store.read { it.dueOccurrences(store.today()) }, runner.errors) { due, errors -> RecurringRunner.withErrors(due, errors) }
+        combine(dated { it.dueOccurrences(store.today()) }, runner.errors) { due, errors -> RecurringRunner.withErrors(due, errors) }
+
+    private fun <T> dated(project: (LedgerViews) -> T): Flow<T> = runner.today.flatMapLatest { store.read(project) }
 
     override suspend fun saveSchedule(draft: RecurringDraft, mode: ScheduleSaveMode): LedgerResult<RecurringId> =
         written { RecurringOps.save(it, draft, mode) }
@@ -1490,8 +1640,8 @@ The rent's next date after the one due is a month later, so exactly one date is 
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.fake.*"`
-Expected: PASS, the four recurring contract tests and the seed tests included.
+Run: `.\gradlew.bat testFakeDebugUnitTest --tests "io.github.codex07.iou.fake.*" --tests "io.github.codex07.iou.store.StoreRecurringApiTest"`
+Expected: PASS, the four recurring contract tests, the seed tests and `StoreRecurringApiTest` included.
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.data.RealRecurringApiContractTest" --tests "io.github.codex07.iou.data.RealRecurringTest" --tests "io.github.codex07.iou.data.BackupFormatTest" --tests "io.github.codex07.iou.data.RoomJournalTest"`
 Expected: PASS. The seeded backup and journal round trips now carry the two schedules and their revisions.
@@ -1540,8 +1690,8 @@ git commit -m "Expose schedules through RecurringApi in both flavors and seed tw
 - Modify: `main/.../IouApplication.kt`, `main/.../data/RealBackend.kt`, `real/.../di/BackendModule.kt`, `android/app/src/real/AndroidManifest.xml`, `docs/manual-test-checklist.md`
 
 **Interfaces:**
-- Consumes: `RecurringNotices`, `PostedOccurrence`, `RecurringRunner.start` / `request` / `run` (Task 2), `RealBackend.runner` (Task 3), `RateRefreshWorker.Backend` (the existing Hilt entry point), `File.writeAtomically` (`data/DbFiles.kt`), `DeviceSettingsStore`.
-- Produces: `RecurringNoticePlanner.plan(due, posted, locked, lastNotified): NoticePlan` with `NoticePlan(show: List<DueNotice>, cancel: Set<RecurringId>, posted: PostedNotice?, notified: Map<String, String>)`, `DueNotice(schedule, title, text)`, `PostedNotice(title, text)`; `RecurringNotifiedFile(file)` with `read()` / `write(map)`; `AndroidRecurringNotices(context, notified, locked)`; `RecurringTriggers` (Hilt-injected, `install(scope)`); `RecurringPostWorker` (`NAME = "recurring-post"`, `schedule(context)`); `RealBackend(..., notices: (DeviceSettingsStore) -> RecurringNotices)`.
+- Consumes: `RecurringNotices`, `PostedOccurrence`, `RecurringRunner.start` / `request` / `run` (Task 2), `RealBackend.runner` (Task 3), `RateRefreshWorker.Backend` (the existing Hilt entry point), `File.writeAtomically` (`data/DbFiles.kt`), `DeviceSettingsStore` / `DeviceSettings`; the serialization plugin (`@Serializable`).
+- Produces: `RecurringNoticePlanner.plan(due, posted, locked, last: NotifiedRecord): NoticePlan` with `NoticePlan(show: List<DueNotice>, cancel: Set<RecurringId>, summary: Int?, posted: PostedNotice?, cancelPosted: Boolean, notified: NotifiedRecord)`, `NotifiedRecord(due: Map<String, String>, detailedPosted: Boolean)`, `DueNotice(schedule, title, text, silent)`, `PostedNotice(title, text)`; `RecurringNotifiedFile(file)` with `read(): NotifiedRecord` / `write(record)`; `AndroidRecurringNotices(context, notified, settings: StateFlow<DeviceSettings>)` with `redraw` on app-lock changes; `RecurringTriggers` (Hilt-injected, `install(scope)`); `RecurringPostWorker` (`NAME = "recurring-post"`, `schedule(context)`); `RealBackend(..., notices: (DeviceSettingsStore) -> RecurringNotices)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1574,7 +1724,7 @@ class RecurringNoticePlannerTest {
 
     @Test
     fun `a schedule is notified once per oldest due occurrence, and cancelled when nothing is due`() {
-        val first = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01"), due(rent, "2026-04-01")), emptyList(), false, emptyMap())
+        val first = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01"), due(rent, "2026-04-01")), emptyList(), false, NotifiedRecord())
         first.show.map { it.schedule } shouldBe listOf(rent)
         first.show.single().text shouldContain "2 due"
         first.show.single().text shouldContain "2026-03-01"
@@ -1590,29 +1740,65 @@ class RecurringNoticePlannerTest {
 
         val done = RecurringNoticePlanner.plan(emptyList(), emptyList(), false, failed.notified)
         done.cancel shouldBe setOf(rent)
-        done.notified shouldBe emptyMap()
+        done.notified shouldBe NotifiedRecord()
     }
 
     @Test
     fun `a backlog says why auto-post waits, and posted occurrences get one summary`() {
         val posted = listOf(PostedOccurrence(gym, "Gym", d("2026-03-01"), eur(4_000)))
-        val plan = RecurringNoticePlanner.plan(listOf(due(rent, "2026-02-01", autoPost = true, waits = true)), posted, false, emptyMap())
+        val plan = RecurringNoticePlanner.plan(listOf(due(rent, "2026-02-01", autoPost = true, waits = true)), posted, false, NotifiedRecord())
 
         plan.show.single().text shouldContain "Older dates need confirmation"
         plan.posted!!.text shouldContain "Gym 40.00 EUR, 2026-03-01"
-        RecurringNoticePlanner.plan(emptyList(), emptyList(), false, emptyMap()).posted shouldBe null
+        RecurringNoticePlanner.plan(emptyList(), emptyList(), false, NotifiedRecord()).posted shouldBe null
     }
 
     @Test
     fun `while app lock is on, texts name no description or amount`() {
         val posted = listOf(PostedOccurrence(gym, "Gym", d("2026-03-01"), eur(4_000)), PostedOccurrence(gym, "Gym", d("2026-03-08"), eur(4_000)))
-        val plan = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01"), due(rent, "2026-04-01")), posted, true, emptyMap())
+        val plan = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01"), due(rent, "2026-04-01")), posted, true, NotifiedRecord())
 
         val notice = plan.show.single()
         "${notice.title} ${notice.text}" shouldNotContain "Rent"
         "${notice.title} ${notice.text}" shouldNotContain "900.00"
         notice.text shouldBe "2 recurring expenses are due"
         plan.posted!!.text shouldBe "2 recurring expenses were posted"
+    }
+
+    @Test
+    fun `switching app lock on redraws shown notices silently and redacted, and takes a detailed posted summary away`() {
+        val posted = listOf(PostedOccurrence(gym, "Gym", d("2026-03-01"), eur(4_000)))
+        val open = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01")), posted, false, NotifiedRecord())
+        open.notified.detailedPosted shouldBe true
+
+        val locked = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01")), emptyList(), true, open.notified)
+        val notice = locked.show.single()
+        notice.silent shouldBe true
+        "${notice.title} ${notice.text}" shouldNotContain "Rent"
+        locked.cancelPosted shouldBe true
+        locked.notified.detailedPosted shouldBe false
+
+        val again = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01")), emptyList(), true, locked.notified)
+        again.show shouldBe emptyList()
+        again.cancelPosted shouldBe false
+
+        val newDate = RecurringNoticePlanner.plan(listOf(due(rent, "2026-04-01")), emptyList(), true, again.notified)
+        newDate.show.single().silent shouldBe false
+    }
+
+    @Test
+    fun `the group summary is drawn only when the group changes`() {
+        val both = listOf(due(rent, "2026-03-01"), due(gym, "2026-03-01"))
+        val first = RecurringNoticePlanner.plan(both, emptyList(), false, NotifiedRecord())
+        first.summary shouldBe 2
+
+        val unchanged = RecurringNoticePlanner.plan(both, emptyList(), false, first.notified)
+        unchanged.show shouldBe emptyList()
+        unchanged.summary shouldBe null
+
+        val one = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01")), emptyList(), false, unchanged.notified)
+        one.cancel shouldBe setOf(gym)
+        one.summary shouldBe 0
     }
 }
 ```
@@ -1622,6 +1808,7 @@ Create `test/.../data/RecurringNotifiedFileTest.kt`:
 ```kotlin
 package io.github.codex07.iou.data
 
+import io.github.codex07.iou.store.NotifiedRecord
 import io.kotest.matchers.shouldBe
 import java.io.File
 import org.junit.jupiter.api.Test
@@ -1636,13 +1823,14 @@ class RecurringNotifiedFileTest {
     @Test
     fun `it round-trips, and a missing or unreadable file reads as empty`() {
         val file = RecurringNotifiedFile(File(dir, "recurring-notified.json"))
-        file.read() shouldBe emptyMap()
+        file.read() shouldBe NotifiedRecord()
 
-        file.write(mapOf("rent" to "2026-03-01|null|false"))
-        file.read() shouldBe mapOf("rent" to "2026-03-01|null|false")
+        val record = NotifiedRecord(mapOf("rent" to "2026-03-01|null|false|open"), detailedPosted = true)
+        file.write(record)
+        file.read() shouldBe record
 
         File(dir, "recurring-notified.json").writeText("not json")
-        file.read() shouldBe emptyMap()
+        file.read() shouldBe NotifiedRecord()
     }
 }
 ```
@@ -1663,56 +1851,78 @@ import io.github.codex07.iou.api.DueOccurrence
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.ledger.model.RecurringId
 
-/** One "due" notification: about [schedule], drawn with [title] and [text]. */
-data class DueNotice(val schedule: RecurringId, val title: String, val text: String)
+/** One "due" notification: about [schedule], drawn with [title] and [text]; [silent] when only its redaction changed. */
+data class DueNotice(val schedule: RecurringId, val title: String, val text: String, val silent: Boolean = false)
 
 /** The "posted" summary of one runner pass. */
 data class PostedNotice(val title: String, val text: String)
 
 /**
- * What the notifier changes after a pass: due notifications to show (new or changed), schedules whose notification
- * goes because nothing is due any more, the posted summary, and the new content of the notified file
- * (schedule ID → the key of what was last notified).
+ * What the notifier last drew (spec §5.7), the content of the notified file: per schedule ID the key of its due
+ * notification (what it showed, and whether it was redacted), and whether a "posted" summary with details may still
+ * be showing.
+ */
+data class NotifiedRecord(val due: Map<String, String> = emptyMap(), val detailedPosted: Boolean = false)
+
+/**
+ * What the notifier changes after a pass: due notifications to show (new, changed, or redrawn for a change of app
+ * lock), schedules whose notification goes because nothing is due any more, the due group's [summary] (draw it for
+ * that many schedules, 0 = remove it, null = leave it as it is), the posted summary, whether to remove a detailed
+ * posted summary, and the new [notified] record.
  */
 data class NoticePlan(
     val show: List<DueNotice>,
     val cancel: Set<RecurringId>,
+    val summary: Int?,
     val posted: PostedNotice?,
-    val notified: Map<String, String>,
+    val cancelPosted: Boolean,
+    val notified: NotifiedRecord,
 )
 
 /**
  * The notification logic of spec §5.7, without Android: one due notification per schedule with due occurrences,
- * shown again only when its oldest due occurrence, failure or backlog state changes; texts that name no person,
- * amount or description while app lock is on.
+ * shown again only when its oldest due occurrence, failure or backlog state changes, and redrawn silently when app
+ * lock is switched on or off; texts that name no person, amount or description while app lock is on, and no detailed
+ * posted summary left showing once it is on. The group summary is redrawn only when the group changes.
  */
 object RecurringNoticePlanner {
 
-    fun plan(due: List<DueOccurrence>, posted: List<PostedOccurrence>, locked: Boolean, lastNotified: Map<String, String>): NoticePlan {
+    fun plan(due: List<DueOccurrence>, posted: List<PostedOccurrence>, locked: Boolean, last: NotifiedRecord): NoticePlan {
         val bySchedule = due.groupBy { it.schedule }.toSortedMap(compareBy { it.value })
-        val keys = bySchedule.mapValues { (_, items) -> key(items.first()) }
+        val drawn = if (locked) "locked" else "open"
+        val keys = bySchedule.mapValues { (_, items) -> "${key(items.first())}|$drawn" }
         val show = bySchedule
-            .filter { (id, _) -> lastNotified[id.value] != keys.getValue(id) }
-            .map { (id, items) -> dueNotice(id, items, locked) }
-        val cancel = lastNotified.keys.map(::RecurringId).filter { it !in bySchedule }.toSet()
-        val summary = posted.takeIf { it.isNotEmpty() }?.let { postedNotice(it, locked) }
-        return NoticePlan(show, cancel, summary, keys.mapKeys { it.key.value })
+            .filter { (id, _) -> last.due[id.value] != keys.getValue(id) }
+            .map { (id, items) ->
+                val before = last.due[id.value]?.substringBeforeLast('|')
+                dueNotice(id, items, locked, silent = before == key(items.first()))
+            }
+        val cancel = last.due.keys.map(::RecurringId).filter { it !in bySchedule }.toSet()
+        val summary = when {
+            bySchedule.size <= 1 -> 0
+            show.isNotEmpty() || cancel.isNotEmpty() -> bySchedule.size
+            else -> null
+        }
+        val postedNotice = posted.takeIf { it.isNotEmpty() }?.let { postedNotice(it, locked) }
+        val cancelPosted = postedNotice == null && locked && last.detailedPosted
+        val detailed = if (postedNotice != null) !locked else last.detailedPosted && !cancelPosted
+        return NoticePlan(show, cancel, summary, postedNotice, cancelPosted, NotifiedRecord(keys.mapKeys { it.key.value }, detailed))
     }
 
     /** What makes a due notification worth showing again: its oldest occurrence, its failure, its backlog state. */
     private fun key(oldest: DueOccurrence): String =
         "${oldest.date}|${oldest.autoPostError?.let { it::class.simpleName }}|${oldest.confirmToResume}"
 
-    private fun dueNotice(id: RecurringId, items: List<DueOccurrence>, locked: Boolean): DueNotice {
+    private fun dueNotice(id: RecurringId, items: List<DueOccurrence>, locked: Boolean, silent: Boolean): DueNotice {
         val oldest = items.first()
         if (locked) {
             val text = if (items.size == 1) "1 recurring expense is due" else "${items.size} recurring expenses are due"
-            return DueNotice(id, "Recurring expenses due", text)
+            return DueNotice(id, "Recurring expenses due", text, silent)
         }
         val why = oldest.autoPostError?.let(::reason)
             ?: "Older dates need confirmation before auto-posting continues.".takeIf { oldest.confirmToResume }
         val text = "${items.size} due, oldest ${oldest.date}: ${oldest.amount}" + (why?.let { ". $it" } ?: "")
-        return DueNotice(id, oldest.description, text)
+        return DueNotice(id, oldest.description, text, silent)
     }
 
     private fun postedNotice(posted: List<PostedOccurrence>, locked: Boolean): PostedNotice {
@@ -1740,34 +1950,33 @@ Create `main/.../data/RecurringNotifiedFile.kt`:
 ```kotlin
 package io.github.codex07.iou.data
 
+import io.github.codex07.iou.store.NotifiedRecord
 import java.io.File
 import java.io.IOException
-import kotlinx.serialization.builtins.MapSerializer
-import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * What each schedule's due notification last showed (spec §5.7): `noBackupFilesDir/recurring-notified.json`,
- * device-local, never backed up, replaced atomically. Unreadable reads as empty, which at worst repeats a notification.
+ * What the notifier last drew (spec §5.7): `noBackupFilesDir/recurring-notified.json`, device-local, never backed
+ * up, replaced atomically. Unreadable reads as empty, which at worst repeats a notification.
  */
 class RecurringNotifiedFile(private val file: File) {
 
-    fun read(): Map<String, String> = if (!file.exists()) emptyMap() else try {
-        Json.decodeFromString(serializer, file.readText())
+    fun read(): NotifiedRecord = if (!file.exists()) NotifiedRecord() else try {
+        Json.decodeFromString(Stored.serializer(), file.readText()).let { NotifiedRecord(it.due, it.detailedPosted) }
     } catch (_: IllegalArgumentException) { // includes SerializationException
-        emptyMap()
+        NotifiedRecord()
     } catch (_: IOException) {
-        emptyMap()
+        NotifiedRecord()
     }
 
-    fun write(notified: Map<String, String>) {
+    fun write(record: NotifiedRecord) {
         file.parentFile?.mkdirs()
-        file.writeAtomically(Json.encodeToString(serializer, notified))
+        file.writeAtomically(Json.encodeToString(Stored.serializer(), Stored(record.due, record.detailedPosted)))
     }
 
-    private companion object {
-        val serializer = MapSerializer(String.serializer(), String.serializer())
-    }
+    @Serializable
+    private data class Stored(val due: Map<String, String> = emptyMap(), val detailedPosted: Boolean = false)
 }
 ```
 
@@ -1785,52 +1994,63 @@ import androidx.core.app.NotificationManagerCompat
 import io.github.codex07.iou.MainActivity
 import io.github.codex07.iou.api.DueOccurrence
 import io.github.codex07.iou.ledger.model.RecurringId
+import io.github.codex07.iou.store.DeviceSettings
+import io.github.codex07.iou.store.NotifiedRecord
 import io.github.codex07.iou.store.PostedOccurrence
 import io.github.codex07.iou.store.RecurringNoticePlanner
 import io.github.codex07.iou.store.RecurringNotices
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 /**
  * The real flavor's notifications (spec §5.7): "due" per schedule, one "posted" summary per pass, redacted while app
- * lock is on ([locked]). Without the notification permission nothing is shown and nothing new is recorded, so the
- * notifications appear once it is granted.
+ * lock is on ([settings]). Switching app lock on or off asks for a pass ([redraw]), which redraws the due
+ * notifications silently and, when it goes on, removes a detailed posted summary. Without the notification permission
+ * nothing is shown and nothing new is recorded, so the notifications appear once it is granted.
  */
 class AndroidRecurringNotices(
     private val context: Context,
     private val notified: RecurringNotifiedFile,
-    private val locked: () -> Boolean,
+    private val settings: StateFlow<DeviceSettings>,
 ) : RecurringNotices {
+
+    override val redraw: Flow<Unit> = settings.map { it.appLockEnabled }.distinctUntilChanged().drop(1).map { }
 
     override suspend fun afterRun(due: List<DueOccurrence>, posted: List<PostedOccurrence>) = withContext(Dispatchers.IO) {
         val manager = NotificationManagerCompat.from(context)
         val last = notified.read()
-        val plan = RecurringNoticePlanner.plan(due, posted, locked(), last)
+        val plan = RecurringNoticePlanner.plan(due, posted, settings.value.appLockEnabled, last)
         plan.cancel.forEach { manager.cancel(it.value, DUE_ID) }
+        if (plan.summary == 0) manager.cancel(GROUP_SUMMARY_TAG, DUE_ID)
+        if (plan.cancelPosted) manager.cancel(POSTED_TAG, POSTED_ID)
+        // What a pass that can't draw records: cancellations happened, nothing new was shown.
+        val undrawn = NotifiedRecord(last.due.filterKeys { it in plan.notified.due }, last.detailedPosted && !plan.cancelPosted)
         if (!manager.areNotificationsEnabled()) {
-            notified.write(last.filterKeys { it in plan.notified })
+            notified.write(undrawn)
             return@withContext
         }
         createChannels(manager)
         try {
+            val single = plan.notified.due.size == 1
             for (notice in plan.show) {
-                val single = plan.notified.size == 1
-                manager.notify(notice.schedule.value, DUE_ID, build(DUE_CHANNEL, notice.title, notice.text, if (single) notice.schedule else null))
+                val schedule = if (single) notice.schedule else null
+                manager.notify(notice.schedule.value, DUE_ID, build(DUE_CHANNEL, notice.title, notice.text, schedule, notice.silent))
             }
-            if (plan.notified.size > 1) {
-                manager.notify(GROUP_SUMMARY_TAG, DUE_ID, summary(plan.notified.size))
-            } else {
-                manager.cancel(GROUP_SUMMARY_TAG, DUE_ID)
-            }
-            plan.posted?.let { manager.notify(POSTED_TAG, POSTED_ID, build(POSTED_CHANNEL, it.title, it.text, null)) }
+            plan.summary?.takeIf { it > 1 }?.let { manager.notify(GROUP_SUMMARY_TAG, DUE_ID, summary(it)) }
+            plan.posted?.let { manager.notify(POSTED_TAG, POSTED_ID, build(POSTED_CHANNEL, it.title, it.text, null, silent = false)) }
             notified.write(plan.notified)
         } catch (_: SecurityException) {
             // The permission was revoked between the check and the post: show nothing, record nothing new.
-            notified.write(last.filterKeys { it in plan.notified })
+            notified.write(undrawn)
         }
     }
 
-    private fun build(channel: String, title: String, text: String, schedule: RecurringId?) =
+    private fun build(channel: String, title: String, text: String, schedule: RecurringId?, silent: Boolean) =
         NotificationCompat.Builder(context, channel)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setContentTitle(title)
@@ -1839,9 +2059,11 @@ class AndroidRecurringNotices(
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
             .setGroup(if (channel == DUE_CHANNEL) DUE_GROUP else null)
+            .setSilent(silent)
             .setContentIntent(openDue(schedule))
             .build()
 
+    /** The due group's summary. It never alerts: only a new or changed due notification does. */
     private fun summary(count: Int) = NotificationCompat.Builder(context, DUE_CHANNEL)
         .setSmallIcon(android.R.drawable.ic_popup_reminder)
         .setContentTitle("Recurring expenses due")
@@ -1849,6 +2071,8 @@ class AndroidRecurringNotices(
         .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
         .setGroup(DUE_GROUP)
         .setGroupSummary(true)
+        .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+        .setSilent(true)
         .setAutoCancel(true)
         .setContentIntent(openDue(null))
         .build()
@@ -1888,6 +2112,8 @@ class AndroidRecurringNotices(
 }
 ```
 
+`NotificationCompat.Builder.setSilent` (androidx.core 1.5+, the project has 1.16) keeps a redraw that only changes the redaction from alerting again; on the summary it sets the group to alert through its children only.
+
 In `main/.../data/RealBackend.kt`, add the imports `io.github.codex07.iou.store.DeviceSettingsStore` and `io.github.codex07.iou.store.RecurringNotices`. Add a constructor parameter after `rateCache`:
 
 ```kotlin
@@ -1910,9 +2136,7 @@ and in `android(context)`, add after `zone = { ZoneId.systemDefault() },`:
 
 ```kotlin
                 notices = { device ->
-                    AndroidRecurringNotices(app, RecurringNotifiedFile(File(app.noBackupFilesDir, "recurring-notified.json"))) {
-                        device.settings.value.appLockEnabled
-                    }
+                    AndroidRecurringNotices(app, RecurringNotifiedFile(File(app.noBackupFilesDir, "recurring-notified.json")), device.settings)
                 },
 ```
 
@@ -2040,7 +2264,7 @@ with:
 - [ ] **Step 5: Run the tests and the full check**
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.store.RecurringNoticePlannerTest" --tests "io.github.codex07.iou.data.RecurringNotifiedFileTest"`
-Expected: PASS, 4 tests.
+Expected: PASS, 6 tests.
 
 Run the full check (index, locked decision 9): both JVM suites, the three assembles, both lints. Expected: all tests pass in both flavors, lint 0 errors. If lint reports `NotificationPermission` or `MissingPermission` on `AndroidRecurringNotices`, the `areNotificationsEnabled()` check and the `SecurityException` catch are the intended handling: add `@SuppressLint("MissingPermission")` on `afterRun` with a comment saying so, and nothing else.
 
@@ -2057,9 +2281,10 @@ Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug bu
 1. Create an auto-post schedule whose first date is today, close the app, open it again: the expense is posted once; reopening posts nothing more (AC 29).
 2. Grant notifications. With the app closed, run the worker on demand: `adb shell cmd jobscheduler run -f io.github.codex07.iou <job id>` (find the id with `adb shell dumpsys jobscheduler | grep -A2 io.github.codex07.iou`). An auto-post date that came due is posted and one "Recurring expenses posted" notification appears.
 3. A confirm-first schedule that becomes due shows one "due" notification; running the worker again does not repeat it; posting the date in the app removes it.
-4. Turn app lock on and repeat 2–3: neither notification names a person, an amount or a description.
+4. Turn app lock on and repeat 2–3: neither notification names a person, an amount or a description. Then, with a detailed due and a detailed posted notification showing (lock off), switch app lock on in the app: the due notification is redrawn without its description or amount and makes no sound, and the posted one is removed.
 5. Deny or revoke the notification permission and run the worker: the date is still posted, nothing is shown.
 6. Tap a due notification: `MainActivity` opens with `iou.open = "due"` (and `iou.schedule` for one schedule); `adb shell dumpsys activity activities | grep iou.open` shows the extra if the UI does not yet handle it.
+7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34).
 
 - [ ] Result recorded:
 ```
