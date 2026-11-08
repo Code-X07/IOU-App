@@ -6,6 +6,7 @@ import io.github.codex07.iou.api.OverviewRow
 import io.github.codex07.iou.api.SetupState
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.LedgerEntity
+import io.github.codex07.iou.money.Money
 import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.SEK
 import io.github.codex07.iou.testutil.SequentialIds
@@ -46,6 +47,12 @@ class SeedDataTest {
         val tripActivity = apis.ledger.observeActivity(ActivityFilter(groupId = trip.group.id)).first()
         tripActivity.any { it.paid.currency.code == "SEK" && it.effect.currency == EUR } shouldBe true
         apis.groups.observeGroup(trip.group.id).first()!!.settlePlan.shouldNotBeEmpty()
+    }
+
+    @Test
+    fun `the seed has a group expense with two payers`() = runTest {
+        val museum = apis.ledger.observeActivity().first().single { it.description == "Museum tickets" }
+        museum.payers.map { it.person.displayName to it.paid } shouldBe listOf("Alex" to Money(5_000, EUR), "Bea" to Money(3_000, EUR))
     }
 
     @Test

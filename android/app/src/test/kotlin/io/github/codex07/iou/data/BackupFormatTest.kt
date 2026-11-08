@@ -5,6 +5,7 @@ import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.fake.FakeApis
 import io.github.codex07.iou.fake.SeedData
 import io.github.codex07.iou.fx.CachedRate
+import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.store.LedgerContent
 import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.EUR
@@ -23,6 +24,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 
 class BackupFormatTest {
@@ -59,25 +61,32 @@ class BackupFormatTest {
 
     @Test
     fun `a version-1 backup reads as the same ledger with one payer per expense`() {
-        val content = (format.read(format.write(rows, "0.1.0", T0, null), null) as LedgerResult.Ok).value.content
-        val document = Json.parseToJsonElement(format.write(rows, "0.1.0", T0, null).toString(Charsets.UTF_8)).jsonObject
+        val written = format.write(rows, "0.1.0", T0, null)
+        val content = (format.read(written, null) as LedgerResult.Ok).value.content
+        val document = Json.parseToJsonElement(written.toString(Charsets.UTF_8)).jsonObject
         val v2Rows = document.getValue("rows").jsonObject
-        val payerOf = v2Rows.getValue("payers").jsonArray.map { it.jsonObject }
-            .associate { it.getValue("expenseId") to it.getValue("personId") }
-        val v1Expenses = v2Rows.getValue("expenses").jsonArray.map { it.jsonObject }.map { expense ->
+        val payerRows = v2Rows.getValue("payers").jsonArray.map { it.jsonObject }
+        // A version-1 backup holds single-payer expenses only: the seed's two-payer expense and its rows stay out.
+        val multi = payerRows.groupBy { it.getValue("expenseId") }.filterValues { it.size > 1 }.keys
+        val payerOf = payerRows.associate { it.getValue("expenseId") to it.getValue("personId") }
+        fun JsonObject.kept(key: String) = getValue(key) !in multi
+        fun table(name: String, key: String) = JsonArray(v2Rows.getValue(name).jsonArray.map { it.jsonObject }.filter { it.kept(key) })
+        val v1Expenses = v2Rows.getValue("expenses").jsonArray.map { it.jsonObject }.filter { it.kept("id") }.map { expense ->
             JsonObject(expense - "payerSplit" + ("payerPersonId" to payerOf.getValue(expense.getValue("id"))))
         }
-        val v1 = JsonObject(
-            document + mapOf(
-                "schemaVersion" to JsonPrimitive(1),
-                "rows" to JsonObject(v2Rows - "payers" + ("expenses" to JsonArray(v1Expenses))),
-            ),
+        val v1Rows = v2Rows - "payers" + mapOf(
+            "expenses" to JsonArray(v1Expenses),
+            "shares" to table("shares", "expenseId"),
+            "revisions" to table("revisions", "entityId"),
         )
+        val v1 = JsonObject(document + mapOf("schemaVersion" to JsonPrimitive(1), "rows" to JsonObject(v1Rows)))
 
         val read = format.read(v1.toString().toByteArray(), null)
 
-        (read as LedgerResult.Ok).value.content shouldBe content
-        read.value.rows.payers.size shouldBe content.state.expenses.size
+        val left = multi.map { EntryId(it.jsonPrimitive.content) }.toSet()
+        left.size shouldBe 1
+        (read as LedgerResult.Ok).value.content.state shouldBe content.state.copy(expenses = content.state.expenses - left)
+        read.value.rows.payers.size shouldBe content.state.expenses.size - 1
     }
 
     @Test

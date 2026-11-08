@@ -19,6 +19,7 @@ import io.github.codex07.iou.ledger.model.ImportBatch
 import io.github.codex07.iou.ledger.model.ImportBatchId
 import io.github.codex07.iou.ledger.model.ImportSource
 import io.github.codex07.iou.ledger.model.LedgerEntity
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
@@ -99,6 +100,13 @@ object SeedData {
         )
         expense(ExpenseDraft(chen, "Groceries", Category.GROCERIES, Money(6_350, eur), trip, SplitType.SHARES,
             listOf(SplitInput(me, 1), SplitInput(alex, 2), SplitInput(chen, 1)), today.minusDays(18)))
+        // Two payers: Alex and Bea bought the museum tickets together.
+        expense(
+            ExpenseDraft(
+                listOf(SplitInput(alex, 5_000), SplitInput(bea, 3_000)), "Museum tickets", Category.ENTERTAINMENT, Money(8_000, eur), trip,
+                SplitType.EQUAL, everyone, today.minusDays(17), payerSplit = PayerSplit.EXACT,
+            ),
+        )
 
         // Group 2: KEEP flat with SEK rent and a EUR purchase.
         val flat = ok(store.write { GroupOps.createGroup(it, GroupDraft("Flat", sek, FxMode.KEEP), listOf(bea, chen), it.generation) })

@@ -4,9 +4,9 @@ Two new features are coming in M2: expenses paid by several people, and recurrin
 
 ## Multiple payers
 
-- `ExpenseDraft.payer` goes away. Instead: `payerSplit` (`EQUAL` or `EXACT`) and `payers: List<SplitInput>`, the same shape as `participants`. A single payer = one entry, no value.
+- `ExpenseDraft` has `payerSplit` (`EQUAL` or `EXACT`) and `payers: List<SplitInput>`, the same shape as `participants`. A single payer = one entry, no value. Until the form moves over, the old constructor `ExpenseDraft(payer, description, …)` still works and `draft.payer` (deprecated) returns the first payer. Editing a several-payer expense through `draft.payer` saves one payer, so the form should switch to `payers` before such expenses appear in real data (the fake already has one: "Museum tickets" in the Lisbon trip).
 - EXACT payer amounts must each be > 0 and add up to the total.
-- Read models: `paidBy` becomes `payers: List<PayerView(person, paid)>`. `previewSplit` also returns the resolved payers. Flows stay as they are.
+- Read models: `ActivityItem.payers: List<PayerView(person, paid, inputValue)>` next to `paidBy`, which stays as the first payer. `previewSplit` also returns the resolved payers, and when editing the stored ones and `payersRecomputed`. Flows stay as they are.
 - New errors: `NoPayers`, `PaidRemaining(diff)`, `DuplicatePayer(person)`; `NegativeInput` / `MissingInput` / `InvalidAmount` can now be about payers too.
 - Screens affected: the expense form, and everywhere that shows "paid by" (activity, entry detail, group expenses).
 - Existing expenses become "one payer, full amount"; no balance changes.
