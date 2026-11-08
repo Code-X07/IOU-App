@@ -81,6 +81,21 @@ class BackupFormatTest {
     }
 
     @Test
+    fun `a version-1 backup with an expense missing its payer is rejected, not thrown`() {
+        val document = Json.parseToJsonElement(format.write(rows, "0.1.0", T0, null).toString(Charsets.UTF_8)).jsonObject
+        val v2Rows = document.getValue("rows").jsonObject
+        val v1Expenses = v2Rows.getValue("expenses").jsonArray.map { JsonObject(it.jsonObject - "payerSplit") }
+        val v1 = JsonObject(
+            document + mapOf(
+                "schemaVersion" to JsonPrimitive(1),
+                "rows" to JsonObject(v2Rows - "payers" + ("expenses" to JsonArray(v1Expenses))),
+            ),
+        )
+
+        format.read(v1.toString().toByteArray(), null).error()::class shouldBe LedgerError.CorruptFile::class
+    }
+
+    @Test
     fun `files that aren't readable backups are rejected`() {
         val plain = format.write(rows, "0.1.0", T0, null)
         val text = plain.toString(Charsets.UTF_8)

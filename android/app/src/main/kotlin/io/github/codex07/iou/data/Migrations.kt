@@ -4,6 +4,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -59,10 +60,10 @@ object Migrations {
      */
     fun expense1To2(expense: JsonObject): Pair<JsonObject, JsonObject> {
         val payer = buildJsonObject {
-            put("expenseId", expense.getValue("id"))
-            put("personId", expense.getValue("payerPersonId"))
+            put("expenseId", expense.required("id"))
+            put("personId", expense.required("payerPersonId"))
             put("position", JsonPrimitive(0))
-            put("paidMinor", expense.getValue("effectTotalMinor"))
+            put("paidMinor", expense.required("effectTotalMinor"))
             put("inputValue", JsonNull)
         }
         return JsonObject(expense - "payerPersonId" + ("payerSplit" to JsonPrimitive("EQUAL"))) to payer
@@ -78,4 +79,8 @@ object Migrations {
             ),
         )
     }
+
+    /** A key every schema-1 expense row has; a missing one is a damaged file, reported like other bad rows. */
+    private fun JsonObject.required(key: String): JsonElement =
+        requireNotNull(this[key]) { "Schema-1 expense row without $key" }
 }
