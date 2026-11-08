@@ -85,7 +85,10 @@ class BackupFormatTest {
 
         val left = multi.map { EntryId(it.jsonPrimitive.content) }.toSet()
         left.size shouldBe 1
-        (read as LedgerResult.Ok).value.content.state shouldBe content.state.copy(expenses = content.state.expenses - left)
+        (read as LedgerResult.Ok).value.content shouldBe content.copy(
+            state = content.state.copy(expenses = content.state.expenses - left),
+            revisions = content.revisions.filter { EntryId(it.entityId) !in left },
+        )
         read.value.rows.payers.size shouldBe content.state.expenses.size - 1
     }
 
