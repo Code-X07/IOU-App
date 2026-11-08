@@ -156,7 +156,11 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   correctly, kept amounts numeric, and showed no formulas or hyperlinks. Excel 16's default open path did
   not split the semicolon files correctly; use the explicit import procedure above. These results cover
   those versions and the tested files.
-- [ ] XLSX export arrives in M2 (spec §7.3); check it then.
+- [ ] XLSX (spec §7.3, AC M2-15): `ExportSamplesTest` also writes `report.xlsx` and `normalized.xlsx`. Open both in
+  Excel and in LibreOffice Calc: they open without a repair prompt; dates are real dates (sortable, shown as
+  `yyyy-mm-dd`); amounts are numbers with the currency's decimals; `Summary`, `Report` and one sheet per group
+  exist; the person `=HYPERLINK("http://evil","x")` shows as text; the normalized workbook has one sheet per table
+  with numeric `*_minor` columns.
 - [ ] On a real-flavor build (Settings > Backup & data management), with synthetic data only:
   - Create backup with encryption off: the warning and its acknowledgement are required; the picker
     suggests `iou-backup.json`; the result says the backup was saved. Pulled file starts with `{` and holds
@@ -164,7 +168,7 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   - Create backup with encryption on: the picker suggests `iou-backup.ioub`; the pulled file starts with
     `IOUB`.
   - Export normalized CSV: the picker suggests `iou-export.zip`; the file is a ZIP with `manifest.json`.
-    Export a report: `iou-export.csv`. The Format field offers CSV only, with a line that XLSX arrives later.
+    Export a report: `iou-export.csv`. Until the UI offers XLSX (see `m2-ui-contract-changes.md`), the Format field offers CSV only, with a line that XLSX arrives later.
   - Restore a backup: the confirmation says the ledger is replaced; the result says it was replaced.
     Undo last restore says the same. Import a normalized ZIP: no "Simulation scenarios" are listed; the
     commit confirmation and result say the ledger changed; undoing the import reports complete or partial.
@@ -231,3 +235,21 @@ Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug bu
 7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34). Then post every due occurrence of one of them in the app: its notification goes, and the other schedule's notification is still shown (silently redrawn, without the group).
 
 - [ ] Result recorded:
+
+## 10. M2 import, XLSX on the device and the upgrade (spec §7.3–7.5, §14 item 1, AC M2-15, 16, 25)
+
+Use a disposable emulator instance (see `state.md`, "Devices and native QA") for the upgrade and the import, not
+the owner's long-lived AVD.
+
+- [ ] Install `v0.1.0` (the released APK), set up, add a person, a group with a removed member whose net is 0, and
+  a few expenses; create an unencrypted backup and a normalized export. Install the `v0.2.0` candidate over it
+  (`adb install -r`): the app starts, every balance and group net is unchanged, and every expense shows one payer
+  (AC 25).
+- [ ] On the upgraded app, export XLSX in both shapes (if the UI offers XLSX; otherwise export through a debug
+  build of the export screen or note it as waiting for the UI). Pull the files and open them in Excel and
+  LibreOffice: this is the FastExcel-on-Android check of spec §14 item 1.
+- [ ] Restore the `v0.1.0` backup and import the `v0.1.0` normalized export into a freshly set-up install (another
+  identity): the identity prompt appears, nothing is invalid, every net matches (AC 16, 25). Undo the import: it
+  reports nothing skipped and every net is 0.
+- [ ] Export the upgraded ledger with a schedule (normalized CSV) and import it back into the same install: every
+  row is a duplicate and nothing changes.

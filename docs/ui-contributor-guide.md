@@ -88,6 +88,10 @@ The core runs the policy and the window flag; you build the lock screen (spec §
   `SecurityViewModel` follows that flag only: leaving the foreground covers the content (privacy) but never locks it, and `MainActivity` and `IouRoot` never touch window flags.
 - Screen protection: `setScreenProtection(true)` is all you call. The core sets `FLAG_SECURE` on every activity window and follows later changes.
 
+## Export
+
+`ExportFormat.XLSX` takes both shapes: the report workbook (Summary, Report, one sheet per group) and the normalized workbook (one sheet per table). `excelFriendly` only applies to CSV.
+
 ## Errors
 
 `LedgerError` (in `api/LedgerError.kt`) is a sealed interface; map every case to a message. Each carries the data a good message needs, e.g. `ExactRemaining(diffMinor)`, `MemberHasBalance(groupId, personId, nets)`, `NeedsGroup(people)`. `RestoreConflict(violations)` after a revert means "this old version breaks today's rules"; offer **Open as draft** via `draftFromVersion(revision.entity, revision.version)` and open the edit form matching the `VersionDraft` (entry, person, handle or group).

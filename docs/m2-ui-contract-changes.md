@@ -27,6 +27,13 @@ Two new features are coming in M2: expenses paid by several people, and recurrin
 - UI work: ask for the `POST_NOTIFICATIONS` permission the first time a schedule is saved (Android 13+), and handle the `iou.open` extra on `MainActivity` (value `"due"`; `iou.schedule` carries the schedule ID when the notification is about one schedule) by opening the due list.
 - The fake build has no background job and no notifications; due items still appear in the fake.
 
+## Import and export
+
+- Group rows now import (groups, memberships, group entries), with the same "deleted with / restored with <owner>" rows as people and their handles; the owner is now a group or a person.
+- Schedules import too. A schedule whose copy in the file is further along moves forward by itself: its row has `forcedChanges` (also in `changes`) and nothing to choose. Please show such rows like the "deleted with" rows.
+- `balanceChanges` now also lists my net per group, labelled "<group> (group)", after the people.
+- XLSX export works for both shapes: the Format field can offer it (and drop the "XLSX arrives later" line).
+
 ## Fake data
 
 The fake will get a two-payer group expense, a monthly confirm-first schedule with one date due, and an auto-post schedule.

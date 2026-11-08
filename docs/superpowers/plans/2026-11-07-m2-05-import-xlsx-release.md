@@ -3988,7 +3988,7 @@ Check each replaced text against the spec before editing (grep it); where the wo
 
 - [ ] **Step 5: The UI docs**
 
-In `docs/ui-contributor-guide.md`, in the export section, replace the statement that XLSX is not available (search for `XLSX`) with: "`ExportFormat.XLSX` takes both shapes: the report workbook (Summary, Report, one sheet per group) and the normalized workbook (one sheet per table). `excelFriendly` only applies to CSV." Keep Task 3's paragraph on `forcedChanges` and group balance lines.
+In `docs/ui-contributor-guide.md`, add an `## Export` section before `## Errors` (the guide has no XLSX statement to replace) with: "`ExportFormat.XLSX` takes both shapes: the report workbook (Summary, Report, one sheet per group) and the normalized workbook (one sheet per table). `excelFriendly` only applies to CSV." Keep Task 3's paragraph on `forcedChanges` and group balance lines.
 
 In `docs/m2-ui-contract-changes.md`, add before `## Fake data`:
 
@@ -4018,6 +4018,8 @@ with:
   exist; the person `=HYPERLINK("http://evil","x")` shows as text; the normalized workbook has one sheet per table
   with numeric `*_minor` columns.
 ```
+
+Also, in the same section 6, the line "Export a report: `iou-export.csv`. The Format field offers CSV only, with a line that XLSX arrives later." stays true until the UI offers XLSX: start it with "Until the UI offers XLSX (see `m2-ui-contract-changes.md`),".
 
 Add a new section at the end of the file:
 
