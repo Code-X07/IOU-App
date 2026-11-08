@@ -121,4 +121,5 @@ sealed interface VersionDraft {
     data class OfPerson(val draft: PersonDraft) : VersionDraft
     data class OfHandle(val draft: HandleDraft) : VersionDraft
     data class OfGroup(val draft: GroupDraft) : VersionDraft
+    data class OfSchedule(val draft: RecurringDraft) : VersionDraft
 }

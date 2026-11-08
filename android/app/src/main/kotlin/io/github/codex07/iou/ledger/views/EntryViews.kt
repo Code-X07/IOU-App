@@ -77,7 +77,7 @@ fun LedgerViews.activityItem(entry: Entry): ActivityItem = when (entry) {
         note = entry.note, paidBy = personRef(entry.fromPersonId), payers = emptyList(), receiver = personRef(entry.toPersonId),
         participants = emptyList(), transferKind = entry.kind, category = null,
         group = entry.groupId?.let(::groupRef), paid = entry.amount, effect = entry.effectAmount,
-        myBalanceEffect = myEffect(entry), deleted = entry.isDeleted,
+        myBalanceEffect = myEffect(entry), deleted = entry.isDeleted, recurringId = null, recurringOn = null,
     )
     is Expense -> ActivityItem(
         entryId = entry.id, kind = EntryKind.EXPENSE, occurredOn = entry.occurredOn, description = entry.description,
@@ -85,7 +85,7 @@ fun LedgerViews.activityItem(entry: Entry): ActivityItem = when (entry) {
         participants = entry.shares.map { resolver.canonical(it.personId) }.distinct().map(::personRef),
         transferKind = null, category = entry.category,
         group = entry.groupId?.let(::groupRef), paid = entry.total, effect = entry.effectTotal,
-        myBalanceEffect = myEffect(entry), deleted = entry.isDeleted,
+        myBalanceEffect = myEffect(entry), deleted = entry.isDeleted, recurringId = entry.recurringId, recurringOn = entry.recurringOn,
     )
 }
 
@@ -194,6 +194,7 @@ fun LedgerViews.draftFromVersion(ref: EntityRef, version: Int): LedgerResult<Ver
         is Person -> VersionDraft.OfPerson(PersonDraft(old.displayName, old.note, old.defaultCurrency))
         is PaymentHandle -> VersionDraft.OfHandle(HandleDraft(old.type, old.value, old.label, old.holderName, old.bic, old.isDefault))
         is Group -> VersionDraft.OfGroup(GroupDraft(old.name, old.defaultCurrency, old.fxMode))
+        is RecurringExpense -> VersionDraft.OfSchedule(scheduleDraftOf(old))
         // Memberships have no edit form: the UI adds or removes the member instead.
         else -> return LedgerResult.Err(LedgerError.InvalidField("entity"))
     }

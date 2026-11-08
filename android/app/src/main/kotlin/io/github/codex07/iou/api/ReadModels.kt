@@ -11,6 +11,7 @@ import io.github.codex07.iou.ledger.model.HandleId
 import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.LedgerGeneration
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.money.CurrencyCode
@@ -226,6 +227,9 @@ data class ActivityItem(
      */
     val myBalanceEffect: Money?,
     val deleted: Boolean,
+    /** The schedule an expense was posted from and the occurrence it fills (spec §5.7); null otherwise. */
+    val recurringId: RecurringId?,
+    val recurringOn: LocalDate?,
 )
 
 /** All fields are optional filters; the list is newest first (date, then creation time). */
