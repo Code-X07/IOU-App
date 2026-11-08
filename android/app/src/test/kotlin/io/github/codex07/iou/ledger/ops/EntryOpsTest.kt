@@ -249,7 +249,7 @@ class EntryOpsTest {
         val transfer = ok(h.run { EntryOps.saveTransfer(it, transferDraft, SaveMode.Create(h.generation)) })
         val expense = ok(h.run { EntryOps.saveExpense(it, expenseDraft, SaveMode.Create(h.generation)) })
         h.state.transfers.getValue(transfer).toPersonId shouldBe alexB
-        h.state.expenses.getValue(expense).payerPersonId shouldBe alexB
+        h.state.expenses.getValue(expense).payers.single().personId shouldBe alexB
 
         // Unmerging leaves both new entries with alexB: +10.00 from the transfer, −15.00 from my share of lunch.
         h.run { PeopleOps.unmerge(it, alexA, h.token(h.state.people.getValue(alexA))) }

@@ -123,7 +123,7 @@ class LedgerExport(private val appVersion: String) {
             transfer?.kind?.name?.lowercase() ?: "expense",
             expense?.description?.let(TextEscaping::escape),
             entry.groupId?.let { state.groups[it]?.name }?.let(TextEscaping::escape),
-            expense?.let { name(it.payerPersonId) }?.let(TextEscaping::escape),
+            expense?.let { name(it.payers.first().personId) }?.let(TextEscaping::escape),
             transfer?.let { name(it.fromPersonId) }?.let(TextEscaping::escape),
             transfer?.let { name(it.toPersonId) }?.let(TextEscaping::escape),
             entry.paid.toPlainString(),

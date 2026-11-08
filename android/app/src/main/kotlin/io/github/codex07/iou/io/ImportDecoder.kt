@@ -8,6 +8,7 @@ import io.github.codex07.iou.ledger.engine.FxConverter
 import io.github.codex07.iou.ledger.model.Category
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.ExpenseShare
 import io.github.codex07.iou.ledger.model.FxSnapshot
 import io.github.codex07.iou.ledger.model.FxSnapshotId
@@ -254,7 +255,7 @@ object ImportDecoder {
             if (errors.isNotEmpty()) throw ShareErrors(errors)
             return Expense(
                 id = EntryId(required("id")),
-                payerPersonId = PersonId(required("payer_person_id")),
+                payers = ExpensePayer.single(PersonId(required("payer_person_id")), effectTotal.amountMinor),
                 description = required("description"),
                 category = optionalEnum<Category>("category"),
                 total = money("total", "currency"),

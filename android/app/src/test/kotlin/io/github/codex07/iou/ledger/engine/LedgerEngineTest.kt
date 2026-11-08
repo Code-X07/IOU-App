@@ -9,7 +9,6 @@ import io.github.codex07.iou.testutil.TestLedger
 import io.github.codex07.iou.testutil.eur
 import io.github.codex07.iou.testutil.sek
 import io.kotest.assertions.throwables.shouldThrow
-import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -118,7 +117,8 @@ class LedgerEngineTest {
 
         val balances = LedgerEngine.compute(ledger.state)
         balances.groupNets[group] shouldBe mapOf(ME to mapOf(EUR to 600L), alex to mapOf(EUR to -600L))
-        LedgerEngine.effects(ledger.state).map { it.amount } shouldContainExactlyInAnyOrder listOf(eur(300), eur(300))
+        // ADR-0012: effects come from per-person contributions, so alex's two share rows net into one effect.
+        LedgerEngine.effects(ledger.state).map { it.amount } shouldBe listOf(eur(600))
     }
 
     @Test

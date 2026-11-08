@@ -3,6 +3,7 @@ package io.github.codex07.iou.data
 import io.github.codex07.iou.ledger.model.Category
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.ExpenseShare
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSnapshot
@@ -101,7 +102,7 @@ fun TransferRow.toTransfer() = Transfer(
 )
 
 fun Expense.toRow(): ExpenseRow = meta.columns().let {
-    ExpenseRow(id.value, groupId?.value, payerPersonId.value, description, category?.name, total.amountMinor, total.currency.code,
+    ExpenseRow(id.value, groupId?.value, payers.single().personId.value, description, category?.name, total.amountMinor, total.currency.code,
         effectTotal.amountMinor, effectTotal.currency.code, fxSnapshotId?.value, splitType.name, occurredOn.text(), note,
         it.createdAt, it.updatedAt, it.authorId, it.deletedAt, it.version, it.importBatchId)
 }
@@ -111,7 +112,8 @@ fun Expense.shareRows(): List<ShareRow> =
 
 /** [shares] are this expense's share rows, in any order. */
 fun ExpenseRow.toExpense(shares: List<ShareRow>) = Expense(
-    id = EntryId(id), groupId = groupId?.let(::GroupId), payerPersonId = PersonId(payerPersonId), description = description,
+    id = EntryId(id), groupId = groupId?.let(::GroupId), payers = ExpensePayer.single(PersonId(payerPersonId), effectTotalMinor),
+    description = description,
     category = category?.let(Category::valueOf), total = Money(totalMinor, CurrencyCode(currency)),
     effectTotal = Money(effectTotalMinor, CurrencyCode(effectCurrency)), fxSnapshotId = fxSnapshotId?.let(::FxSnapshotId),
     splitType = SplitType.valueOf(splitType),

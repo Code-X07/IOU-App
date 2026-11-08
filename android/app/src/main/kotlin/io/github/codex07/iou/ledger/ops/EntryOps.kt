@@ -16,6 +16,7 @@ import io.github.codex07.iou.ledger.model.Change
 import io.github.codex07.iou.ledger.model.Entry
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.ExpenseShare
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSnapshot
@@ -84,7 +85,10 @@ object EntryOps {
         val expense = Expense(
             id = existing?.id ?: EntryId(ctx.ids.next()),
             groupId = draft.groupId,
-            payerPersonId = storedPerson(IdentityResolver(ctx.state), draft.payer, existing?.payerPersonId),
+            payers = ExpensePayer.single(
+                storedPerson(IdentityResolver(ctx.state), draft.payer, existing?.payers?.singleOrNull()?.personId),
+                preview.effectTotal.amountMinor,
+            ),
             description = draft.description.trim(),
             category = draft.category,
             total = draft.total,

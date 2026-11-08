@@ -48,7 +48,7 @@ internal object StateInvariants {
             snapshot(it.fxSnapshotId, it.id.value)
         }
         state.expenses.values.forEach { e ->
-            person(e.payerPersonId, e.id.value)
+            e.payers.forEach { person(it.personId, e.id.value) }
             e.shares.forEach { person(it.personId, e.id.value) }
             group(e.groupId, e.id.value)
             snapshot(e.fxSnapshotId, e.id.value)

@@ -351,7 +351,12 @@ class ImportAnalysis private constructor(
             val handles = incoming.handles.map { row -> row.mapped { it.copy(personId = mapped(it.personId)) } }
             val transfers = incoming.transfers.map { row -> row.mapped { it.copy(fromPersonId = mapped(it.fromPersonId), toPersonId = mapped(it.toPersonId)) } }
             val expenses = incoming.expenses.map { row ->
-                row.mapped { e -> e.copy(payerPersonId = mapped(e.payerPersonId), shares = e.shares.map { it.copy(personId = mapped(it.personId)) }) }
+                row.mapped { e ->
+                    e.copy(
+                        payers = e.payers.map { it.copy(personId = mapped(it.personId)) },
+                        shares = e.shares.map { it.copy(personId = mapped(it.personId)) },
+                    )
+                }
             }
 
             var duplicates = 0
@@ -430,7 +435,7 @@ class ImportAnalysis private constructor(
                 is Person -> setOfNotNull(record.mergedIntoId)
                 is PaymentHandle -> setOf(record.personId)
                 is Transfer -> setOf(record.fromPersonId, record.toPersonId)
-                is Expense -> record.shares.map { it.personId }.toSet() + record.payerPersonId
+                is Expense -> record.personIds
                 else -> emptySet()
             }
             // The kept rows that name [row] if it is a new person, directly or through other new people.

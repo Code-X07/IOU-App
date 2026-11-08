@@ -1,6 +1,7 @@
 package io.github.codex07.iou.testutil
 
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.ExpenseShare
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.FxMode
@@ -15,6 +16,7 @@ import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.MembershipId
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
@@ -173,12 +175,15 @@ class TestLedger {
         inputs: Map<PersonId, Long?> = emptyMap(),
         deleted: Boolean = false,
         id: String = nextId("expense"),
+        payers: List<ExpensePayer>? = null,
+        payerSplit: PayerSplit = PayerSplit.EQUAL,
     ): EntryId {
         val entryId = EntryId(id)
         val exactAsShares = splitType == SplitType.EXACT && inputs.isEmpty() && total == effectTotal
         state = state.with(
             Expense(
-                id = entryId, groupId = group, payerPersonId = payer, description = "Expense $id",
+                id = entryId, groupId = group, payerSplit = payerSplit,
+                payers = payers ?: ExpensePayer.single(payer, effectTotal.amountMinor), description = "Expense $id",
                 total = total, effectTotal = effectTotal, fxSnapshotId = fx, splitType = splitType,
                 shares = shares.map { (person, share) -> ExpenseShare(person, share, if (exactAsShares) share else inputs[person]) },
                 occurredOn = D0, meta = testMeta(deleted),

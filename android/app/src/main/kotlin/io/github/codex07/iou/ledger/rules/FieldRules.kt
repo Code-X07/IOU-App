@@ -9,6 +9,7 @@ import io.github.codex07.iou.ledger.model.Group
 import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.LedgerEntity
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.SplitInput
@@ -59,7 +60,7 @@ object FieldRules {
                 blank(entity.description, "description"),
                 amount(entity.total),
                 amount(entity.effectTotal),
-            ) + shares(entity)
+            ) + shares(entity) + payers(entity)
         }.map { RuleViolation(0, it) }
     }
 
@@ -106,6 +107,37 @@ object FieldRules {
         } else {
             listOf(LedgerError.CorruptData("shares of ${expense.id} sum to $sum, not ${expense.effectTotal.amountMinor}"))
         }
+    }
+
+    /**
+     * Payer rows as stored (spec §3.2, §4.4): at least one, distinct people, non-negative, summing to the effect
+     * total, with inputs that suit `payerSplit` (none for EQUAL; for EXACT, amounts > 0 summing to the paid total).
+     * Like shares, the stored amounts are never recomputed here.
+     */
+    private fun payers(expense: Expense): List<LedgerError> {
+        if (expense.payers.isEmpty()) return listOf(LedgerError.NoPayers)
+        expense.payers.groupBy { it.personId }.entries.firstOrNull { it.value.size > 1 }
+            ?.let { return listOf(LedgerError.DuplicatePayer(it.key)) }
+        expense.payers.firstOrNull { it.paidMinor < 0 }?.let { return listOf(LedgerError.NegativeInput(it.personId)) }
+        var sum = 0L
+        for (payer in expense.payers) {
+            if (payer.paidMinor > MAX_MINOR - sum) {
+                return listOf(LedgerError.CorruptData("payers of ${expense.id} sum to more than $MAX_MINOR"))
+            }
+            sum += payer.paidMinor
+        }
+        if (sum != expense.effectTotal.amountMinor) {
+            return listOf(LedgerError.CorruptData("payers of ${expense.id} sum to $sum, not ${expense.effectTotal.amountMinor}"))
+        }
+        if (expense.payerSplit == PayerSplit.EQUAL) {
+            return listOfNotNull(
+                expense.payers.firstOrNull { it.inputValue != null }
+                    ?.let { LedgerError.CorruptData("EQUAL payers of ${expense.id} carry an input") },
+            )
+        }
+        val inputs = expense.payers.map { SplitInput(it.personId, it.inputValue) }
+        val resolved = SplitResolver.resolvePayers(expense.payerSplit, expense.effectTotal.amountMinor, expense.total.amountMinor, inputs)
+        return listOfNotNull((resolved as? LedgerResult.Err)?.error)
     }
 
     /**

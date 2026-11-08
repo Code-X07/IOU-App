@@ -6,6 +6,7 @@ import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.EntryRevision
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.ExpenseShare
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSnapshot
@@ -21,6 +22,7 @@ import io.github.codex07.iou.ledger.model.ImportBatchId
 import io.github.codex07.iou.ledger.model.ImportSource
 import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.MembershipId
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
@@ -62,7 +64,8 @@ class RowMappingTest {
         TransferMethod.CARD, "Revolut", GroupId("g-1"), LocalDate.parse("2026-02-01"), "Taxi", meta,
     )
     private val expense = Expense(
-        EntryId("e-1"), GroupId("g-1"), PersonId("p-1"), "Dinner", Category.DINING, Money(400, JPY), eur(3_000), FxSnapshotId("fx-1"),
+        EntryId("e-1"), GroupId("g-1"), PayerSplit.EQUAL, ExpensePayer.single(PersonId("p-1"), 3_000), "Dinner", Category.DINING,
+        Money(400, JPY), eur(3_000), FxSnapshotId("fx-1"),
         SplitType.EXACT,
         listOf(ExpenseShare(PersonId("p-1"), 2_000, 2_000), ExpenseShare(ME, 1_000, 1_000), ExpenseShare(PersonId("p-0"), 0, null)),
         LocalDate.parse("2026-02-02"), "Birthday", meta,

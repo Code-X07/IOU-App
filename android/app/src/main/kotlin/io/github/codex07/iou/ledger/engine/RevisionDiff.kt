@@ -103,7 +103,6 @@ object RevisionDiff {
                 plain("note", entity.note)
             }
             is Expense -> {
-                person("payer", entity.payerPersonId)
                 plain("description", entity.description)
                 plain("category", entity.category?.name)
                 plain("total", entity.total.toString())
@@ -119,6 +118,14 @@ object RevisionDiff {
                     val amount = Money(share.shareMinor, entity.effectTotal.currency).toString()
                     fields["share[$id]"] = DiffField("share[$name]", amount, amount)
                     share.inputValue?.let { fields["input[$id]"] = DiffField("input[$name]", it.toString(), it.toString()) }
+                }
+                plain("payerSplit", entity.payerSplit.name)
+                for (payer in entity.payers) {
+                    val id = payer.personId.value
+                    val name = names.person(payer.personId)
+                    val amount = Money(payer.paidMinor, entity.effectTotal.currency).toString()
+                    fields["paid[$id]"] = DiffField("paid[$name]", amount, amount)
+                    payer.inputValue?.let { fields["paidInput[$id]"] = DiffField("paidInput[$name]", it.toString(), it.toString()) }
                 }
             }
         }

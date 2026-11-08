@@ -122,7 +122,7 @@ object NormalizedTables {
         listOf<Column<Expense>>(
             Column("id", text = true) { it.id.value },
             Column("group_id", text = true) { it.groupId?.value },
-            Column("payer_person_id", text = true) { it.payerPersonId.value },
+            Column("payer_person_id", text = true) { it.payers.single().personId.value },
             Column("description", text = true) { it.description },
             Column("category") { it.category?.name },
         ) + money("total", "currency") { it.total } + money("effect_total", "effect_currency") { it.effectTotal } + listOf(

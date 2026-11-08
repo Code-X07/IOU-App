@@ -65,16 +65,39 @@ object LedgerEngine {
             val to = resolver.canonical(entry.toPersonId)
             if (from == to) emptyList() else listOf(Effect(from, to, entry.effectAmount, entry.groupId))
         }
-        is Expense -> {
-            val payer = resolver.canonical(entry.payerPersonId)
-            entry.shares
-                .filter { it.shareMinor > 0 }
-                .mapNotNull { share ->
-                    val debtor = resolver.canonical(share.personId)
-                    if (debtor == payer) null
-                    else Effect(payer, debtor, Money(share.shareMinor, entry.effectTotal.currency), entry.groupId)
-                }
+        is Expense -> expenseEffects(entry, resolver)
+    }
+
+    /**
+     * Spec §4.2 (ADR-0012): each canonical person's contribution is what they paid minus their share. Creditors
+     * (contribution > 0) and debtors (< 0) are matched like a settle plan without the amount cap: the largest
+     * remaining creditor with the largest remaining debtor, ties to the lowest person ID. Exact arithmetic, so
+     * each person's effects add up to their contribution. With one payer and one share row per person this gives
+     * `Effect(payer, X, share(X))`; a person holding several share rows (merged aliases) is netted into one effect.
+     */
+    private fun expenseEffects(expense: Expense, resolver: IdentityResolver): List<Effect> {
+        val contributions = LinkedHashMap<PersonId, Long>()
+        for (payer in expense.payers) {
+            val person = resolver.canonical(payer.personId)
+            contributions[person] = Math.addExact(contributions[person] ?: 0L, payer.paidMinor)
         }
+        for (share in expense.shares) {
+            val person = resolver.canonical(share.personId)
+            contributions[person] = Math.subtractExact(contributions[person] ?: 0L, share.shareMinor)
+        }
+        val credit = contributions.filterValues { it > 0 }.toMutableMap()
+        val debt = contributions.filterValues { it < 0 }.mapValues { -it.value }.toMutableMap()
+        val largest = compareByDescending<Map.Entry<PersonId, Long>> { it.value }.thenBy { it.key.value }
+        val effects = mutableListOf<Effect>()
+        while (credit.isNotEmpty() && debt.isNotEmpty()) {
+            val (creditor, available) = credit.entries.sortedWith(largest).first().toPair()
+            val (debtor, owed) = debt.entries.sortedWith(largest).first().toPair()
+            val amount = minOf(available, owed)
+            effects += Effect(creditor, debtor, Money(amount, expense.effectTotal.currency), expense.groupId)
+            if (available == amount) credit.remove(creditor) else credit[creditor] = available - amount
+            if (owed == amount) debt.remove(debtor) else debt[debtor] = owed - amount
+        }
+        return effects
     }
 
     /** Computes every balance of [state]. Throws [ArithmeticException] when any balance or total overflows. */

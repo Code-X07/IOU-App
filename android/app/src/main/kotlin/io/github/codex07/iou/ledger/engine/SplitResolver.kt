@@ -3,7 +3,9 @@ package io.github.codex07.iou.ledger.engine
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.ledgerResult
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.ExpenseShare
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
@@ -58,6 +60,37 @@ object SplitResolver {
         inputs.mapIndexed { index, input ->
             ExpenseShare(input.personId, amounts[index], if (type == SplitType.EQUAL) null else input.value)
         }
+    }
+
+    /**
+     * Payer rows (spec §4.4), resolved like shares over the same totals: `EQUAL` divides the effect total
+     * among the payers; `EXACT` takes each payer's amount in the paid currency, each greater than 0 and summing
+     * to [originalTotalMinor], as the weights for the effect total. Errors name the payer side: `NoPayers`,
+     * `DuplicatePayer`, `PaidRemaining`, `InvalidAmount` (an EXACT payer who paid nothing), and `NegativeInput`,
+     * `MissingInput`, `AmountTooLarge` as for shares.
+     */
+    fun resolvePayers(
+        split: PayerSplit,
+        effectTotalMinor: Long,
+        originalTotalMinor: Long,
+        inputs: List<SplitInput>,
+    ): LedgerResult<List<ExpensePayer>> = ledgerResult {
+        ensure(inputs.isNotEmpty()) { LedgerError.NoPayers }
+        inputs.groupBy { it.personId }.entries.firstOrNull { it.value.size > 1 }
+            ?.let { fail(LedgerError.DuplicatePayer(it.key)) }
+        if (split == PayerSplit.EXACT) {
+            inputs.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
+            inputs.firstOrNull { it.value == null }?.let { fail(LedgerError.MissingInput(it.personId)) }
+            ensure(inputs.none { it.value == 0L }) { LedgerError.InvalidAmount }
+        }
+        val resolved = when (val result = resolve(split.splitType, effectTotalMinor, originalTotalMinor, inputs)) {
+            is LedgerResult.Ok -> result.value
+            is LedgerResult.Err -> {
+                val error = result.error
+                fail(if (error is LedgerError.ExactRemaining) LedgerError.PaidRemaining(error.diffMinor) else error)
+            }
+        }
+        resolved.map { ExpensePayer(it.personId, it.shareMinor, it.inputValue) }
     }
 
     /**

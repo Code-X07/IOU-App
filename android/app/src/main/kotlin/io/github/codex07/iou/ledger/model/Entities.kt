@@ -129,10 +129,30 @@ data class ExpenseShare(
     val inputValue: Long? = null,
 )
 
+/**
+ * Who paid how much (spec §3.2): owned and versioned with its expense like a share. [paidMinor] is in the
+ * effect currency; [inputValue] is the EXACT amount in the paid currency (null for EQUAL).
+ */
+data class ExpensePayer(
+    val personId: PersonId,
+    val paidMinor: Long,
+    val inputValue: Long? = null,
+) {
+    companion object {
+        /**
+         * The payer rows of a single-payer expense: [personId] paid the whole effect total, no input, `EQUAL`.
+         * This is also what a schema-1 `payerPersonId` becomes (spec §3.2, §5.5).
+         */
+        fun single(personId: PersonId, effectTotalMinor: Long): List<ExpensePayer> = listOf(ExpensePayer(personId, effectTotalMinor))
+    }
+}
+
 data class Expense(
     override val id: EntryId,
     override val groupId: GroupId? = null,
-    val payerPersonId: PersonId,
+    val payerSplit: PayerSplit = PayerSplit.EQUAL,
+    /** At least one; they sum to [effectTotal] (rule 0). */
+    val payers: List<ExpensePayer>,
     val description: String,
     val category: Category? = null,
     val total: Money,
@@ -147,6 +167,6 @@ data class Expense(
     override val entityType: EntityType get() = EntityType.EXPENSE
     override val paid: Money get() = total
     override val effect: Money get() = effectTotal
-    override val personIds: Set<PersonId> get() = setOf(payerPersonId) + shares.map { it.personId }
+    override val personIds: Set<PersonId> get() = payers.map { it.personId }.toSet() + shares.map { it.personId }
     override fun withMeta(meta: SyncMeta): Expense = copy(meta = meta)
 }

@@ -75,7 +75,7 @@ fun LedgerViews.activityItem(entry: Entry): ActivityItem = when (entry) {
     )
     is Expense -> ActivityItem(
         entryId = entry.id, kind = EntryKind.EXPENSE, occurredOn = entry.occurredOn, description = entry.description,
-        note = entry.note, paidBy = personRef(entry.payerPersonId), receiver = null,
+        note = entry.note, paidBy = personRef(entry.payers.first().personId), receiver = null,
         participants = entry.shares.map { resolver.canonical(it.personId) }.distinct().map(::personRef),
         transferKind = null, category = entry.category,
         group = entry.groupId?.let(::groupRef), paid = entry.total, effect = entry.effectTotal,
@@ -274,7 +274,7 @@ private fun LedgerViews.draftOf(entry: Entry, fx: FxChoice?): EntryDraft = when 
         )
     }
     is Expense -> ExpenseDraft(
-        payer = personRef(entry.payerPersonId).id,
+        payer = personRef(entry.payers.first().personId).id,
         description = entry.description,
         category = entry.category,
         total = entry.total,

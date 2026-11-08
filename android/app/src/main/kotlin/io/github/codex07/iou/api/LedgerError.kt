@@ -36,6 +36,12 @@ sealed interface LedgerError {
     data class WeightOutOfRange(val personId: PersonId, val value: Long) : LedgerError
     data class DuplicateParticipant(val personId: PersonId) : LedgerError
 
+    // Payers (spec §4.4)
+    data object NoPayers : LedgerError
+    /** EXACT payer amounts that don't add up to the total; [diffMinor] = total − Σ amounts, in the paid currency. */
+    data class PaidRemaining(val diffMinor: Long) : LedgerError
+    data class DuplicatePayer(val personId: PersonId) : LedgerError
+
     // Integrity (spec §3.4)
     data class NeedsGroup(val people: Set<PersonId>) : LedgerError
     data class NotGroupMember(val groupId: GroupId, val people: Set<PersonId>) : LedgerError
