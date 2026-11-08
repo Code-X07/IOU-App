@@ -2420,10 +2420,10 @@ In `docs/manual-test-checklist.md`, append:
 
 ## 9. Recurring expenses on the device (spec §5.7, AC 29 and 34)
 
-Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug build.
+Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug build. Items 1–7 need the schedule screens (the friend's work, `docs/m2-ui-contract-changes.md`). Smoke check done on 2026-11-08 at `89a6d0d`: the app starts with no crash, the `RecurringPostWorker` job is registered, and its first run at enqueue gives no crash.
 
 1. Create an auto-post schedule whose first date is today, close the app, open it again: the expense is posted once; reopening posts nothing more (AC 29).
-2. Grant notifications. With the app closed, run the worker on demand: `adb shell cmd jobscheduler run -f io.github.codex07.iou <job id>` (find the id with `adb shell dumpsys jobscheduler | grep -A2 io.github.codex07.iou`). An auto-post date that came due is posted and one "Recurring expenses posted" notification appears.
+2. Grant notifications. With the app closed, run the worker on demand: `adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler io.github.codex07.iou <job id>` (the id is on the `#RecurringPostWorker#` line of `adb shell dumpsys jobscheduler`). WorkManager delays a forced run before the 6-hour period is up (logcat: "Delaying execution ... before schedule"), so move the emulator clock forward 6 hours first. An auto-post date that came due is posted and one "Recurring expenses posted" notification appears.
 3. A confirm-first schedule that becomes due shows one "due" notification; running the worker again does not repeat it; posting the date in the app removes it.
 4. Turn app lock on and repeat 2–3: neither notification names a person, an amount or a description. Then, with a detailed due and a detailed posted notification showing (lock off), switch app lock on in the app: the due notification is redrawn without its description or amount and makes no sound, and the posted one is removed.
 5. Deny or revoke the notification permission and run the worker: the date is still posted, nothing is shown.
