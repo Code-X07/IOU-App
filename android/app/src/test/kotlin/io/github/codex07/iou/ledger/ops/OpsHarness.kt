@@ -37,10 +37,12 @@ class OpsHarness(initial: LedgerState) {
 
     fun ctx(): WriteContext = WriteContext(state, generation, now, ids, today)
 
+    /** Runs [op] and applies its plan after `RecurringOps.finalize`, as `LedgerStore` does. */
     fun <T> run(op: (WriteContext) -> LedgerResult<Planned<T>>): LedgerResult<T> {
-        val result = op(ctx())
+        val context = ctx()
+        val result = op(context)
         if (result is LedgerResult.Ok) {
-            val plan = result.value.plan
+            val plan = RecurringOps.finalize(context, result.value.plan)
             lastPlan = plan
             state = state.applying(plan.changes, plan.snapshots)
             plan.changes.forEach { record(it.entity, it.action, it.reason) }

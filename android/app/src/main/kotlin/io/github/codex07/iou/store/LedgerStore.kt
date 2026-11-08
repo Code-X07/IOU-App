@@ -9,6 +9,7 @@ import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerGeneration
 import io.github.codex07.iou.ledger.model.RevisionId
 import io.github.codex07.iou.ledger.ops.Planned
+import io.github.codex07.iou.ledger.ops.RecurringOps
 import io.github.codex07.iou.ledger.ops.WriteContext
 import io.github.codex07.iou.ledger.views.LedgerViews
 import java.time.Clock
@@ -94,7 +95,9 @@ class LedgerStore(
         return lock.withLock {
             val snapshot = checkNotNull(current.value)
             if (!beforeSetup && snapshot.state.meOrNull == null) return@withLock LedgerResult.Err(LedgerError.NotFound("me"))
-            val result = op(snapshot, WriteContext(snapshot.state, snapshot.generation, now(), ids))
+            val context = WriteContext(snapshot.state, snapshot.generation, now(), ids, today())
+            // The cut-off rule and hold resumes apply to every write path alike (spec §5.7, index locked decision 7).
+            val result = op(snapshot, context).map { it.copy(plan = RecurringOps.finalize(context, it.plan)) }
             if (result is LedgerResult.Ok) commit(snapshot, result.value)
             result.map { it.value }
         }

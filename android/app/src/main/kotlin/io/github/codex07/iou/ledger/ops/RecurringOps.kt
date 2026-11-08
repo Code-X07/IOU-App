@@ -16,7 +16,10 @@ import io.github.codex07.iou.ledger.model.Change
 import io.github.codex07.iou.ledger.model.Entry
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.Group
+import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.ParticipantRole
+import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.RecurringId
@@ -137,7 +140,75 @@ object RecurringOps {
         return listOf(Change(raised, RevisionAction.UPDATED, "Handled through $on: posted expense deleted", keepsCutOff = true))
     }
 
+    /**
+     * Runs on every plan the store commits, after the op built and validated it (spec §5.7). First, each live
+     * schedule the write takes off hold without changing it gets a resume: an `UPDATED` revision with the reason
+     * "Resumed: <cause>". Then the cut-off rule: every schedule change except those marked `keepsCutOff` (posting,
+     * skipping, the raise of a deleted posted expense) sets `autoPostFrom` to today when the schedule auto-posts
+     * after the write. Only `autoPostFrom` and sync columns change, which no rule reads, so the plan stays valid.
+     */
+    fun finalize(ctx: WriteContext, plan: WritePlan): WritePlan {
+        if (plan.changes.isEmpty()) return plan
+        val before = ctx.state
+        val after = before.applying(plan.changes, plan.snapshots)
+        if (after.schedules.isEmpty()) return plan
+        val beforeResolver = IdentityResolver(before)
+        val afterResolver = IdentityResolver(after)
+        val changed = plan.changes.mapNotNull { (it.entity as? RecurringExpense)?.id }.toSet()
+
+        val resumes = after.schedules.values
+            .filter { !it.isDeleted && it.id !in changed }
+            .sortedBy { it.id.value }
+            .mapNotNull { schedule ->
+                val held = Recurrence.holds(schedule, before, beforeResolver)
+                if (held.isEmpty() || Recurrence.holds(schedule, after, afterResolver).isNotEmpty()) return@mapNotNull null
+                Change(ctx.touch(schedule), RevisionAction.UPDATED, resumeReason(held, plan, before, after, beforeResolver))
+            }
+
+        val changes = (plan.changes + resumes).map { change ->
+            val schedule = change.entity as? RecurringExpense
+            if (schedule == null || change.keepsCutOff || !Recurrence.autoPosts(schedule, after, afterResolver)) {
+                change
+            } else {
+                change.copy(entity = schedule.copy(autoPostFrom = ctx.today))
+            }
+        }
+        return plan.copy(changes = changes)
+    }
+
     // ---- internals ----
+
+    /** "Resumed: <cause>" from the plan's group and person changes that ended one of [held]; "Resumed" if none names it. */
+    private fun resumeReason(
+        held: List<Recurrence.Hold>,
+        plan: WritePlan,
+        before: LedgerState,
+        after: LedgerState,
+        beforeResolver: IdentityResolver,
+    ): String {
+        fun name(state: LedgerState, id: PersonId) = state.people[id]?.displayName ?: id.value
+        val causes = plan.changes.mapNotNull { change ->
+            when (val entity = change.entity) {
+                is Group ->
+                    if (Recurrence.Hold.GroupArchived(entity.id) in held && entity.archivedAt == null) "${entity.name} unarchived" else null
+                is Person -> {
+                    val old = before.people[entity.id]
+                    val holdsThis = Recurrence.Hold.PersonArchived(beforeResolver.canonical(entity.id)) in held
+                    val target = entity.mergedIntoId
+                    val oldTarget = old?.mergedIntoId
+                    when {
+                        old == null || !holdsThis -> null
+                        old.archivedAt != null && entity.archivedAt == null -> "${entity.displayName} unarchived"
+                        oldTarget == null && target != null -> "${entity.displayName} merged into ${name(after, target)}"
+                        oldTarget != null && target == null -> "${entity.displayName} unmerged from ${name(before, oldTarget)}"
+                        else -> null
+                    }
+                }
+                else -> null
+            }
+        }
+        return if (causes.isEmpty()) "Resumed" else "Resumed: ${causes.joinToString("; ")}"
+    }
 
     /** The schedule a post or skip acts on: token checked first, and a deleted schedule is `NotFound` (rule 19). */
     private fun ResultScope.live(ctx: WriteContext, id: RecurringId, token: EditToken): RecurringExpense {
