@@ -18,6 +18,7 @@ import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.SyncMeta
 import io.github.codex07.iou.ledger.model.Transfer
@@ -99,8 +100,17 @@ object ImportDecoder {
                 }
             }
         }
+        val payerRows = file.rows(NormalizedTables.expensePayers).groupBy { it.cells["expense_id"].orEmpty() }
+        for ((expenseId, rows) in payerRows) {
+            if (expenseId !in expenseIds) {
+                rows.forEach {
+                    invalid += InvalidRow(NormalizedTables.expensePayers.name, it.number, "payer of an expense that isn't in the file", LedgerError.CorruptData("orphan payer"))
+                }
+            }
+        }
         val expenses = table(NormalizedTables.expenses, { it.cells["id"].orEmpty() }) {
-            expense(shareRows[cells["id"].orEmpty()].orEmpty())
+            val id = cells["id"].orEmpty()
+            expense(shareRows[id].orEmpty(), payerRows[id].orEmpty(), file.schemaVersion)
         }
         return DecodedImport(IncomingLedger(people, handles, snapshots, transfers, expenses), invalid)
     }
@@ -234,10 +244,31 @@ object ImportDecoder {
             )
         }
 
-        fun expense(shareRows: List<CsvRow>): Expense {
+        /**
+         * An expense with its owned rows. A schema-1 file names one payer in `payer_person_id`, which becomes one EQUAL
+         * payer paying the effect total (spec §7.4); a schema-2 file has `payer_split` and `expense_payers` rows.
+         */
+        fun expense(shareRows: List<CsvRow>, payerRows: List<CsvRow>, schemaVersion: Int): Expense {
             noGroup()
             val effectTotal = money("effect_total", "effect_currency")
             val errors = mutableListOf<InvalidRow>()
+            val payers = if (schemaVersion < 2) {
+                ExpensePayer.single(PersonId(required(NormalizedTables.SCHEMA_1_PAYER)), effectTotal.amountMinor)
+            } else {
+                payerRows.mapNotNull { row ->
+                    val payer = RowReader(row)
+                    try {
+                        payer.long("position") to ExpensePayer(
+                            personId = PersonId(payer.required("person_id")),
+                            paidMinor = payer.amount("paid", payer.required("paid"), effectTotal.currency, payer.long("paid_minor")).amountMinor,
+                            inputValue = payer.optionalLong("input_value"),
+                        )
+                    } catch (e: RowError) {
+                        errors += InvalidRow(NormalizedTables.expensePayers.name, row.number, e.reason, e.error)
+                        null
+                    }
+                }.sortedBy { it.first }.map { it.second }
+            }
             val shares = shareRows.mapNotNull { row ->
                 val share = RowReader(row)
                 try {
@@ -255,7 +286,8 @@ object ImportDecoder {
             if (errors.isNotEmpty()) throw ShareErrors(errors)
             return Expense(
                 id = EntryId(required("id")),
-                payers = ExpensePayer.single(PersonId(required("payer_person_id")), effectTotal.amountMinor),
+                payerSplit = if (schemaVersion < 2) PayerSplit.EQUAL else enum<PayerSplit>("payer_split"),
+                payers = payers,
                 description = required("description"),
                 category = optionalEnum<Category>("category"),
                 total = money("total", "currency"),

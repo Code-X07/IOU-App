@@ -4,14 +4,17 @@ import io.github.codex07.iou.api.ExportScope
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.ledger.model.EntryId
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.GroupId
 import io.github.codex07.iou.ledger.model.LedgerState
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.ME
 import io.github.codex07.iou.testutil.TestLedger
 import io.github.codex07.iou.testutil.eur
+import io.github.codex07.iou.testutil.sek
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldStartWith
 import java.io.ByteArrayOutputStream
@@ -69,6 +72,38 @@ class ReportExportTest {
         report(ExportScope.Person(y)) shouldBe (LedgerResult.Ok(0) to header)
         report(from = D0.plusDays(1), to = D0.plusDays(1)) shouldBe (LedgerResult.Ok(1) to header + repaymentRow)
         report(ExportScope.Group(GroupId("nope"))).first shouldBe LedgerResult.Err(LedgerError.NotFound("nope"))
+    }
+
+    @Test
+    fun `several payers are listed with their amounts in the paid currency`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val alice = ledger.person("Alice")
+        val bob = ledger.person("Bob")
+        val trip = ledger.group("Trip", members = listOf(ME, alice, bob))
+        ledger.expense(
+            alice, eur(10_000), mapOf(ME to 5_000L, bob to 5_000L), group = trip, payerSplit = PayerSplit.EXACT,
+            payers = listOf(ExpensePayer(alice, 6_000, 6_000), ExpensePayer(bob, 4_000, 4_000)),
+        )
+        ledger.expense(
+            alice, sek(1_001), mapOf(ME to 1_001L), group = trip,
+            payers = listOf(ExpensePayer(alice, 501), ExpensePayer(bob, 500)),
+        )
+        // EQUAL payers as an import from another installation stores them: the extra cent with Bob, though Alice's ID
+        // sorts first. The report keeps the stored amounts, unconverted and converted alike.
+        ledger.expense(
+            alice, eur(10_001), mapOf(ME to 10_001L), group = trip,
+            payers = listOf(ExpensePayer(alice, 5_000), ExpensePayer(bob, 5_001)),
+        )
+        ledger.expense(
+            alice, sek(1_001), mapOf(ME to 91L), group = trip, effectTotal = eur(91),
+            payers = listOf(ExpensePayer(alice, 45), ExpensePayer(bob, 46)),
+        )
+        val out = ByteArrayOutputStream()
+        LedgerExport("0.1.0").report(ledger.state, ExportScope.FullLedger, null, null, excelFriendly = false, out)
+        val paidBy = out.toString(Charsets.UTF_8).lines().drop(1).filter { it.isNotEmpty() }.map { it.split(',')[4] }
+
+        paidBy shouldBe listOf("Alice 60.00; Bob 40.00", "Alice 5.01; Bob 5.00", "Alice 50.00; Bob 50.01", "Alice 5.00; Bob 5.01")
     }
 
     @Test

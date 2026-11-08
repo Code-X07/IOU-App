@@ -79,6 +79,8 @@ The core runs the policy and the window flag; you build the lock screen (spec §
 
 `LedgerError` (in `api/LedgerError.kt`) is a sealed interface; map every case to a message. Each carries the data a good message needs, e.g. `ExactRemaining(diffMinor)`, `MemberHasBalance(groupId, personId, nets)`, `NeedsGroup(people)`. `RestoreConflict(violations)` after a revert means "this old version breaks today's rules"; offer **Open as draft** via `draftFromVersion(revision.entity, revision.version)` and open the edit form matching the `VersionDraft` (entry, person, handle or group).
 
+Payer errors (M2): `NoPayers` (the payer list is empty), `PaidRemaining(diffMinor)` (EXACT payer amounts don't add up to the total; diff in the paid currency), `DuplicatePayer(personId)` (the same person twice in the payer list).
+
 ## Route-scoped ViewModels
 
 `IOUApp` keeps its own navigation stack, so each stacked route gets its own `ViewModelStore` (`ui/navigation/RouteStores.kt`) and is composed under `LocalViewModelStoreOwner`. Call `hiltViewModel()` with no key inside a route; the ViewModel is cleared when the route leaves the stack, so a popped form's draft and payment fields are gone on the next visit. A nested form reaches its parent's ViewModel with `hiltViewModel(viewModelStoreOwner = routeStores.owner(parentRoute, activity))`. Root-level and tab ViewModels (Overview, settings, security, Advanced, browse session, tab lists) stay activity-scoped. Rotation keeps open routes; a ledger generation change empties the stack and clears all of them. Route ViewModels must not use `SavedStateHandle`: the route owner reuses the activity's creation extras, so a handle would be shared per class and outlive the route.

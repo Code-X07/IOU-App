@@ -40,11 +40,12 @@ class RealExportTest {
 
         val normalized = backend.apis.importExport.export(ExportRequest(ExportShape.NORMALIZED, ExportFormat.CSV), zip)
         val tableRows = state.people.size + state.handles.size + state.groups.size + state.members.size +
-            state.fxSnapshots.size + state.transfers.size + state.expenses.size + state.expenses.values.sumOf { it.shares.size }
+            state.fxSnapshots.size + state.transfers.size + state.expenses.size + state.expenses.values.sumOf { it.shares.size } +
+            state.expenses.values.sumOf { it.payers.size }
         normalized shouldBe LedgerResult.Ok(ExportInfo(tableRows))
         ZipFile(harness.documents.file(zip)).use { file ->
             file.getInputStream(file.getEntry("manifest.json")).readBytes().toString(Charsets.UTF_8) shouldStartWith
-                """{"format":"iou-normalized-csv","schemaVersion":1,"appVersion":"test","exportedAt":"2026-01-01T00:00:00Z""""
+                """{"format":"iou-normalized-csv","schemaVersion":2,"appVersion":"test","exportedAt":"2026-01-01T00:00:00Z""""
         }
 
         val report = DocumentRef("report.csv")

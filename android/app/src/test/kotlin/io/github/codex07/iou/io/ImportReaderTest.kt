@@ -6,6 +6,8 @@ import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.fake.FakeApis
 import io.github.codex07.iou.fake.SeedData
 import io.github.codex07.iou.ledger.model.EntryId
+import io.github.codex07.iou.ledger.model.ExpensePayer
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.testutil.ME
@@ -81,8 +83,8 @@ class ImportReaderTest {
         val file = export(TestLedger().apply { me() }.state)
         reader.read("not a zip".toByteArray()).error() shouldBe LedgerError.CorruptFile("Not an IOU export: no manifest.json")
         reader.read(Zips.write(mapOf("people.csv" to "id\n"))).error() shouldBe LedgerError.CorruptFile("Not an IOU export: no manifest.json")
-        reader.read(Zips.edit(file, "manifest.json") { it.replace("\"schemaVersion\":1", "\"schemaVersion\":2") }).error() shouldBe
-            LedgerError.SchemaTooNew(2, 1)
+        reader.read(Zips.edit(file, "manifest.json") { it.replace("\"schemaVersion\":2", "\"schemaVersion\":3") }).error() shouldBe
+            LedgerError.SchemaTooNew(3, 2)
         reader.read(Zips.edit(file, "manifest.json") { it.replace("quote-prefix-v1", "none") }).error() shouldBe
             LedgerError.CorruptFile("Unknown text escaping none")
         reader.read(Zips.edit(file, "manifest.json") { it.replace("iou-normalized-csv", "other") }).error() shouldBe
@@ -109,6 +111,70 @@ class ImportReaderTest {
         reader.read(dropped).error() shouldBe LedgerError.CorruptFile("transfers.csv has 0 data rows, manifest.json says 1")
         val uncounted = Zips.edit(file, "manifest.json") { it.replace(Regex(",?\"transfers\":\\d+"), "") }
         reader.read(uncounted).error() shouldBe LedgerError.CorruptFile("manifest.json has no row count for transfers")
+    }
+
+    @Test
+    fun `payer rows decode in position order, and orphans and bad rows are reported`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        ledger.expense(
+            ME, eur(10_000), mapOf(ME to 5_000L, x to 5_000L), id = "e-1", payerSplit = PayerSplit.EXACT,
+            payers = listOf(ExpensePayer(x, 7_000, 7_000), ExpensePayer(ME, 3_000, 3_000)),
+        )
+        val file = export(ledger.state)
+
+        decode(file).ledger.expenses.single().record shouldBe ledger.state.expenses.values.single()
+
+        val orphan = Zips.write(
+            Zips.read(file).also { entries ->
+                entries["expense_payers.csv"] = entries.getValue("expense_payers.csv") + "e-404,0,person-x,100,1.00,\r\n"
+                entries["manifest.json"] = entries.getValue("manifest.json").replace("\"expense_payers\":2", "\"expense_payers\":3")
+            },
+        )
+        decode(orphan).invalid shouldBe listOf(
+            InvalidRow("expense_payers", 4, "payer of an expense that isn't in the file", LedgerError.CorruptData("orphan payer")),
+        )
+
+        val badPosition = Zips.edit(file, "expense_payers.csv") { it.replace("e-1,0,person-x", "e-1,x,person-x") }
+        decode(badPosition).invalid shouldBe listOf(
+            InvalidRow("expense_payers", 2, "position: not a whole number", LedgerError.InvalidField("position")),
+        )
+    }
+
+    @Test
+    fun `a schema-1 export reads with one EQUAL payer per expense`() {
+        val v1 = Zips.write(
+            linkedMapOf(
+                "people.csv" to "id,display_name,is_me,note,default_currency,archived_at,merged_into_id,version,created_at,updated_at,author_id,deleted_at\r\n" +
+                    "person-0-me,Me,true,,,,,1,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z,person-0-me,\r\n" +
+                    "person-x,X,false,,,,,1,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z,person-0-me,\r\n",
+                "payment_handles.csv" to "id,person_id,type,value,holder_name,bic,label,is_default,version,created_at,updated_at,author_id,deleted_at\r\n",
+                "groups.csv" to "id,name,default_currency,fx_mode,archived_at,version,created_at,updated_at,author_id,deleted_at\r\n",
+                "group_members.csv" to "id,group_id,person_id,joined_at,removed_at,version,created_at,updated_at,author_id,deleted_at\r\n",
+                "fx_snapshots.csv" to "id,base_currency,quote_currency,rate,rate_date,source,is_stale,fetched_at,paid_minor,charged_minor\r\n",
+                "transfers.csv" to "id,from_person_id,to_person_id,amount_minor,amount,currency,effect_amount_minor,effect_amount," +
+                    "effect_currency,fx_snapshot_id,kind,method,account_label,group_id,occurred_on,note,version,created_at,updated_at,author_id,deleted_at\r\n",
+                "expenses.csv" to "id,group_id,payer_person_id,description,category,total_minor,total,currency,effect_total_minor," +
+                    "effect_total,effect_currency,fx_snapshot_id,split_type,occurred_on,note,version,created_at,updated_at,author_id,deleted_at\r\n" +
+                    "e-1,,'=person-x,Dinner,,3000,30.00,EUR,3000,30.00,EUR,,EQUAL,2026-01-02,,1,2026-01-01T00:00:00Z," +
+                    "2026-01-01T00:00:00Z,person-0-me,\r\n",
+                "expense_shares.csv" to "expense_id,position,person_id,share_minor,share,input_value\r\n" +
+                    "e-1,0,person-0-me,1500,15.00,\r\n" +
+                    "e-1,1,'=person-x,1500,15.00,\r\n",
+                "manifest.json" to """{"format":"iou-normalized-csv","schemaVersion":1,"appVersion":"0.1.0",""" +
+                    """"exportedAt":"2026-01-01T00:00:00Z","scope":"full-ledger","textEscaping":"quote-prefix-v1","delimiter":",",""" +
+                    """"bom":false,"tables":{"people":2,"payment_handles":0,"groups":0,"group_members":0,"fx_snapshots":0,""" +
+                    """"transfers":0,"expenses":1,"expense_shares":2}}""",
+            ),
+        )
+
+        val expense = decode(v1).ledger.expenses.single().record
+
+        expense.payerSplit shouldBe PayerSplit.EQUAL
+        expense.payers shouldBe listOf(ExpensePayer(io.github.codex07.iou.ledger.model.PersonId("=person-x"), 3_000))
+        reader.read(Zips.edit(v1, "manifest.json") { it.replace("\"schemaVersion\":1", "\"schemaVersion\":2") }).error() shouldBe
+            LedgerError.CorruptFile("Missing expense_payers.csv")
     }
 
     @Test

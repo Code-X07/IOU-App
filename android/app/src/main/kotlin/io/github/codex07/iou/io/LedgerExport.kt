@@ -7,7 +7,9 @@ import io.github.codex07.iou.ledger.engine.IdentityResolver
 import io.github.codex07.iou.ledger.engine.LedgerEngine
 import io.github.codex07.iou.ledger.model.Entry
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.LedgerState
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.money.Money
@@ -123,7 +125,7 @@ class LedgerExport(private val appVersion: String) {
             transfer?.kind?.name?.lowercase() ?: "expense",
             expense?.description?.let(TextEscaping::escape),
             entry.groupId?.let { state.groups[it]?.name }?.let(TextEscaping::escape),
-            expense?.let { name(it.payers.first().personId) }?.let(TextEscaping::escape),
+            expense?.let { paidBy(it, ::name) }?.let(TextEscaping::escape),
             transfer?.let { name(it.fromPersonId) }?.let(TextEscaping::escape),
             transfer?.let { name(it.toPersonId) }?.let(TextEscaping::escape),
             entry.paid.toPlainString(),
@@ -134,6 +136,33 @@ class LedgerExport(private val appVersion: String) {
             transfer?.accountLabel?.let(TextEscaping::escape),
             entry.note?.let(TextEscaping::escape),
         )
+    }
+
+    /**
+     * `paid_by` (spec §7.2): the payer's name, or each payer's name with what they paid in the paid currency, always
+     * from the stored payer rows (spec §4.4: they are authoritative), never re-divided by person ID, which an import
+     * from another installation can change: an EXACT payer's input; an EQUAL payer's stored `paidMinor` when nothing
+     * was converted; for a converted EQUAL expense the paid total divided equally, the extra minor units going to the
+     * payers with the larger stored amounts (stored order on ties), so the report agrees with the ledger.
+     */
+    private fun paidBy(expense: Expense, name: (PersonId) -> String?): String? {
+        if (expense.payers.size == 1) return name(expense.payers.single().personId)
+        val amounts = when {
+            expense.payerSplit == PayerSplit.EXACT -> expense.payers.map { it.inputValue ?: 0L }
+            expense.total == expense.effectTotal -> expense.payers.map { it.paidMinor }
+            else -> equalPaid(expense.total.amountMinor, expense.payers)
+        }
+        return expense.payers.zip(amounts).joinToString("; ") { (payer, amount) ->
+            "${name(payer.personId)} ${Money(amount, expense.total.currency).toPlainString()}"
+        }
+    }
+
+    /** [total] in equal parts; the remainder goes one unit each to the payers with the largest stored `paidMinor`. */
+    private fun equalPaid(total: Long, payers: List<ExpensePayer>): List<Long> {
+        val base = total / payers.size
+        val extra = (total - base * payers.size).toInt()
+        val first = payers.indices.sortedByDescending { payers[it].paidMinor }.take(extra).toSet()
+        return payers.indices.map { if (it in first) base + 1 else base }
     }
 
     private fun <T> CsvTable<T>.write(state: LedgerState, excelFriendly: Boolean, out: OutputStream): Int {

@@ -17,6 +17,8 @@ data class CsvRow(val number: Int, val cells: Map<String, String>)
 
 /** A normalized export as read: its manifest and the rows of each table it contains. */
 data class ImportFile(val manifest: ExportManifest, val tables: Map<String, List<CsvRow>>) {
+    val schemaVersion: Int get() = manifest.schemaVersion
+
     fun rows(table: CsvTable<*>): List<CsvRow> = tables[table.name].orEmpty()
 }
 
@@ -76,10 +78,11 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
         if (manifest.textEscaping != TextEscaping.NAME) return corrupt("Unknown text escaping ${manifest.textEscaping}")
         val delimiter = manifest.delimiter.singleOrNull() ?: return corrupt("Bad delimiter ${manifest.delimiter}")
 
+        val schemaTables = NormalizedTables.tablesOf(manifest.schemaVersion)
         val tables = linkedMapOf<String, List<CsvRow>>()
         var rowCount = 0
         for ((name, bytes) in entries) {
-            val table = tablesByFile[name] ?: continue
+            val table = tablesByFile[name]?.takeIf { it in schemaTables } ?: continue
             val rows = try {
                 parse(table, bytes, delimiter, limits.maxRows - rowCount)
                     ?: return limit("More than ${limits.maxRows} rows")
@@ -97,7 +100,7 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
         }
         // The manifest's row counts make the file checkably complete (spec §7.2): every known table must be
         // present, even an empty one (exports always write all of them), with exactly the declared data rows.
-        for (table in NormalizedTables.all) {
+        for (table in schemaTables) {
             val rows = tables[table.name] ?: return corrupt("Missing ${table.fileName}")
             val declared = manifest.tables[table.name] ?: return corrupt("manifest.json has no row count for ${table.name}")
             if (rows.size != declared) return corrupt("${table.fileName} has ${rows.size} data rows, manifest.json says $declared")
@@ -107,7 +110,7 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
 
     private fun parse(table: CsvTable<*>, bytes: ByteArray, delimiter: Char, budget: Int): List<CsvRow>? {
         val text = bytes.toString(Charsets.UTF_8).removePrefix(LedgerExport.BOM)
-        val textColumns = table.columns.filter { it.text }.map { it.name }.toSet()
+        val textColumns = table.columns.filter { it.text }.map { it.name }.toSet() + table.legacyTextColumns
         val format = CSVFormat.RFC4180.builder().setDelimiter(delimiter).setHeader().setSkipHeaderRecord(true).get()
         return format.parse(text.reader()).use { parser ->
             require(parser.headerNames.size == parser.headerNames.toSet().size) { "Duplicate CSV header" }

@@ -1,6 +1,8 @@
 package io.github.codex07.iou.io
 
 import io.github.codex07.iou.ledger.model.EntryId
+import io.github.codex07.iou.ledger.model.ExpensePayer
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.testutil.ME
 import io.github.codex07.iou.testutil.T0
@@ -52,16 +54,16 @@ class NormalizedExportTest {
         val (rows, entries) = export()
         entries.keys.toList() shouldContainExactly listOf(
             "people.csv", "payment_handles.csv", "groups.csv", "group_members.csv", "fx_snapshots.csv",
-            "transfers.csv", "expenses.csv", "expense_shares.csv", "manifest.json",
+            "transfers.csv", "expenses.csv", "expense_shares.csv", "expense_payers.csv", "manifest.json",
         )
         rows shouldBe 6
         val manifest = Json.decodeFromString(ExportManifest.serializer(), entries.getValue("manifest.json"))
         manifest shouldBe ExportManifest(
-            format = "iou-normalized-csv", schemaVersion = 1, appVersion = "0.1.0", exportedAt = "2026-01-01T00:00:00Z",
+            format = "iou-normalized-csv", schemaVersion = 2, appVersion = "0.1.0", exportedAt = "2026-01-01T00:00:00Z",
             scope = "full-ledger", textEscaping = "quote-prefix-v1", delimiter = ",", bom = false,
             tables = mapOf(
                 "people" to 3, "payment_handles" to 1, "groups" to 0, "group_members" to 0, "fx_snapshots" to 0,
-                "transfers" to 2, "expenses" to 0, "expense_shares" to 0,
+                "transfers" to 2, "expenses" to 0, "expense_shares" to 0, "expense_payers" to 0,
             ),
         )
     }
@@ -102,6 +104,28 @@ class NormalizedExportTest {
             listOf(row[0], row[1], row[2], row[19]).map(TextEscaping::unescape) shouldBe
                 listOf("=entry", "'person", "＋person", "@author")
         }
+    }
+
+    @Test
+    fun `expenses write their payer split and payer rows`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        ledger.expense(
+            ME, eur(10_000), mapOf(ME to 5_000L, x to 5_000L), id = "e-1", payerSplit = PayerSplit.EXACT,
+            payers = listOf(ExpensePayer(x, 7_000, 7_000), ExpensePayer(ME, 3_000, 3_000)),
+        )
+        val out = ByteArrayOutputStream()
+        LedgerExport("0.1.0").normalized(ledger.state, T0, excelFriendly = false, out)
+        val entries = io.github.codex07.iou.testutil.Zips.read(out.toByteArray())
+
+        entries.getValue("expenses.csv").lines().first() shouldBe
+            "id,group_id,payer_split,description,category,total_minor,total,currency,effect_total_minor,effect_total," +
+            "effect_currency,fx_snapshot_id,split_type,occurred_on,note,version,created_at,updated_at,author_id,deleted_at"
+        entries.getValue("expense_payers.csv") shouldBe
+            "expense_id,position,person_id,paid_minor,paid,input_value\r\n" +
+            "e-1,0,person-x,7000,70.00,7000\r\n" +
+            "e-1,1,person-0-me,3000,30.00,3000\r\n"
     }
 
     @Test
