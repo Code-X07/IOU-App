@@ -2,6 +2,7 @@ package io.github.codex07.iou.data
 
 import io.github.codex07.iou.api.DocumentRef
 import io.github.codex07.iou.api.ExportInfo
+import io.github.codex07.iou.api.ExportFormat
 import io.github.codex07.iou.api.ExportRequest
 import io.github.codex07.iou.api.ExportShape
 import io.github.codex07.iou.api.ImportBatchView
@@ -21,6 +22,7 @@ import io.github.codex07.iou.io.ImportDecoder
 import io.github.codex07.iou.io.ImportReader
 import io.github.codex07.iou.io.ImportUndo
 import io.github.codex07.iou.io.LedgerExport
+import io.github.codex07.iou.io.LedgerWorkbook
 import io.github.codex07.iou.ledger.model.ImportBatch
 import io.github.codex07.iou.ledger.model.ImportBatchId
 import io.github.codex07.iou.ledger.model.ImportSource
@@ -56,6 +58,7 @@ class RealImportExportApi(
     private val reader: ImportReader = ImportReader(),
     private val maxFileBytes: Long = 20L * 1024 * 1024,
     private val computeDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val workbooks: LedgerWorkbook = LedgerWorkbook(exporter),
 ) : ImportExportApi {
 
     private class Session(val fileName: String, val decoded: DecodedImport, val sourceMe: PersonId?) {
@@ -78,9 +81,16 @@ class RealImportExportApi(
         val written = withContext(Dispatchers.IO) {
             access(target) {
                 documents.openWrite(target).use { out ->
-                    when (request.shape) {
-                        ExportShape.NORMALIZED -> LedgerResult.Ok(exporter.normalized(state, now, request.excelFriendly, out))
-                        ExportShape.REPORT -> exporter.report(state, request.scope, request.from, request.to, request.excelFriendly, out)
+                    when (request.format) {
+                        ExportFormat.CSV -> when (request.shape) {
+                            ExportShape.NORMALIZED -> LedgerResult.Ok(exporter.normalized(state, now, request.excelFriendly, out))
+                            ExportShape.REPORT -> exporter.report(state, request.scope, request.from, request.to, request.excelFriendly, out)
+                        }
+                        // excelFriendly only shapes CSV text; a workbook needs no BOM or delimiter.
+                        ExportFormat.XLSX -> when (request.shape) {
+                            ExportShape.NORMALIZED -> LedgerResult.Ok(workbooks.normalized(state, out))
+                            ExportShape.REPORT -> workbooks.report(state, request.scope, request.from, request.to, out)
+                        }
                     }
                 }
             }

@@ -61,7 +61,6 @@ class RealExportTest {
         val target = DocumentRef("nothing.csv")
         val export = backend.apis.importExport
 
-        export.export(ExportRequest(ExportShape.REPORT, ExportFormat.XLSX), target) shouldBe LedgerResult.Err(LedgerError.InvalidField("format"))
         export.export(ExportRequest(ExportShape.REPORT, ExportFormat.CSV, from = D0, to = D0.minusDays(1)), target) shouldBe
             LedgerResult.Err(LedgerError.InvalidField("to"))
         export.export(ExportRequest(ExportShape.REPORT, ExportFormat.CSV, scope = ExportScope.Group(GroupId("nope"))), target) shouldBe

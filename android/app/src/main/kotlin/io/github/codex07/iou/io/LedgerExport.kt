@@ -39,6 +39,32 @@ data class ExportManifest(
     val tables: Map<String, Int>,
 )
 
+/** One row of the report shape (spec §7.2), typed: the CSV writes it as text, the workbook as typed cells. */
+data class ReportLine(
+    val date: LocalDate,
+    val type: String,
+    val description: String?,
+    val group: String?,
+    val paidBy: String?,
+    val from: String?,
+    val to: String?,
+    val amount: Money,
+    /** In the effect currency. */
+    val myShare: Money?,
+    /** In the effect currency; positive means owed to me. */
+    val effectForMe: Money,
+    val account: String?,
+    val note: String?,
+) {
+    /** The CSV cells in [LedgerExport.REPORT_HEADER] order, text escaped (`quote-prefix-v1`). */
+    fun cells(): List<String?> = listOf(
+        date.toString(), type, description?.let(TextEscaping::escape), group?.let(TextEscaping::escape),
+        paidBy?.let(TextEscaping::escape), from?.let(TextEscaping::escape), to?.let(TextEscaping::escape),
+        amount.toPlainString(), amount.currency.code, myShare?.toPlainString(), effectForMe.toPlainString(),
+        effectForMe.currency.code, account?.let(TextEscaping::escape), note?.let(TextEscaping::escape),
+    )
+}
+
 /**
  * CSV export (spec §7.2). UTF-8, RFC 4180 quoting, `,` and no BOM by default. Excel-friendly mode is UTF-8 with
  * a BOM and `;`. Text is escaped with [TextEscaping] in both shapes.
@@ -66,11 +92,7 @@ class LedgerExport(private val appVersion: String) {
         return counts.values.sum()
     }
 
-    /**
-     * The report: one row per active entry in [scope] and the inclusive date range, by date. Names are canonical;
-     * `my_share` and `balance_effect_for_me` (positive: owed to me) are in `effect_currency`. Not re-importable.
-     * Errors: `NotFound` for a group or person that doesn't exist.
-     */
+    /** The report as CSV: [reportLines] under [REPORT_HEADER]. Not re-importable. Errors: `NotFound` for the scope. */
     fun report(
         state: LedgerState,
         scope: ExportScope,
@@ -79,19 +101,31 @@ class LedgerExport(private val appVersion: String) {
         excelFriendly: Boolean,
         out: OutputStream,
     ): LedgerResult<Int> {
+        val lines = when (val result = reportLines(state, scope, from, to)) {
+            is LedgerResult.Err -> return result
+            is LedgerResult.Ok -> result.value
+        }
+        csv(out, excelFriendly) { printer ->
+            printer.printRecord(REPORT_HEADER)
+            for (line in lines) printer.printRecord(line.cells())
+        }
+        return LedgerResult.Ok(lines.size)
+    }
+
+    /**
+     * The report's rows (spec §7.2): one per active entry in [scope] and the inclusive date range, by date, then ID.
+     * Names are canonical. Errors: `NotFound` for a group or person that doesn't exist.
+     */
+    fun reportLines(state: LedgerState, scope: ExportScope, from: LocalDate?, to: LocalDate?): LedgerResult<List<ReportLine>> {
         scopeError(state, scope)?.let { return LedgerResult.Err(it) }
+        val me = state.meOrNull?.id ?: return LedgerResult.Ok(emptyList())
         val resolver = IdentityResolver(state)
-        val me = state.meOrNull?.id
-        val entries = if (me == null) emptyList() else state.entries
+        val entries = state.entries
             .filter { !it.isDeleted }
             .filter { (from == null || it.occurredOn >= from) && (to == null || it.occurredOn <= to) }
             .filter { it.inScope(scope, resolver) }
             .sortedWith(compareBy({ it.occurredOn }, { it.id.value }))
-        csv(out, excelFriendly) { printer ->
-            printer.printRecord(REPORT_HEADER)
-            for (entry in entries) printer.printRecord(reportRow(entry, checkNotNull(me), state, resolver))
-        }
-        return LedgerResult.Ok(entries.size)
+        return LedgerResult.Ok(entries.map { reportLine(it, me, state, resolver) })
     }
 
     /** `NotFound` for a scope naming a group or person that doesn't exist; check before opening the target. */
@@ -107,7 +141,7 @@ class LedgerExport(private val appVersion: String) {
         is ExportScope.Person -> resolver.canonical(scope.id) in personIds.map(resolver::canonical)
     }
 
-    private fun reportRow(entry: Entry, me: PersonId, state: LedgerState, resolver: IdentityResolver): List<String?> {
+    private fun reportLine(entry: Entry, me: PersonId, state: LedgerState, resolver: IdentityResolver): ReportLine {
         fun name(id: PersonId) = state.people[resolver.canonical(id)]?.displayName
         val effectCurrency = entry.effect.currency
         val effectForMe = LedgerEngine.entryEffects(entry, resolver).sumOf { effect ->
@@ -120,21 +154,19 @@ class LedgerExport(private val appVersion: String) {
         val transfer = entry as? Transfer
         val expense = entry as? Expense
         val myShare = expense?.shares?.filter { resolver.canonical(it.personId) == me }?.sumOf { it.shareMinor }
-        return listOf(
-            entry.occurredOn.toString(),
-            transfer?.kind?.name?.lowercase() ?: "expense",
-            expense?.description?.let(TextEscaping::escape),
-            entry.groupId?.let { state.groups[it]?.name }?.let(TextEscaping::escape),
-            expense?.let { paidBy(it, ::name) }?.let(TextEscaping::escape),
-            transfer?.let { name(it.fromPersonId) }?.let(TextEscaping::escape),
-            transfer?.let { name(it.toPersonId) }?.let(TextEscaping::escape),
-            entry.paid.toPlainString(),
-            entry.paid.currency.code,
-            myShare?.let { Money(it, effectCurrency).toPlainString() },
-            Money(effectForMe, effectCurrency).toPlainString(),
-            effectCurrency.code,
-            transfer?.accountLabel?.let(TextEscaping::escape),
-            entry.note?.let(TextEscaping::escape),
+        return ReportLine(
+            date = entry.occurredOn,
+            type = transfer?.kind?.name?.lowercase() ?: "expense",
+            description = expense?.description,
+            group = entry.groupId?.let { state.groups[it]?.name },
+            paidBy = expense?.let { paidBy(it) { id -> name(id) } },
+            from = transfer?.let { name(it.fromPersonId) },
+            to = transfer?.let { name(it.toPersonId) },
+            amount = entry.paid,
+            myShare = myShare?.let { Money(it, effectCurrency) },
+            effectForMe = Money(effectForMe, effectCurrency),
+            account = transfer?.accountLabel,
+            note = entry.note,
         )
     }
 

@@ -43,11 +43,11 @@ abstract class ImportExportApiContract : ApiContract() {
     }
 
     @Test
-    fun `XLSX waits for M2 and a date range can't end before it starts`() = runTest {
+    fun `XLSX exports both shapes and a date range can't end before it starts`() = runTest {
         setUpMe()
-        apis.importExport.export(ExportRequest(ExportShape.REPORT, ExportFormat.XLSX), exportTarget()) shouldBe
-            LedgerResult.Err(LedgerError.InvalidField("format"))
-        val reversed = ExportRequest(ExportShape.REPORT, ExportFormat.CSV, from = TODAY, to = TODAY.minusDays(1))
+        apis.importExport.export(ExportRequest(ExportShape.NORMALIZED, ExportFormat.XLSX), exportTarget()).shouldBeInstanceOf<LedgerResult.Ok<*>>()
+        apis.importExport.export(ExportRequest(ExportShape.REPORT, ExportFormat.XLSX), exportTarget()).shouldBeInstanceOf<LedgerResult.Ok<*>>()
+        val reversed = ExportRequest(ExportShape.REPORT, ExportFormat.XLSX, from = TODAY, to = TODAY.minusDays(1))
         apis.importExport.export(reversed, exportTarget()) shouldBe LedgerResult.Err(LedgerError.InvalidField("to"))
     }
 

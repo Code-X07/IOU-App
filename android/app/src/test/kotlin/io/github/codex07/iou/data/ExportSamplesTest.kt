@@ -33,6 +33,8 @@ class ExportSamplesTest {
         "normalized-excel.zip" to ExportRequest(ExportShape.NORMALIZED, ExportFormat.CSV, excelFriendly = true),
         "report.csv" to ExportRequest(ExportShape.REPORT, ExportFormat.CSV),
         "report-excel.csv" to ExportRequest(ExportShape.REPORT, ExportFormat.CSV, excelFriendly = true),
+        "report.xlsx" to ExportRequest(ExportShape.REPORT, ExportFormat.XLSX),
+        "normalized.xlsx" to ExportRequest(ExportShape.NORMALIZED, ExportFormat.XLSX),
     )
 
     @AfterEach

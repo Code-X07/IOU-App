@@ -19,6 +19,7 @@ ktor = "3.2.3"
 work = "2.10.3"
 bouncycastle = "1.81"
 commonsCsv = "1.14.1"
+fastexcel = "0.18.4"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -54,6 +55,8 @@ ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 androidx-work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
 bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 commons-csv = { module = "org.apache.commons:commons-csv", version.ref = "commonsCsv" }
+fastexcel = { module = "org.dhatim:fastexcel", version.ref = "fastexcel" }
+fastexcel-reader = { module = "org.dhatim:fastexcel-reader", version.ref = "fastexcel" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -121,6 +121,7 @@ dependencies {
     implementation(libs.ktor.client.okhttp)
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.commons.csv)
+    implementation(libs.fastexcel)
     "realImplementation"(libs.androidx.work.runtime)
 
     testImplementation(platform(libs.junit.bom))
@@ -132,4 +133,5 @@ dependencies {
     testImplementation(libs.turbine)
     testImplementation(libs.androidx.sqlite.bundled.jvm)
     testImplementation(libs.ktor.client.mock)
+    testImplementation(libs.fastexcel.reader)
 }

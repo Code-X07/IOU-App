@@ -3255,7 +3255,7 @@ with:
     )
 ```
 
-If any other test expects `InvalidField("format")` for an XLSX request (search the test tree for `InvalidField("format")`), change it to expect success in the same way.
+If any other test expects `InvalidField("format")` for an XLSX request (search the test tree for `InvalidField("format")`), change it to expect success in the same way. In `data/RealExportTest.kt` (`bad requests are refused before anything is written`), delete the line asserting `InvalidField("format")` for the XLSX report request; the reversed-range and unknown-group lines stay. The `ui/` tests that expect it (`DataManagementTest`, `ExportFields`) belong to the UI developer and still pass because `ui/settings/DataModels.kt` rejects XLSX on its own.
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
