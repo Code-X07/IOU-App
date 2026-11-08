@@ -14,7 +14,7 @@
 - **Snapshots (spec §5.5):** a schedule snapshot holds its row and its participant rows; the schema-1 upcaster gives expenses `recurringId` / `recurringOn` = null. Backups carry `schedules` and `participants`; a participant row whose schedule is missing makes the backup `CorruptFile`.
 - **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped, including one put on hold while its rate was being fetched. A ledger without me (before setup, or after undoing a restore onto a fresh install) posts nothing, and the pass and `redraw()` report an empty due list, which clears the notifications of a discarded ledger.
 - **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every change of the due list whatever wrote it (an archive through `PeopleApi` / `GroupsApi`, a merge, a revert), every process `ON_START`, every successful `RecurringApi` write, and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`). Date-relative reads (`observeDue`, `observeSchedules`, `observeSchedule`) also start over when a pass runs for a new day (`RecurringRunner.today`). An app-lock switch (`RecurringNotices.redraw`) is not a pass: it runs `RecurringRunner.redraw()`, which reports the current due list at once without posting or waiting for a running pass. A post re-checks under the write lock that the schedule still auto-posts (a hold started during a rate request leaves its token valid) and posts nothing otherwise.
-- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts, and when the group shrinks to one schedule the summary is removed (Android removes its children with it) and the schedule left is redrawn silently; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same.
+- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts, and when the group shrinks to one schedule the summary is removed (Android removes its children with it) and the schedule left is redrawn silently; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same; while the permission is missing or a channel is blocked nothing is recorded as shown, so everything due is drawn again once it can be. A due notification is redrawn silently when only what it shows changes (description, amount, count, app lock), since the record keeps a digest of the drawn text next to the alert key.
 - **Permissions:** the real flavor's manifest adds `POST_NOTIFICATIONS`; the UI asks for it (the friend's work, `docs/m2-ui-contract-changes.md`).
 - No `ui/` file changes.
 
@@ -1833,6 +1833,18 @@ class RecurringNoticePlannerTest {
         val again = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01"), due(rent, "2026-04-01")), emptyList(), false, first.notified)
         again.show shouldBe emptyList()
 
+        // An edit (or an import, or a restore) that changes what is shown redraws it, silently.
+        val edited = RecurringNoticePlanner.plan(
+            listOf(due(rent, "2026-03-01").copy(amount = eur(95_000)), due(rent, "2026-04-01")), emptyList(), false, again.notified,
+        )
+        edited.show.single().text shouldContain "950.00 EUR"
+        edited.show.single().silent shouldBe true
+        val oneMore = RecurringNoticePlanner.plan(
+            listOf(due(rent, "2026-03-01"), due(rent, "2026-04-01"), due(rent, "2026-05-01")), emptyList(), false, again.notified,
+        )
+        oneMore.show.single().text shouldContain "3 due"
+        oneMore.show.single().silent shouldBe true
+
         val moved = RecurringNoticePlanner.plan(listOf(due(rent, "2026-04-01")), emptyList(), false, again.notified)
         moved.show.map { it.schedule } shouldBe listOf(rent)
 
@@ -1995,15 +2007,17 @@ object RecurringNoticePlanner {
 
     fun plan(due: List<DueOccurrence>, posted: List<PostedOccurrence>, locked: Boolean, last: NotifiedRecord): NoticePlan {
         val bySchedule = due.groupBy { it.schedule }.toSortedMap(compareBy { it.value })
-        val drawn = if (locked) "locked" else "open"
-        val keys = bySchedule.mapValues { (_, items) -> "${key(items.first())}|$drawn" }
+        val notices = bySchedule.mapValues { (id, items) -> dueNotice(id, items, locked) }
+        // "<alert key>|<digest of what is drawn>": a change of the alert key alerts; a change of only what is drawn
+        // (app lock, description, amount, count, after an edit, an import or a restore) redraws silently.
+        val keys = bySchedule.mapValues { (id, items) -> "${key(items.first())}|${digest(notices.getValue(id))}" }
         // Removing the group summary takes the group's notifications with it, unchanged ones included.
         val ungrouped = last.due.size > 1 && bySchedule.size == 1
         val show = bySchedule
             .filter { (id, _) -> ungrouped || last.due[id.value] != keys.getValue(id) }
             .map { (id, items) ->
                 val before = last.due[id.value]?.substringBeforeLast('|')
-                dueNotice(id, items, locked, silent = before == key(items.first()))
+                notices.getValue(id).copy(silent = before == key(items.first()))
             }
         val cancel = last.due.keys.map(::RecurringId).filter { it !in bySchedule }.toSet()
         val summary = when {
@@ -2021,16 +2035,19 @@ object RecurringNoticePlanner {
     private fun key(oldest: DueOccurrence): String =
         "${oldest.date}|${oldest.autoPostError?.let { it::class.simpleName }}|${oldest.confirmToResume}"
 
-    private fun dueNotice(id: RecurringId, items: List<DueOccurrence>, locked: Boolean, silent: Boolean): DueNotice {
+    /** A short, stable digest of a notice's title and text (`String.hashCode` is fixed by the Java spec). */
+    private fun digest(notice: DueNotice): String = Integer.toHexString("${notice.title}\n${notice.text}".hashCode())
+
+    private fun dueNotice(id: RecurringId, items: List<DueOccurrence>, locked: Boolean): DueNotice {
         val oldest = items.first()
         if (locked) {
             val text = if (items.size == 1) "1 recurring expense is due" else "${items.size} recurring expenses are due"
-            return DueNotice(id, "Recurring expenses due", text, silent)
+            return DueNotice(id, "Recurring expenses due", text)
         }
         val why = oldest.autoPostError?.let(::reason)
             ?: "Older dates need confirmation before auto-posting continues.".takeIf { oldest.confirmToResume }
         val text = "${items.size} due, oldest ${oldest.date}: ${oldest.amount}" + (why?.let { ". $it" } ?: "")
-        return DueNotice(id, oldest.description, text, silent)
+        return DueNotice(id, oldest.description, text)
     }
 
     private fun postedNotice(posted: List<PostedOccurrence>, locked: Boolean): PostedNotice {
@@ -2119,7 +2136,8 @@ import kotlinx.coroutines.withContext
  * The real flavor's notifications (spec §5.7): "due" per schedule, one "posted" summary per pass, redacted while app
  * lock is on ([settings]). Switching app lock on or off makes the runner report at once ([redraw]), which redraws
  * the due notifications silently and, when it goes on, removes a detailed posted summary. Without the notification
- * permission nothing is shown and nothing new is recorded, so the notifications appear once it is granted.
+ * permission, or on a blocked channel, nothing is shown and nothing is recorded as shown, so what is due appears again
+ * once it can be drawn.
  */
 class AndroidRecurringNotices(
     private val context: Context,
@@ -2137,24 +2155,37 @@ class AndroidRecurringNotices(
         // Before the redraws: removing the summary removes its children too, and the planner redraws the one left.
         if (plan.summary == 0) manager.cancel(GROUP_SUMMARY_TAG, DUE_ID)
         if (plan.cancelPosted) manager.cancel(POSTED_TAG, POSTED_ID)
-        // What a pass that can't draw records: cancellations happened, nothing new was shown.
-        val undrawn = NotifiedRecord(last.due.filterKeys { it in plan.notified.due }, last.detailedPosted && !plan.cancelPosted)
+        // While nothing can be shown, nothing is recorded as shown: Android may remove what was showing (a revoked
+        // permission, a blocked channel), so the first pass that can draw again shows everything that is due.
+        val undrawn = NotifiedRecord()
         if (!manager.areNotificationsEnabled()) {
             notified.write(undrawn)
             return@withContext
         }
         createChannels(manager)
+        fun blocked(channel: String) = manager.getNotificationChannelCompat(channel)?.importance == NotificationManagerCompat.IMPORTANCE_NONE
+        val dueBlocked = blocked(DUE_CHANNEL)
+        val postedBlocked = blocked(POSTED_CHANNEL)
         try {
-            val single = plan.notified.due.size == 1
-            for (notice in plan.show) {
-                val schedule = if (single) notice.schedule else null
-                manager.notify(notice.schedule.value, DUE_ID, build(DUE_CHANNEL, notice.title, notice.text, schedule, notice.silent))
+            if (!dueBlocked) {
+                val single = plan.notified.due.size == 1
+                for (notice in plan.show) {
+                    val schedule = if (single) notice.schedule else null
+                    manager.notify(notice.schedule.value, DUE_ID, build(DUE_CHANNEL, notice.title, notice.text, schedule, notice.silent))
+                }
+                plan.summary?.takeIf { it > 1 }?.let { manager.notify(GROUP_SUMMARY_TAG, DUE_ID, summary(it)) }
             }
-            plan.summary?.takeIf { it > 1 }?.let { manager.notify(GROUP_SUMMARY_TAG, DUE_ID, summary(it)) }
-            plan.posted?.let { manager.notify(POSTED_TAG, POSTED_ID, build(POSTED_CHANNEL, it.title, it.text, null, silent = false)) }
-            notified.write(plan.notified)
+            if (!postedBlocked) {
+                plan.posted?.let { manager.notify(POSTED_TAG, POSTED_ID, build(POSTED_CHANNEL, it.title, it.text, null, silent = false)) }
+            }
+            notified.write(
+                NotifiedRecord(
+                    due = if (dueBlocked) emptyMap() else plan.notified.due,
+                    detailedPosted = !postedBlocked && plan.notified.detailedPosted,
+                ),
+            )
         } catch (_: SecurityException) {
-            // The permission was revoked between the check and the post: show nothing, record nothing new.
+            // The permission was revoked between the check and the post: record nothing as shown.
             notified.write(undrawn)
         }
     }
