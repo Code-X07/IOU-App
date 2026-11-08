@@ -21,10 +21,14 @@ import io.github.codex07.iou.ledger.model.HandleId
 import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.MembershipId
 import io.github.codex07.iou.ledger.model.PayerSplit
+import io.github.codex07.iou.ledger.model.ParticipantRole
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurrenceUnit
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.RecurringId
+import io.github.codex07.iou.ledger.model.RecurringParticipant
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.SyncMeta
 import io.github.codex07.iou.ledger.model.Transfer
@@ -50,6 +54,8 @@ data class IncomingLedger(
     val expenses: List<Incoming<Expense>> = emptyList(),
     val groups: List<Incoming<Group>> = emptyList(),
     val members: List<Incoming<GroupMember>> = emptyList(),
+    /** Schedules with their participants: PAYER rows, then SHARE rows, each in `position` order. */
+    val schedules: List<Incoming<RecurringExpense>> = emptyList(),
 )
 
 /** The decoded records and the rows that didn't decode. */
@@ -118,7 +124,12 @@ object ImportDecoder {
             val expenseId = cells["id"].orEmpty()
             expense(shareRows[expenseId].orEmpty(), payerRows[expenseId].orEmpty(), file.schemaVersion)
         }
-        return DecodedImport(IncomingLedger(people, handles, snapshots, transfers, expenses, groups, members), invalid)
+        val participantRows = ownedRows(
+            NormalizedTables.recurringParticipants, "recurring_id", NormalizedTables.recurringExpenses, "orphan participant",
+            "participant of a schedule that isn't in the file",
+        )
+        val schedules = table(NormalizedTables.recurringExpenses, id) { schedule(participantRows[cells["id"].orEmpty()].orEmpty()) }
+        return DecodedImport(IncomingLedger(people, handles, snapshots, transfers, expenses, groups, members, schedules), invalid)
     }
 
     /** Reads typed values from one row; every failure is a [RowError] naming the column. */
@@ -276,6 +287,44 @@ object ImportDecoder {
             note = optional("note"),
             meta = meta(),
         )
+
+        /**
+         * A schedule with its participant rows (spec §7.2); a bad participant row is reported on its own row. A
+         * schedule with an `interval` outside 1..99 or an `end_on` before `start_on` is invalid even when deleted,
+         * as in a backup: views still compute dates for deleted schedules and `Recurrence` requires a valid interval.
+         */
+        fun schedule(participantRows: List<CsvRow>): RecurringExpense {
+            val errors = mutableListOf<InvalidRow>()
+            val participants = owned(NormalizedTables.recurringParticipants, participantRows, errors) {
+                val role = enum<ParticipantRole>("role")
+                Triple(role, long("position"), RecurringParticipant(role, PersonId(required("person_id")), optionalLong("input_value")))
+            }.sortedWith(compareBy<Triple<ParticipantRole, Long, RecurringParticipant>>({ it.first }, { it.second })).map { it.third }
+            if (errors.isNotEmpty()) throw OwnedRowErrors(errors)
+            val interval = int("interval")
+            if (interval !in 1..99) fail("interval", "must be 1 to 99")
+            val startOn = date("start_on")
+            val endOn = optionalDate("end_on")
+            if (endOn != null && endOn < startOn) fail("end_on", "is before start_on")
+            return RecurringExpense(
+                id = RecurringId(required("id")),
+                groupId = optional("group_id")?.let(::GroupId),
+                description = required("description"),
+                category = optionalEnum<Category>("category"),
+                note = optional("note"),
+                total = money("total", "currency"),
+                payerSplit = enum<PayerSplit>("payer_split"),
+                splitType = enum<SplitType>("split_type"),
+                participants = participants,
+                unit = enum<RecurrenceUnit>("unit"),
+                interval = interval,
+                startOn = startOn,
+                endOn = endOn,
+                handledThrough = optionalDate("handled_through"),
+                autoPostFrom = date("auto_post_from"),
+                autoPost = bool("auto_post"),
+                meta = meta(),
+            )
+        }
 
         /**
          * An expense with its owned rows. A schema-1 file names one payer in `payer_person_id`, which becomes one

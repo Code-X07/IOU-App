@@ -52,10 +52,59 @@ class ImportReaderTest {
             decoded.ledger.fxSnapshots.map { it.record } shouldContainExactlyInAnyOrder state.fxSnapshots.values
             decoded.ledger.transfers.map { it.record } shouldContainExactlyInAnyOrder state.transfers.values
             decoded.ledger.expenses.map { it.record } shouldContainExactlyInAnyOrder state.expenses.values
+            decoded.ledger.schedules.map { it.record } shouldContainExactlyInAnyOrder state.schedules.values
             decoded.invalid shouldBe emptyList()
         }
     }
 
+    @Test
+    fun `schedules decode with their participants in role and position order, and orphans are reported`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        ledger.schedule(x, eur(1_000), listOf(ME, x), id = "rent")
+        val file = export(ledger.state)
+
+        decode(file).ledger.schedules.single().record shouldBe ledger.state.schedules.values.single()
+
+        val orphan = Zips.write(
+            Zips.read(file).also { entries ->
+                entries["recurring_participants.csv"] = entries.getValue("recurring_participants.csv") + "gone,SHARE,0,person-x,\r\n"
+                entries["manifest.json"] = entries.getValue("manifest.json").replace("\"recurring_participants\":3", "\"recurring_participants\":4")
+            },
+        )
+        decode(orphan).invalid shouldBe listOf(
+            InvalidRow("recurring_participants", 5, "participant of a schedule that isn't in the file", LedgerError.CorruptData("orphan participant")),
+        )
+
+        val badRole = decode(Zips.edit(file, "recurring_participants.csv") { it.replace("rent,PAYER,0", "rent,BOSS,0") })
+        badRole.ledger.schedules shouldBe emptyList()
+        badRole.invalid shouldBe listOf(InvalidRow("recurring_participants", 2, "role: unknown value BOSS", LedgerError.InvalidField("role")))
+    }
+
+    @Test
+    fun `a schedule with an interval outside 1 to 99 or an end before its start is invalid, even when deleted`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        ledger.schedule(ME, eur(1_000), listOf(ME, x), id = "gone", deleted = true)
+        ledger.schedule(ME, eur(1_000), listOf(ME, x), id = "live", startOn = D0.plusDays(10))
+        val parsed = (reader.read(export(ledger.state)) as LedgerResult.Ok).value
+        val rows = parsed.rows(NormalizedTables.recurringExpenses)
+        fun withCells(id: String, vararg cells: Pair<String, String>) = parsed.copy(
+            tables = parsed.tables + (
+                NormalizedTables.recurringExpenses.name to rows.map { if (it.cells["id"] == id) it.copy(cells = it.cells + cells) else it }
+                ),
+        )
+
+        val interval = ImportDecoder.decode(withCells("gone", "interval" to "0"))
+        interval.ledger.schedules.map { it.record.id.value } shouldBe listOf("live")
+        interval.invalid.map { it.table to it.reason } shouldBe listOf("recurring_expenses" to "interval: must be 1 to 99")
+
+        val end = ImportDecoder.decode(withCells("live", "end_on" to D0.toString()))
+        end.ledger.schedules.map { it.record.id.value } shouldBe listOf("gone")
+        end.invalid.map { it.reason } shouldBe listOf("end_on: is before start_on")
+    }
     @Test
     fun `text a spreadsheet would run comes back exactly`() {
         val id = EntryId("=t-1")

@@ -26,6 +26,7 @@ import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.SyncMeta
 import io.github.codex07.iou.ledger.model.Transfer
@@ -37,8 +38,11 @@ import io.github.codex07.iou.money.Money
 import java.time.Instant
 import java.time.LocalDate
 
-/** How an incoming row compares with the local ledger (spec §7.4). */
-enum class Classification { NEW, DUPLICATE, CONFLICT }
+/**
+ * How an incoming row compares with the local ledger (spec §7.4). [FORWARD]: a schedule that is a duplicate except
+ * for a later `handled_through`, which the import applies without a choice.
+ */
+enum class Classification { NEW, DUPLICATE, CONFLICT, FORWARD }
 
 /** An incoming record after identity mapping, the local row with its ID (if any) and how they compare. */
 data class Classified<T : LedgerEntity>(val incoming: Incoming<T>, val local: T?, val kind: Classification) {
@@ -63,6 +67,7 @@ class ImportAnalysis private constructor(
     val snapshots: List<Incoming<FxSnapshot>>,
     val transfers: List<Classified<Transfer>>,
     val expenses: List<Classified<Expense>>,
+    val schedules: List<Classified<RecurringExpense>>,
     val invalid: List<InvalidRow>,
     private val duplicates: Int,
     private val mappedKeys: Set<ImportRowKey>,
@@ -71,12 +76,12 @@ class ImportAnalysis private constructor(
 ) {
     private val owners: List<Classified<*>> get() = people + groups
     private val entries: List<Classified<out Entry>> get() = transfers + expenses
-    private val rows: List<Classified<*>> get() = people + handles + groups + members + entries
+    private val rows: List<Classified<*>> get() = people + handles + groups + members + entries + schedules
 
     val counts: ImportCounts
         get() = ImportCounts(
             new = rows.count { it.kind == Classification.NEW } + snapshots.size,
-            conflicts = rows.count { it.kind == Classification.CONFLICT },
+            conflicts = rows.count { it.kind == Classification.CONFLICT || it.kind == Classification.FORWARD },
             duplicates = duplicates,
             invalid = invalid.size,
         )
@@ -124,8 +129,11 @@ class ImportAnalysis private constructor(
         val shown = mutableListOf<ImportRow>()
         for (row in rows) {
             val forced = forcedBy(row.record, row.local, take)
-            if (row.kind == Classification.CONFLICT || forced != null) {
-                shown += ImportRow(row.key, label(row.record), diff(row.local, row.record), forced ?: ImportRowChoice.KeepOrTake, changedSinceLastPreview = false)
+            if (row.kind == Classification.CONFLICT || row.kind == Classification.FORWARD || forced != null) {
+                shown += ImportRow(
+                    row.key, label(row.record), diff(row.local, written(row)), forced ?: ImportRowChoice.KeepOrTake,
+                    changedSinceLastPreview = false, forcedChanges = forcedChanges(row),
+                )
             }
         }
         val listed = shown.map { it.key }.toSet()
@@ -145,6 +153,19 @@ class ImportAnalysis private constructor(
             }
         }
         return shown
+    }
+
+    /** What taking [row] writes: for a schedule, the incoming template with the later handled date and the local `autoPostFrom`. */
+    private fun written(row: Classified<*>): LedgerEntity {
+        val local = row.local as? RecurringExpense ?: return row.record
+        return taken(local, row.record as RecurringExpense)
+    }
+
+    /** The changes the import makes to [row] whatever its choice: a schedule's later `handledThrough` (spec §7.4). */
+    private fun forcedChanges(row: Classified<*>): List<FieldChange> {
+        val local = row.local as? RecurringExpense ?: return emptyList()
+        if (!movesForward(local, row.record as RecurringExpense)) return emptyList()
+        return diff(local, written(row)).filter { it.field == "handledThrough" }
     }
 
     /**
@@ -179,7 +200,7 @@ class ImportAnalysis private constructor(
         is GroupMember -> "Membership of ${names.person(entity.personId)} in ${names.group(entity.groupId)}"
         is Transfer -> "Transfer of ${entity.amount} on ${entity.occurredOn}"
         is Expense -> "Expense ${entity.description} on ${entity.occurredOn}"
-        else -> "${entity.entityType} ${entity.entityId}"
+        is RecurringExpense -> "Schedule ${entity.description}"
     }
 
     private fun diff(local: LedgerEntity?, incoming: LedgerEntity): List<FieldChange> = RevisionDiff.diff(local, incoming, names)
@@ -193,9 +214,10 @@ class ImportAnalysis private constructor(
 
     /**
      * The rows the commit writes for [take] (spec §7.5 step 6): creates and updates in dependency order (people,
-     * handles, groups, memberships, entries), then deletions (entries, owned rows on their own, owners with their
-     * cascade). Invalid rows are left out. Rows get [batch] as their `importBatchId` and a reason naming the file
-     * and source version. [today] is the import day (Task 3 gives it to new schedules).
+     * handles, groups, memberships, FX snapshots, schedules, entries), then deletions (entries, schedules, owned
+     * rows on their own, owners with their cascade). Invalid rows are left out. Rows get [batch] as their
+     * `importBatchId` and a reason naming the file and source version. [today] is the import day, a new schedule's
+     * `autoPostFrom`.
      */
     fun plan(take: Set<ImportRowKey>, batch: ImportBatchId, now: Instant, today: LocalDate): PlanResult {
         val writer = Writer(state, batch, now)
@@ -207,7 +229,7 @@ class ImportAnalysis private constructor(
                 when (row.kind) {
                     Classification.NEW -> writer.create(row.record, reasonNew(row))
                     Classification.CONFLICT -> if (row.key in take) writer.update(row, reasonConflict(row))
-                    Classification.DUPLICATE -> Unit
+                    Classification.DUPLICATE, Classification.FORWARD -> Unit
                 }
                 if (ownerActions[row.key] == OwnerAction.RESTORE) {
                     val restoredAt = row.local!!.meta.deletedAt
@@ -262,7 +284,7 @@ class ImportAnalysis private constructor(
                                 if (row.record.isDeleted) ownedDeletions += row to now else writer.restore(row.key, reasonConflict(row))
                         }
                     }
-                    Classification.DUPLICATE -> Unit
+                    Classification.DUPLICATE, Classification.FORWARD -> Unit
                 }
             }
         }
@@ -285,6 +307,28 @@ class ImportAnalysis private constructor(
             }
         }
         val snapshots = this.snapshots.map { it.record }
+        // Schedules are one unit with their participants. handled_through only moves forward, whatever the choice;
+        // auto_post_from is local: a new schedule gets the import day, the cut-off rule (finalize) does the rest.
+        val scheduleDeletions = mutableListOf<Pair<Classified<*>, String>>()
+        for (row in schedules) {
+            val local = row.local
+            when (row.kind) {
+                Classification.NEW -> {
+                    writer.create(row.record.copy(autoPostFrom = today), reasonNew(row))
+                    if (row.record.isDeleted) scheduleDeletions += row to reasonDeleted(row)
+                }
+                Classification.CONFLICT -> if (row.key in take) {
+                    writer.update(row, reasonConflict(row), taken(local!!, row.record))
+                    if (local.isDeleted != row.record.isDeleted) {
+                        if (row.record.isDeleted) scheduleDeletions += row to reasonConflict(row) else writer.restore(row.key, reasonConflict(row))
+                    }
+                } else if (movesForward(local!!, row.record)) {
+                    writer.update(row, reasonForward(row), local.copy(handledThrough = row.record.handledThrough))
+                }
+                Classification.FORWARD -> writer.update(row, reasonForward(row), local!!.copy(handledThrough = row.record.handledThrough))
+                Classification.DUPLICATE -> Unit
+            }
+        }
         val entryDeletions = mutableListOf<Classified<*>>()
         for (row in entries) {
             when (row.kind) {
@@ -299,10 +343,11 @@ class ImportAnalysis private constructor(
                         if (row.record.isDeleted) entryDeletions += row else writer.restore(row.key, reasonConflict(row))
                     }
                 }
-                Classification.DUPLICATE -> Unit
+                Classification.DUPLICATE, Classification.FORWARD -> Unit
             }
         }
         for (row in entryDeletions) writer.delete(row.key, now, reasonDeleted(row))
+        for ((row, reason) in scheduleDeletions) writer.delete(row.key, now, reason)
         for ((row, at) in ownedDeletions) writer.delete(row.key, at, reasonDeleted(row))
         for (row in owners) {
             val action = ownerActions.getValue(row.key)
@@ -356,6 +401,9 @@ class ImportAnalysis private constructor(
 
     private fun reasonConflict(row: Classified<*>) = "Import conflict resolved from $fileName (source v${row.incoming.sourceVersion})${mapping(row)}"
 
+    private fun reasonForward(row: Classified<*>) =
+        "Imported progress from $fileName (source v${row.incoming.sourceVersion}): handled through ${(row.record as RecurringExpense).handledThrough}${mapping(row)}"
+
     /** Writes rows against a running state, so later rows see earlier ones. */
     private class Writer(var current: LedgerState, private val batch: ImportBatchId, private val now: Instant) {
         val changes = mutableListOf<Change>()
@@ -407,6 +455,21 @@ class ImportAnalysis private constructor(
         /** Business fields and deleted state equal: the sync columns are ignored (spec §7.4). */
         private fun same(a: LedgerEntity, b: LedgerEntity) = a.withMeta(NEUTRAL) == b.withMeta(NEUTRAL) && a.isDeleted == b.isDeleted
 
+        /** A schedule as the import compares it: `handled_through` and `auto_post_from` have rules of their own (spec §7.4). */
+        private fun RecurringExpense.comparable() = copy(handledThrough = null, autoPostFrom = LocalDate.MIN)
+
+        /** True when [incoming] handled a later occurrence than [local]. */
+        private fun movesForward(local: RecurringExpense, incoming: RecurringExpense): Boolean {
+            val later = incoming.handledThrough ?: return false
+            return local.handledThrough?.let { later > it } ?: true
+        }
+
+        /** The incoming template on the local schedule: the later handled date, the local `autoPostFrom`. */
+        private fun taken(local: RecurringExpense, incoming: RecurringExpense): RecurringExpense = incoming.copy(
+            handledThrough = if (movesForward(local, incoming)) incoming.handledThrough else local.handledThrough,
+            autoPostFrom = local.autoPostFrom,
+        )
+
         private fun personKey(id: PersonId) = ImportRowKey(EntityType.PERSON, id.value)
 
         private fun groupKey(id: GroupId) = ImportRowKey(EntityType.GROUP, id.value)
@@ -417,7 +480,11 @@ class ImportAnalysis private constructor(
             is PaymentHandle -> setOf(personKey(record.personId))
             is GroupMember -> setOf(personKey(record.personId), groupKey(record.groupId))
             is Transfer -> setOfNotNull(personKey(record.fromPersonId), personKey(record.toPersonId), record.groupId?.let(::groupKey))
-            is Expense -> record.personIds.map(::personKey).toSet() + setOfNotNull(record.groupId?.let(::groupKey))
+            is Expense -> record.personIds.map(::personKey).toSet() + setOfNotNull(
+                record.groupId?.let(::groupKey),
+                record.recurringId?.let { ImportRowKey(EntityType.RECURRING_EXPENSE, it.value) },
+            )
+            is RecurringExpense -> record.personIds.map(::personKey).toSet() + setOfNotNull(record.groupId?.let(::groupKey))
             else -> emptySet()
         }
 
@@ -452,6 +519,10 @@ class ImportAnalysis private constructor(
                         shares = e.shares.map { it.copy(personId = mapped(it.personId)) },
                     )
                 }
+            }
+
+            val schedules = incoming.schedules.map { row ->
+                row.mapped { s -> s.copy(participants = s.participants.map { it.copy(personId = mapped(it.personId)) }) }
             }
 
             var duplicates = 0
@@ -490,6 +561,15 @@ class ImportAnalysis private constructor(
             var classifiedMembers = classify(members) { state.members[it.id] }
             var classifiedTransfers = classify(transfers) { state.transfers[it.id] }
             var classifiedExpenses = classify(expenses) { state.expenses[it.id] }
+            var classifiedSchedules = schedules.mapNotNull { row ->
+                val local = state.schedules[row.record.id]
+                when {
+                    local == null -> Classified(row, null, Classification.NEW)
+                    !same(local.comparable(), row.record.comparable()) -> Classified(row, local, Classification.CONFLICT)
+                    movesForward(local, row.record) -> Classified(row, local, Classification.FORWARD)
+                    else -> { duplicates++; null }
+                }
+            }
 
             fun reject(row: Classified<*>, reason: String, error: LedgerError?) {
                 invalid += InvalidRow(row.incoming.table, row.incoming.row, reason, error)
@@ -512,16 +592,17 @@ class ImportAnalysis private constructor(
             classifiedMembers = classifiedMembers.checked()
             classifiedTransfers = classifiedTransfers.checked()
             classifiedExpenses = classifiedExpenses.checked()
+            classifiedSchedules = classifiedSchedules.checked()
 
             // State invariants (spec §3.4) over the complete state the import would produce with every conflict
             // taken, cascades included. Only when it breaks one are rows blamed: a row is to blame for a violation
-            // that goes away without it. Leaving out a new row (a person or a group) would leave the rows that name
+            // that goes away without it. Leaving out a new row (a person, a group or a schedule) would leave the rows that name
             // it dangling, and the validator then reports only that broken structure (rule 15), hiding every other
             // violation; so a new row is left out together with those rows, and is to blame only for a violation
             // that stays while just those rows are left out. People, handles, groups and memberships answer first,
             // for the violations that also remain with the incoming active entries left out; incoming deletions stay
             // in, as they can be what makes a deletion valid (a person deleted together with their transfers).
-            // Entries answer for the rest. Each round repeats until nothing is broken or no row is to blame, and
+            // Entries and schedules answer for the rest. Each round repeats until nothing is broken or no row is to blame, and
             // both passes run again while either blames a row, since one broken rule (above all a dangling
             // reference) can hide others.
             val rejected = mutableSetOf<ImportRowKey>()
@@ -532,14 +613,15 @@ class ImportAnalysis private constructor(
                 val rows = ImportAnalysis(
                     state, fileName, mapFrom, classifiedPeople.taken(false), classifiedHandles.taken(false),
                     classifiedGroups.taken(false), classifiedMembers.taken(false), newSnapshots,
-                    classifiedTransfers.taken(true), classifiedExpenses.taken(true), emptyList(), 0, emptySet(), sourceDeletedAt,
+                    classifiedTransfers.taken(true), classifiedExpenses.taken(true), classifiedSchedules.taken(true),
+                    emptyList(), 0, emptySet(), sourceDeletedAt,
                 )
                 val take = rows.rows.filter { it.kind == Classification.CONFLICT }.map { it.key }.toSet()
                 val after = rows.plan(take, PREVIEW_BATCH, Instant.EPOCH, PREVIEW_DAY).state
                 return LedgerValidator.validate(state, after, WriteOp.Import).toSet()
             }
             fun keptRows(): List<Classified<*>> = classifiedPeople.kept() + classifiedHandles.kept() + classifiedGroups.kept() +
-                classifiedMembers.kept() + classifiedTransfers.kept() + classifiedExpenses.kept()
+                classifiedMembers.kept() + classifiedTransfers.kept() + classifiedExpenses.kept() + classifiedSchedules.kept()
             // The kept rows that name [row] if it is new, directly or through other new rows.
             fun dependents(row: Classified<*>): Set<ImportRowKey> {
                 val rows = keptRows()
@@ -576,7 +658,7 @@ class ImportAnalysis private constructor(
                     without = { violations(withActiveEntries = false, without = it) },
                 )
                 val entries = blame(
-                    classifiedTransfers + classifiedExpenses,
+                    classifiedTransfers + classifiedExpenses + classifiedSchedules,
                     broken = { violations(withActiveEntries = true) },
                     without = { violations(withActiveEntries = true, without = it) },
                 )
@@ -588,6 +670,7 @@ class ImportAnalysis private constructor(
             classifiedMembers = classifiedMembers.kept()
             classifiedTransfers = classifiedTransfers.kept()
             classifiedExpenses = classifiedExpenses.kept()
+            classifiedSchedules = classifiedSchedules.kept()
 
             // The file's deletedAt counts only for a duplicate or a kept row: a row rejected as invalid (and skipped),
             // owner or owned, must not move a local row into or out of a cascade (spec §7.4, §7.5). Without its
@@ -597,7 +680,7 @@ class ImportAnalysis private constructor(
 
             return ImportAnalysis(
                 state, fileName, mapFrom, classifiedPeople, classifiedHandles, classifiedGroups, classifiedMembers, newSnapshots,
-                classifiedTransfers, classifiedExpenses, invalid.sortedWith(compareBy({ it.table }, { it.rowNumber })), duplicates,
+                classifiedTransfers, classifiedExpenses, classifiedSchedules, invalid.sortedWith(compareBy({ it.table }, { it.rowNumber })), duplicates,
                 mappedKeys, keptDeletedAt,
             )
         }

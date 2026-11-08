@@ -2061,7 +2061,11 @@ with:
             meta = meta(),
         )
 
-        /** A schedule with its participant rows (spec §7.2); a bad participant row is reported on its own row. */
+        /**
+         * A schedule with its participant rows (spec §7.2); a bad participant row is reported on its own row. A
+         * schedule with an `interval` outside 1..99 or an `end_on` before `start_on` is invalid even when deleted,
+         * as in a backup: views still compute dates for deleted schedules and `Recurrence` requires a valid interval.
+         */
         fun schedule(participantRows: List<CsvRow>): RecurringExpense {
             val errors = mutableListOf<InvalidRow>()
             val participants = owned(NormalizedTables.recurringParticipants, participantRows, errors) {
@@ -2069,6 +2073,11 @@ with:
                 Triple(role, long("position"), RecurringParticipant(role, PersonId(required("person_id")), optionalLong("input_value")))
             }.sortedWith(compareBy<Triple<ParticipantRole, Long, RecurringParticipant>>({ it.first }, { it.second })).map { it.third }
             if (errors.isNotEmpty()) throw OwnedRowErrors(errors)
+            val interval = int("interval")
+            if (interval !in 1..99) fail("interval", "must be 1 to 99")
+            val startOn = date("start_on")
+            val endOn = optionalDate("end_on")
+            if (endOn != null && endOn < startOn) fail("end_on", "is before start_on")
             return RecurringExpense(
                 id = RecurringId(required("id")),
                 groupId = optional("group_id")?.let(::GroupId),
@@ -2080,9 +2089,9 @@ with:
                 splitType = enum<SplitType>("split_type"),
                 participants = participants,
                 unit = enum<RecurrenceUnit>("unit"),
-                interval = int("interval"),
-                startOn = date("start_on"),
-                endOn = optionalDate("end_on"),
+                interval = interval,
+                startOn = startOn,
+                endOn = endOn,
                 handledThrough = optionalDate("handled_through"),
                 autoPostFrom = date("auto_post_from"),
                 autoPost = bool("auto_post"),
@@ -2095,6 +2104,34 @@ with:
 ```
 
 `ParticipantRole` orders `PAYER` before `SHARE`, which is the order `RecurringExpense.participants` keeps (Part 3).
+
+A schedule with such an `interval` or `end_on` is reported as an invalid row (`interval: must be 1 to 99`, `end_on: is before start_on`) even when it is deleted, because the ledger rules skip deleted schedules but views still compute their dates and `Recurrence.occurrence` requires `interval >= 1`; this is the same guarantee as the backup format (`BackupFormat.kt`). Add this test to `ImportReaderTest`, after the schedules decoding test:
+
+```kotlin
+    @Test
+    fun `a schedule with an interval outside 1 to 99 or an end before its start is invalid, even when deleted`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        ledger.schedule(ME, eur(1_000), listOf(ME, x), id = "gone", deleted = true)
+        ledger.schedule(ME, eur(1_000), listOf(ME, x), id = "live", startOn = D0.plusDays(10))
+        val parsed = (reader.read(export(ledger.state)) as LedgerResult.Ok).value
+        val rows = parsed.rows(NormalizedTables.recurringExpenses)
+        fun withCells(id: String, vararg cells: Pair<String, String>) = parsed.copy(
+            tables = parsed.tables + (
+                NormalizedTables.recurringExpenses.name to rows.map { if (it.cells["id"] == id) it.copy(cells = it.cells + cells) else it }
+                ),
+        )
+
+        val interval = ImportDecoder.decode(withCells("gone", "interval" to "0"))
+        interval.ledger.schedules.map { it.record.id.value } shouldBe listOf("live")
+        interval.invalid.map { it.table to it.reason } shouldBe listOf("recurring_expenses" to "interval: must be 1 to 99")
+
+        val end = ImportDecoder.decode(withCells("live", "end_on" to D0.toString()))
+        end.ledger.schedules.map { it.record.id.value } shouldBe listOf("gone")
+        end.invalid.map { it.reason } shouldBe listOf("end_on: is before start_on")
+    }
+```
 
 - [ ] **Step 4: Classify and write schedules**
 
@@ -2206,6 +2243,7 @@ with:
         is RecurringExpense -> "Schedule ${entity.description}"
 ```
 
+Delete the `else -> "${entity.entityType} ${entity.entityId}"` branch of `label`: with `RecurringExpense` every `LedgerEntity` is covered, and the compiler flags the `else` as redundant.
 `FORWARD` now has to be handled by every `when (row.kind)` in `plan`: replace each of the three branches `Classification.DUPLICATE -> Unit` (in `writeOwners`, in `writeOwned` and in the entries loop) with `Classification.DUPLICATE, Classification.FORWARD -> Unit`. Only schedules are ever `FORWARD`.
 
 Write the schedules after the FX snapshots and before the entries: replace:

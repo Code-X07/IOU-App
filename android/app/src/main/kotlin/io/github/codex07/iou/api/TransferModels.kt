@@ -67,6 +67,7 @@ sealed interface ImportIdentity {
     data class NeedsConfirmation(val sourceMe: PersonId) : ImportIdentity
 }
 
+/** [conflicts] also counts schedules whose only difference is a later `handledThrough` (applied without a choice). */
 data class ImportCounts(val new: Int, val conflicts: Int, val duplicates: Int, val invalid: Int)
 
 data class ImportRowKey(val type: EntityType, val id: String)
@@ -79,6 +80,11 @@ data class ImportRow(
     val choice: ImportRowChoice,
     /** Set by `refreshPreview` for rows that are new or changed since the previous preview. */
     val changedSinceLastPreview: Boolean,
+    /**
+     * Changes the import makes whatever the choice (spec §7.4): a schedule's `handledThrough` moving forward. They
+     * also appear in [changes]. A row whose [changes] are all forced has nothing to choose; show it like a cascade row.
+     */
+    val forcedChanges: List<FieldChange> = emptyList(),
 )
 
 sealed interface ImportRowChoice {
