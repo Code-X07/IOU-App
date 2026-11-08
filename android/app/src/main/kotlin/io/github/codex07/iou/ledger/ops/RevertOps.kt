@@ -7,10 +7,12 @@ import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.ledgerResult
 import io.github.codex07.iou.ledger.model.Change
 import io.github.codex07.iou.ledger.model.EntryRevision
+import io.github.codex07.iou.ledger.model.Expense
 import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
+import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.rules.LedgerValidator
 import io.github.codex07.iou.ledger.rules.WriteOp
@@ -52,6 +54,9 @@ object RevertOps {
         is Person -> (current as Person).let { old.copy(isMe = it.isMe, mergedIntoId = it.mergedIntoId) }
         is PaymentHandle -> (current as PaymentHandle).let { old.copy(personId = it.personId) }
         is GroupMember -> (current as GroupMember).let { old.copy(groupId = it.groupId, personId = it.personId, joinedAt = it.joinedAt) }
+        is Expense -> (current as Expense).let { old.copy(recurringId = it.recurringId, recurringOn = it.recurringOn) }
+        // A revert changes the template and pattern, never which occurrences were handled (spec §5.3).
+        is RecurringExpense -> (current as RecurringExpense).let { old.copy(handledThrough = it.handledThrough, autoPostFrom = it.autoPostFrom) }
         else -> old
     }.withMeta(current.meta)
 }

@@ -106,6 +106,9 @@ object EntryOps {
             occurredOn = draft.occurredOn,
             note = draft.note.cleaned(),
             meta = existing?.meta ?: ctx.newMeta(),
+            // A posted expense stays linked to its schedule and occurrence through every edit (rule 19).
+            recurringId = existing?.recurringId,
+            recurringOn = existing?.recurringOn,
         ).let { if (existing == null) it else ctx.touch(it) }
 
         val action = if (existing == null) RevisionAction.CREATED else RevisionAction.UPDATED
@@ -119,7 +122,8 @@ object EntryOps {
     fun deleteEntry(ctx: WriteContext, id: EntryId, token: EditToken): LedgerResult<Planned<Unit>> = ledgerResult {
         val entry = edited(ctx, token, id.value) { it.entry(id) }
         if (entry.isDeleted) return@ledgerResult Planned(Unit, WritePlan.Empty)
-        Planned(Unit, validated(ctx, listOf(Change(ctx.touch(entry, deletedAt = ctx.now), RevisionAction.DELETED))))
+        val deleted = Change(ctx.touch(entry, deletedAt = ctx.now), RevisionAction.DELETED)
+        Planned(Unit, validated(ctx, listOf(deleted) + RecurringOps.raisedByDelete(ctx, entry)))
     }
 
     fun restoreEntry(ctx: WriteContext, id: EntryId, token: EditToken): LedgerResult<Planned<Unit>> = ledgerResult {

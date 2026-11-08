@@ -1,15 +1,21 @@
 package io.github.codex07.iou.ledger.ops
 
 import io.github.codex07.iou.api.EditToken
+import io.github.codex07.iou.api.ExpenseDraft
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.RecurringDraft
 import io.github.codex07.iou.api.ResultScope
+import io.github.codex07.iou.api.SaveMode
 import io.github.codex07.iou.api.ScheduleSaveMode
 import io.github.codex07.iou.api.ledgerResult
 import io.github.codex07.iou.ledger.engine.IdentityResolver
+import io.github.codex07.iou.ledger.engine.Recurrence
 import io.github.codex07.iou.ledger.engine.SplitResolver
 import io.github.codex07.iou.ledger.model.Change
+import io.github.codex07.iou.ledger.model.Entry
+import io.github.codex07.iou.ledger.model.EntryId
+import io.github.codex07.iou.ledger.model.Expense
 import io.github.codex07.iou.ledger.model.ParticipantRole
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.RecurringExpense
@@ -18,6 +24,7 @@ import io.github.codex07.iou.ledger.model.RecurringParticipant
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
+import java.time.LocalDate
 
 /** Schedules (spec §5.7): save, delete, restore, post and skip, and the cut-off rule with hold resumes on every write. */
 object RecurringOps {
@@ -80,7 +87,64 @@ object RecurringOps {
         Planned(Unit, validated(ctx, listOf(Change(ctx.touch(schedule, deletedAt = null), RevisionAction.RESTORED))))
     }
 
+    /**
+     * Posts [occurrence], which must be the schedule's next one (rule 19), as the expense [draft] describes (spec
+     * §5.7): the expense is created through the normal expense create, so every rule applies, and the schedule's
+     * `handledThrough` moves to [occurrence] in the same write. [token] is the schedule's.
+     */
+    fun post(
+        ctx: WriteContext,
+        id: RecurringId,
+        occurrence: LocalDate,
+        draft: ExpenseDraft,
+        token: EditToken,
+    ): LedgerResult<Planned<EntryId>> = ledgerResult {
+        val schedule = live(ctx, id, token)
+        val next = Recurrence.next(schedule, ctx.state)
+        ensure(next != null && occurrence == next) { LedgerError.OccurrenceNotDue(next) }
+        val created = EntryOps.saveExpense(ctx, draft, SaveMode.Create(ctx.generation)).bind()
+        val expense = (created.plan.changes.single().entity as Expense).copy(recurringId = id, recurringOn = occurrence)
+        val handled = ctx.touch(schedule.copy(handledThrough = occurrence))
+        val changes = listOf(
+            Change(expense, RevisionAction.CREATED, "Posted from ${schedule.description}"),
+            Change(handled, RevisionAction.UPDATED, "Posted $occurrence", keepsCutOff = true),
+        )
+        Planned(expense.id, validated(ctx, changes, created.plan.snapshots))
+    }
+
+    /** Skips every occurrence from the next one through [through], which must be an occurrence (rule 19). */
+    fun skip(ctx: WriteContext, id: RecurringId, through: LocalDate, token: EditToken): LedgerResult<Planned<Unit>> = ledgerResult {
+        val schedule = live(ctx, id, token)
+        val next = Recurrence.next(schedule, ctx.state)
+        ensure(next != null && !through.isBefore(next) && Recurrence.isOccurrence(schedule, through)) {
+            LedgerError.OccurrenceNotDue(next)
+        }
+        val skipped = ctx.touch(schedule.copy(handledThrough = through))
+        Planned(Unit, validated(ctx, listOf(Change(skipped, RevisionAction.UPDATED, "Skipped through $through", keepsCutOff = true))))
+    }
+
+    /**
+     * Spec §5.7: deleting a posted expense through the api raises its schedule's `handledThrough` to the expense's
+     * occurrence when it is lower, so the date doesn't become due again. Like a skip it only moves forward.
+     */
+    internal fun raisedByDelete(ctx: WriteContext, entry: Entry): List<Change> {
+        val expense = entry as? Expense ?: return emptyList()
+        val on = expense.recurringOn ?: return emptyList()
+        val schedule = expense.recurringId?.let { ctx.state.schedules[it] } ?: return emptyList()
+        val handled = schedule.handledThrough
+        if (handled != null && !handled.isBefore(on)) return emptyList()
+        val raised = ctx.touch(schedule.copy(handledThrough = on))
+        return listOf(Change(raised, RevisionAction.UPDATED, "Handled through $on: posted expense deleted", keepsCutOff = true))
+    }
+
     // ---- internals ----
+
+    /** The schedule a post or skip acts on: token checked first, and a deleted schedule is `NotFound` (rule 19). */
+    private fun ResultScope.live(ctx: WriteContext, id: RecurringId, token: EditToken): RecurringExpense {
+        val schedule = edited(ctx, token, id.value) { it.schedules[id] }
+        ensure(!schedule.isDeleted) { LedgerError.NotFound(id.value) }
+        return schedule
+    }
 
     /**
      * One role's template rows (spec §4.4, §5.7): checked per draft record (negatives, the same record twice),
