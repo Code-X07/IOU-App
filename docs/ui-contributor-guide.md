@@ -42,6 +42,7 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 - Live split feedback: `previewSplit(draft, editing)` returns the shares and the payers the draft would get. When editing, it also returns the stored ones (`storedShares`, `storedPayers`) and whether saving would recompute each list (`recomputed`, `payersRecomputed`); the two are decided separately.
 - "Paid by": `ActivityItem.payers` lists each payer once (`PayerView`: person, `paid` in the effect currency, and the EXACT amount in the paid currency as `inputValue`); transfers have none. `paidBy` is the first payer, for screens that still show one name. The edit draft carries `payers` and `payerSplit`.
 - Outside groups an entry involves exactly me and one other person. Anything else returns `NeedsGroup(people)`: offer to create a group from those people.
+- Schedules (spec §5.7): build a `RecurringDraft` (the expense template without date or FX, plus `unit`, `interval` 1–99, `startOn`, `endOn`, `autoPost`) and save with `ScheduleSaveMode.Create(basis)` or `ScheduleSaveMode.Update(id, token)`. Template errors use the same `LedgerError`s as entries; `RecurringOps` (save, delete, restore) is not yet exposed through `LedgerApi`. `OccurrenceNotDue(nextDue)` means a post or skip happened out of order or past `endOn`: show the occurrence to handle first.
 
 ### Currencies
 

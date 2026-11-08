@@ -7,6 +7,7 @@ import io.github.codex07.iou.money.CurrencyCode
 import io.github.codex07.iou.money.Money
 import io.github.codex07.iou.money.MoneyError
 import io.github.codex07.iou.money.MoneyParseResult
+import java.time.LocalDate
 
 /**
  * Every failure the core reports (spec §4.4, §8). Each carries the data a good message or a
@@ -57,6 +58,10 @@ sealed interface LedgerError {
     data class DeletedReference(val ids: Set<String>) : LedgerError
     data class InvalidMerge(val problem: MergeProblem) : LedgerError
     data object SelfTransfer : LedgerError
+
+    // Recurring expenses (spec §5.7)
+    /** Posting or skipping out of order or past `endOn`; [nextDue] is the occurrence to handle first, null when none is left. */
+    data class OccurrenceNotDue(val nextDue: LocalDate?) : LedgerError
 
     // Concurrency (spec §5.1)
     data class StaleVersion(val id: String, val expected: Int, val actual: Int) : LedgerError
