@@ -2244,6 +2244,7 @@ with:
 ```
 
 Delete the `else -> "${entity.entityType} ${entity.entityId}"` branch of `label`: with `RecurringExpense` every `LedgerEntity` is covered, and the compiler flags the `else` as redundant.
+
 `FORWARD` now has to be handled by every `when (row.kind)` in `plan`: replace each of the three branches `Classification.DUPLICATE -> Unit` (in `writeOwners`, in `writeOwned` and in the entries loop) with `Classification.DUPLICATE, Classification.FORWARD -> Unit`. Only schedules are ever `FORWARD`.
 
 Write the schedules after the FX snapshots and before the entries: replace:
