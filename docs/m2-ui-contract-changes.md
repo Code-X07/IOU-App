@@ -1,6 +1,15 @@
 # M2: what changes for the UI
 
-Two new features are coming in M2: expenses paid by several people, and recurring expenses. Nothing changes in the code yet; this is a heads-up so we agree before the core work starts. Full details: spec §4.4, §5.7, §6.2 (`docs/superpowers/specs/2026-11-02-iou-mvp-design.md`).
+M2 adds expenses paid by several people, recurring expenses, group and schedule import, and XLSX export. **All of it is live on `main` now** (both flavors; notifications in the real build only). The core side is done and reviewed; `v0.2.0` ships once the screens below are in, followed by a bug-fix round. Full details: spec §4.4, §5.7, §6.2, §7 (`docs/superpowers/specs/2026-11-02-iou-mvp-design.md`) and `docs/ui-contributor-guide.md`.
+
+## UI to-do before v0.2.0
+
+- [ ] **Payers on the expense form:** move the form to `ExpenseDraft.payers` / `payerSplit` (EQUAL or EXACT amounts) and show every payer wherever "paid by" appears (activity, entry detail, group expenses) from `ActivityItem.payers`. See "Multiple payers" below.
+- [ ] **Schedule screens:** schedule list, schedule detail and edit form (with the next date shown before saving), a separate "on hold" list, and the due list with post / skip and the "confirm these to resume auto-posting" line. Inject `RecurringApi` (also `Apis.recurring`). See "Recurring expenses" below.
+- [ ] **Notification permission:** ask for `POST_NOTIFICATIONS` the first time a schedule is saved (Android 13+). The real build already declares it in its manifest.
+- [ ] **Notification taps:** in `MainActivity`, read the intent extra `iou.open`; for `"due"` open the due list, and when `iou.schedule` is present, that schedule. Today the extras are ignored and the app just opens.
+- [ ] **XLSX export:** allow XLSX in the export Format field. Three places still block or deny it: `ui/settings/DataModels.kt` (rejects XLSX with `InvalidField("format")`, and `DataManagementTest` expects that), `ui/forms/LedgerErrorMessage.kt` line 27 ("XLSX arrives in a later version") and `ui/screens/DataManagementScreen.kt` line 163 (same text).
+- [ ] **Import preview:** show schedule rows with `forcedChanges` like the "deleted with" rows (nothing to choose), and the "<group> (group)" balance lines. See "Import and export" below.
 
 ## Multiple payers
 
@@ -36,4 +45,4 @@ Two new features are coming in M2: expenses paid by several people, and recurrin
 
 ## Fake data
 
-The fake will get a two-payer group expense, a monthly confirm-first schedule with one date due, and an auto-post schedule.
+The fake has a two-payer group expense ("Museum tickets" in the Lisbon trip), a monthly confirm-first schedule ("Rent") with one date due, and an auto-post schedule ("Streaming").
