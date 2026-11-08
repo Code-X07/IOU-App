@@ -204,8 +204,13 @@ data class ActivityItem(
     /** Expense description; null for transfers. */
     val description: String?,
     val note: String?,
-    /** Expense payer or transfer sender (canonical). */
+    /**
+     * Expense: the first payer; transfer: the sender (canonical). Kept for single-payer screens: an expense
+     * may have several payers, listed in [payers].
+     */
     val paidBy: PersonRef,
+    /** Expense payers per canonical person, in stored order, with what each paid; empty for transfers. */
+    val payers: List<PayerView>,
     /** Transfer receiver (canonical); null for expenses. */
     val receiver: PersonRef?,
     /** Expense share holders (canonical, once each); empty for transfers. */
@@ -249,6 +254,12 @@ data class EntryDetail(
 
 data class ShareView(val person: PersonRef, val share: Money, val inputValue: Long?)
 
+/**
+ * One payer of an expense (spec §6.2), records of one merged person added up. [paid] is in the effect
+ * currency; [inputValue] is the EXACT amount in the paid currency, null for EQUAL payers.
+ */
+data class PayerView(val person: PersonRef, val paid: Money, val inputValue: Long?)
+
 data class FxSnapshotView(
     val base: CurrencyCode,
     val quote: CurrencyCode,
@@ -280,11 +291,18 @@ data class RevisionView(
     val token: EditToken?,
 )
 
-/** Shares a draft would get; [storedShares] is set when editing, so both can be shown (spec §4.4). */
+/**
+ * Shares and payers a draft would get; [storedShares] and [storedPayers] are set when editing, so both can be
+ * shown (spec §4.4). Shares and payers are kept or recomputed independently.
+ */
 data class SplitPreview(
     val effectTotal: Money,
     val shares: List<ShareView>,
     val storedShares: List<ShareView>?,
     /** False when saving would keep the stored shares unchanged. */
     val recomputed: Boolean,
+    val payers: List<PayerView>,
+    val storedPayers: List<PayerView>?,
+    /** False when saving would keep the stored payer rows unchanged. */
+    val payersRecomputed: Boolean,
 )

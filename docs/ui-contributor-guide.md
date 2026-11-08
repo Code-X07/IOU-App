@@ -39,7 +39,8 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 - Payers: `ExpenseDraft.payers` is a list of `SplitInput`, like `participants`, divided by `payerSplit`: `EQUAL` (no values) or `EXACT` (each payer's amount in the paid currency, each > 0, adding up to the total). One payer is one entry with no value. Errors on the payer side: `NoPayers`, `PaidRemaining(diffMinor)`, `DuplicatePayer(personId)`, and `NegativeInput` / `MissingInput` / `InvalidAmount` / `AmountTooLarge` naming a payer. The old constructor `ExpenseDraft(payer, description, …)` still works and makes one payer; `draft.payer` (deprecated) is the first payer only, so a form that edits through it saves one payer.
 - Edit: start from `EntryDetail.editDraft` (it's already pre-filled correctly, including FX and merged participants), change fields, save with `SaveMode.Update(id, token)`.
 - Parse typed amounts with `Inputs.amount(text, currency)` and codes with `Inputs.currency(text)`.
-- Live split feedback: `previewSplit(draft, editing)`. When editing, it also returns the stored shares and whether saving would recompute them.
+- Live split feedback: `previewSplit(draft, editing)` returns the shares and the payers the draft would get. When editing, it also returns the stored ones (`storedShares`, `storedPayers`) and whether saving would recompute each list (`recomputed`, `payersRecomputed`); the two are decided separately.
+- "Paid by": `ActivityItem.payers` lists each payer once (`PayerView`: person, `paid` in the effect currency, and the EXACT amount in the paid currency as `inputValue`); transfers have none. `paidBy` is the first payer, for screens that still show one name. The edit draft carries `payers` and `payerSplit`.
 - Outside groups an entry involves exactly me and one other person. Anything else returns `NeedsGroup(people)`: offer to create a group from those people.
 
 ### Currencies

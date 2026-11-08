@@ -15,6 +15,7 @@ import io.github.codex07.iou.api.GroupDraft
 import io.github.codex07.iou.api.HandleDraft
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
+import io.github.codex07.iou.api.PayerView
 import io.github.codex07.iou.api.PersonDraft
 import io.github.codex07.iou.api.PlanItem
 import io.github.codex07.iou.api.RevisionView
@@ -31,6 +32,7 @@ import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.Entry
 import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.Expense
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSnapshot
 import io.github.codex07.iou.ledger.model.FxSource
@@ -38,13 +40,16 @@ import io.github.codex07.iou.ledger.model.Group
 import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.IdGenerator
 import io.github.codex07.iou.ledger.model.LedgerGeneration
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.ledger.ops.EntryOps
 import io.github.codex07.iou.ledger.ops.WriteContext
+import io.github.codex07.iou.money.CurrencyCode
 import io.github.codex07.iou.money.Money
 import java.time.Instant
 import java.time.LocalDate
@@ -68,14 +73,14 @@ fun LedgerViews.activity(filter: ActivityFilter): List<ActivityItem> {
 fun LedgerViews.activityItem(entry: Entry): ActivityItem = when (entry) {
     is Transfer -> ActivityItem(
         entryId = entry.id, kind = EntryKind.TRANSFER, occurredOn = entry.occurredOn, description = null,
-        note = entry.note, paidBy = personRef(entry.fromPersonId), receiver = personRef(entry.toPersonId),
+        note = entry.note, paidBy = personRef(entry.fromPersonId), payers = emptyList(), receiver = personRef(entry.toPersonId),
         participants = emptyList(), transferKind = entry.kind, category = null,
         group = entry.groupId?.let(::groupRef), paid = entry.amount, effect = entry.effectAmount,
         myBalanceEffect = myEffect(entry), deleted = entry.isDeleted,
     )
     is Expense -> ActivityItem(
         entryId = entry.id, kind = EntryKind.EXPENSE, occurredOn = entry.occurredOn, description = entry.description,
-        note = entry.note, paidBy = personRef(entry.payers.first().personId), receiver = null,
+        note = entry.note, paidBy = personRef(entry.payers.first().personId), payers = payerViews(entry), receiver = null,
         participants = entry.shares.map { resolver.canonical(it.personId) }.distinct().map(::personRef),
         transferKind = null, category = entry.category,
         group = entry.groupId?.let(::groupRef), paid = entry.total, effect = entry.effectTotal,
@@ -107,6 +112,21 @@ fun LedgerViews.shareViews(expense: Expense): List<ShareView> {
         sums[person] = Math.addExact(sums[person] ?: 0L, share.shareMinor)
     }
     return sums.map { (person, sum) -> ShareView(personRef(person), Money(sum, expense.effectTotal.currency), inputs[person]) }
+}
+
+/** Payers per canonical person, records of one person added up, in stored order (spec §4.4, §6.2). */
+fun LedgerViews.payerViews(expense: Expense): List<PayerView> =
+    payerViews(expense.payers, expense.payerSplit, expense.effectTotal.currency)
+
+private fun LedgerViews.payerViews(payers: List<ExpensePayer>, split: PayerSplit, currency: CurrencyCode): List<PayerView> {
+    val inputs = EntryOps.combineInputs(payers.map { SplitInput(it.personId, it.inputValue) }, split.splitType, resolver)
+        .associate { it.personId to it.value }
+    val sums = LinkedHashMap<PersonId, Long>()
+    for (payer in payers) {
+        val person = resolver.canonical(payer.personId)
+        sums[person] = Math.addExact(sums[person] ?: 0L, payer.paidMinor)
+    }
+    return sums.map { (person, sum) -> PayerView(personRef(person), Money(sum, currency), inputs[person]) }
 }
 
 fun fxView(snapshot: FxSnapshot) = FxSnapshotView(
@@ -203,6 +223,10 @@ fun LedgerViews.splitPreview(draft: ExpenseDraft, editing: EntryId?, now: Instan
             },
             storedShares = stored,
             recomputed = preview.recomputed,
+            // Kept payers are the stored rows with the stored payerSplit, which equals the draft's when they are kept.
+            payers = payerViews(preview.payers, draft.payerSplit, preview.effectTotal.currency),
+            storedPayers = existing?.let { payerViews(it) },
+            payersRecomputed = preview.payersRecomputed,
         )
     }
 }
@@ -274,7 +298,7 @@ private fun LedgerViews.draftOf(entry: Entry, fx: FxChoice?): EntryDraft = when 
         )
     }
     is Expense -> ExpenseDraft(
-        payer = personRef(entry.payers.first().personId).id,
+        payers = EntryOps.payerInputsOf(entry, resolver),
         description = entry.description,
         category = entry.category,
         total = entry.total,
@@ -284,5 +308,6 @@ private fun LedgerViews.draftOf(entry: Entry, fx: FxChoice?): EntryDraft = when 
         occurredOn = entry.occurredOn,
         note = entry.note,
         fx = fx,
+        payerSplit = entry.payerSplit,
     )
 }

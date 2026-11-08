@@ -14,11 +14,13 @@ import io.github.codex07.iou.api.SaveMode
 import io.github.codex07.iou.api.TransferDraft
 import io.github.codex07.iou.api.VersionDraft
 import io.github.codex07.iou.ledger.model.EntityType
+import io.github.codex07.iou.ledger.model.ExpensePayer
 import io.github.codex07.iou.ledger.model.FieldChange
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSource
 import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.LedgerGeneration
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.RevisionAction
 import io.github.codex07.iou.ledger.model.SplitInput
@@ -233,5 +235,75 @@ class EntryViewsTest {
 
         (h.views().entry(id)!!.editDraft as ExpenseDraft).participants shouldBe listOf(SplitInput(alex), SplitInput(bob))
         h.views().entry(id)!!.shares.map { it.person.displayName to it.share } shouldBe listOf("Alex" to eur(600), "Bob" to eur(300))
+    }
+
+    @Test
+    fun `expense read models show each canonical payer once with what they paid`() {
+        val ledger = TestLedger().apply { me() }
+        val alex = ledger.person("Alex")
+        val alex2 = ledger.person("Alex2", mergedInto = alex)
+        val bob = ledger.person("Bob")
+        val trip = ledger.group("Trip", members = listOf(ME, alex, alex2, bob))
+        val id = ledger.expense(
+            alex, eur(9_000), mapOf(ME to 3_000L, alex to 3_000L, bob to 3_000L), group = trip, splitType = SplitType.EQUAL,
+            payers = listOf(ExpensePayer(alex, 3_000, 3_000), ExpensePayer(bob, 4_000, 4_000), ExpensePayer(alex2, 2_000, 2_000)),
+            payerSplit = PayerSplit.EXACT,
+        )
+        val loan = ledger.transfer(ME, bob, eur(500))
+        val h = OpsHarness(ledger.state)
+
+        val detail = h.views().entry(id)!!
+        detail.item.paidBy.displayName shouldBe "Alex"
+        detail.item.payers.map { Triple(it.person.displayName, it.paid, it.inputValue) } shouldBe listOf(
+            Triple("Alex", eur(5_000), 5_000L),
+            Triple("Bob", eur(4_000), 4_000L),
+        )
+        val draft = detail.editDraft as ExpenseDraft
+        draft.payerSplit shouldBe PayerSplit.EXACT
+        draft.payers shouldBe listOf(SplitInput(alex, 5_000), SplitInput(bob, 4_000))
+        h.views().entry(loan)!!.item.payers shouldBe emptyList()
+    }
+
+    @Test
+    fun `split preview shows stored and new payers`() {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val id = ledger.expense(
+            ME, eur(1_000), mapOf(ME to 500L, x to 500L), splitType = SplitType.EQUAL,
+            payers = listOf(ExpensePayer(ME, 300, 300), ExpensePayer(x, 700, 700)), payerSplit = PayerSplit.EXACT,
+        )
+        val h = OpsHarness(ledger.state)
+        val draft = h.views().entry(id)!!.editDraft as ExpenseDraft
+
+        val same = h.views().splitPreview(draft, id, h.now).ok()
+        same.payersRecomputed shouldBe false
+        same.payers shouldBe same.storedPayers
+        same.payers.map { it.paid } shouldBe listOf(eur(300), eur(700))
+
+        val equal = h.views().splitPreview(
+            draft.copy(payerSplit = PayerSplit.EQUAL, payers = listOf(SplitInput(ME), SplitInput(x))), id, h.now,
+        ).ok()
+        equal.payersRecomputed shouldBe true
+        equal.recomputed shouldBe false
+        equal.payers.map { it.paid to it.inputValue } shouldBe listOf(eur(500) to null, eur(500) to null)
+        equal.storedPayers!!.map { it.paid } shouldBe listOf(eur(300), eur(700))
+
+        h.views().splitPreview(draft.copy(payers = listOf(SplitInput(ME, 300), SplitInput(x, 600))), id, h.now) shouldBe
+            LedgerResult.Err(LedgerError.PaidRemaining(100))
+    }
+
+    @Test
+    fun `old versions open as drafts with the payers they had`() {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val h = OpsHarness(ledger.state)
+        val single = ExpenseDraft(ME, "Lunch", total = eur(1_000), participants = listOf(SplitInput(ME), SplitInput(x)), occurredOn = D0)
+        val id = h.run { EntryOps.saveExpense(it, single, SaveMode.Create(h.generation)) }.ok()
+        val both = single.copy(payers = listOf(SplitInput(ME, 300), SplitInput(x, 700)), payerSplit = PayerSplit.EXACT)
+        h.run { EntryOps.saveExpense(it, both, SaveMode.Update(id, h.token(h.state.expenses.getValue(id)))) }.ok()
+
+        val ref = EntityRef(EntityType.EXPENSE, id.value)
+        h.views().draftFromVersion(ref, 1).ok() shouldBe VersionDraft.OfEntry(single)
+        h.views().draftFromVersion(ref, 2).ok() shouldBe VersionDraft.OfEntry(both)
     }
 }
