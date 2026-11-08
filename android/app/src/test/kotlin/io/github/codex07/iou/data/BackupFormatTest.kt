@@ -17,6 +17,12 @@ import io.kotest.matchers.string.shouldStartWith
 import java.time.Clock
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.Test
 
 class BackupFormatTest {
@@ -48,7 +54,30 @@ class BackupFormatTest {
     @Test
     fun `a plain backup is JSON with its schema, app version and time`() {
         val text = format.write(rows, "0.1.0", T0, null).toString(Charsets.UTF_8)
-        text shouldStartWith """{"format":"iou-backup","schemaVersion":1,"appVersion":"0.1.0","createdAt":"2026-01-01T00:00:00Z","rows":{"""
+        text shouldStartWith """{"format":"iou-backup","schemaVersion":2,"appVersion":"0.1.0","createdAt":"2026-01-01T00:00:00Z","rows":{"""
+    }
+
+    @Test
+    fun `a version-1 backup reads as the same ledger with one payer per expense`() {
+        val content = (format.read(format.write(rows, "0.1.0", T0, null), null) as LedgerResult.Ok).value.content
+        val document = Json.parseToJsonElement(format.write(rows, "0.1.0", T0, null).toString(Charsets.UTF_8)).jsonObject
+        val v2Rows = document.getValue("rows").jsonObject
+        val payerOf = v2Rows.getValue("payers").jsonArray.map { it.jsonObject }
+            .associate { it.getValue("expenseId") to it.getValue("personId") }
+        val v1Expenses = v2Rows.getValue("expenses").jsonArray.map { it.jsonObject }.map { expense ->
+            JsonObject(expense - "payerSplit" + ("payerPersonId" to payerOf.getValue(expense.getValue("id"))))
+        }
+        val v1 = JsonObject(
+            document + mapOf(
+                "schemaVersion" to JsonPrimitive(1),
+                "rows" to JsonObject(v2Rows - "payers" + ("expenses" to JsonArray(v1Expenses))),
+            ),
+        )
+
+        val read = format.read(v1.toString().toByteArray(), null)
+
+        (read as LedgerResult.Ok).value.content shouldBe content
+        read.value.rows.payers.size shouldBe content.state.expenses.size
     }
 
     @Test
@@ -58,9 +87,9 @@ class BackupFormatTest {
         format.read(format.write(rows, "0.1.0", T0, passphrase), null).error() shouldBe LedgerError.WrongPassphraseOrDamagedFile
         format.read("""{"hello":1}""".toByteArray(), null).error() shouldBe LedgerError.CorruptFile("Not an IOU backup")
         format.read("PK\u0003\u0004 not json".toByteArray(), null).error()::class shouldBe LedgerError.CorruptFile::class
-        format.read(text.replace("\"schemaVersion\":1", "\"schemaVersion\":2").toByteArray(), null).error() shouldBe
-            LedgerError.SchemaTooNew(2, 1)
-        format.read(text.replace("\"schemaVersion\":1,", "").toByteArray(), null).error()::class shouldBe
+        format.read(text.replace("\"schemaVersion\":2", "\"schemaVersion\":3").toByteArray(), null).error() shouldBe
+            LedgerError.SchemaTooNew(3, 2)
+        format.read(text.replace("\"schemaVersion\":2,", "").toByteArray(), null).error()::class shouldBe
             LedgerError.CorruptFile::class
         format.read(text.replace("\"people\":[", "\"people\":7,\"x\":[").toByteArray(), null).error()::class shouldBe
             LedgerError.CorruptFile::class

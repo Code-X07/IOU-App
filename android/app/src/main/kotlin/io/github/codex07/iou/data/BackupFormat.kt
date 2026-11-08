@@ -10,6 +10,8 @@ import io.github.codex07.iou.store.LedgerContent
 import java.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -67,7 +69,7 @@ class BackupFormat(
             if (header["format"]?.jsonPrimitive?.content != FORMAT) return LedgerResult.Err(LedgerError.CorruptFile("Not an IOU backup"))
             val schema = requireNotNull(header["schemaVersion"]) { "Missing schemaVersion" }.jsonPrimitive.int
             if (schema > SCHEMA_VERSION) return LedgerResult.Err(LedgerError.SchemaTooNew(schema, SCHEMA_VERSION))
-            json.decodeFromString(BackupDocument.serializer(), text)
+            json.decodeFromJsonElement(BackupDocument.serializer(), upgrade(header, schema))
         } catch (e: IllegalArgumentException) {
             // kotlinx.serialization's exceptions are IllegalArgumentExceptions.
             return LedgerResult.Err(LedgerError.CorruptFile("Malformed backup: ${e.message}"))
@@ -75,6 +77,7 @@ class BackupFormat(
         val content = try {
             val expenseIds = document.rows.expenses.map { it.id }.toSet()
             require(document.rows.shares.all { it.expenseId in expenseIds }) { "Share references a missing expense" }
+            require(document.rows.payers.all { it.expenseId in expenseIds }) { "Payer references a missing expense" }
             // The rate cache isn't ledger data, but `FxService.load` reads it once the restore has committed.
             for (rate in document.rows.rates.map { it.toCachedRate().rate }) {
                 require(FxConverter.validateRate(rate) is LedgerResult.Ok) { "Invalid cached rate $rate" }
@@ -101,11 +104,24 @@ class BackupFormat(
         return LedgerResult.Ok(ValidBackup(document.rows, content))
     }
 
+    /**
+     * Older backups are migrated before they are decoded (spec §7.1 step 1): a version-1 backup's expense rows get
+     * their payer rows exactly as `Migration(1, 2)` gives them. Revision snapshots stay as written; the snapshot
+     * upcaster reads them.
+     */
+    private fun upgrade(document: JsonObject, schema: Int): JsonObject {
+        if (schema >= SCHEMA_VERSION) return document
+        val rows = document["rows"]?.jsonObject ?: return document
+        return JsonObject(
+            document + mapOf("schemaVersion" to JsonPrimitive(SCHEMA_VERSION), "rows" to Migrations.backupRows1To2(rows)),
+        )
+    }
+
     companion object {
         const val FORMAT = "iou-backup"
 
         /** The Room schema version (`IouDatabase`); older backups are migrated when it grows. */
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
         const val MAX_FILE_BYTES = 64L * 1024 * 1024
         const val MAX_JSON_BYTES = 256L * 1024 * 1024
 
