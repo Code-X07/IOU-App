@@ -10,6 +10,7 @@ import io.github.codex07.iou.api.Apis
 import io.github.codex07.iou.data.RateRefreshWorker
 import io.github.codex07.iou.data.RealBackend
 import io.github.codex07.iou.store.DeviceSettingsStore
+import io.github.codex07.iou.store.RecurringRunner
 import io.github.codex07.iou.store.TimedLockGate
 import io.github.codex07.iou.ui.settings.DataServices
 import javax.inject.Singleton
@@ -32,6 +33,9 @@ object BackendModule {
 
     @Provides
     fun lock(backend: RealBackend): TimedLockGate = backend.lock
+
+    @Provides
+    fun runner(backend: RealBackend): RecurringRunner = backend.runner
 
     @Provides
     fun dataServices(): DataServices = DataServices.Real

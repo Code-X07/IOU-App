@@ -1349,12 +1349,14 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /** Date-relative reads follow the runner's passes (spec §5.7). */
+@OptIn(ExperimentalCoroutinesApi::class)
 class StoreRecurringApiTest {
 
     /** A clock the test moves (UTC). */

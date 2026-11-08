@@ -11,10 +11,11 @@ import io.github.codex07.iou.api.GroupsApi
 import io.github.codex07.iou.api.ImportExportApi
 import io.github.codex07.iou.api.LedgerApi
 import io.github.codex07.iou.api.PeopleApi
+import io.github.codex07.iou.api.RecurringApi
 import io.github.codex07.iou.api.SettingsApi
 import io.github.codex07.iou.api.SetupApi
 
-/** Exposes the eight interfaces of whichever `Apis` the flavor's BackendModule provides. */
+/** Exposes the nine interfaces of whichever `Apis` the flavor's BackendModule provides. */
 @Module
 @InstallIn(SingletonComponent::class)
 object ApiModule {
@@ -26,4 +27,5 @@ object ApiModule {
     @Provides fun backup(apis: Apis): BackupApi = apis.backup
     @Provides fun importExport(apis: Apis): ImportExportApi = apis.importExport
     @Provides fun settings(apis: Apis): SettingsApi = apis.settings
+    @Provides fun recurring(apis: Apis): RecurringApi = apis.recurring
 }

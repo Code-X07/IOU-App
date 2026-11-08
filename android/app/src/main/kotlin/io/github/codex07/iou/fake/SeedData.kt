@@ -8,7 +8,9 @@ import io.github.codex07.iou.api.GroupDraft
 import io.github.codex07.iou.api.HandleDraft
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.PersonDraft
+import io.github.codex07.iou.api.RecurringDraft
 import io.github.codex07.iou.api.SaveMode
+import io.github.codex07.iou.api.ScheduleSaveMode
 import io.github.codex07.iou.api.TransferDraft
 import io.github.codex07.iou.ledger.model.Category
 import io.github.codex07.iou.ledger.model.FxMode
@@ -21,12 +23,14 @@ import io.github.codex07.iou.ledger.model.ImportSource
 import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurrenceUnit
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.ledger.ops.EntryOps
 import io.github.codex07.iou.ledger.ops.GroupOps
 import io.github.codex07.iou.ledger.ops.PeopleOps
+import io.github.codex07.iou.ledger.ops.RecurringOps
 import io.github.codex07.iou.ledger.ops.WriteContext
 import io.github.codex07.iou.ledger.ops.WritePlan
 import io.github.codex07.iou.money.CurrencyCode
@@ -115,6 +119,23 @@ object SeedData {
         expense(ExpenseDraft(me, "Vacuum cleaner", Category.UTILITIES, Money(12_000, eur), flat, SplitType.EXACT,
             listOf(SplitInput(me, 4_000), SplitInput(bea, 4_000), SplitInput(chen, 4_000)), today.minusDays(4)))
         transfer(bea, chen, Money(500_000, sek), daysAgo = 2, kind = TransferKind.REPAYMENT, group = flat)
+
+        // Schedules: the flat's monthly rent waits for confirmation (one date due), a subscription posts by itself.
+        suspend fun schedule(draft: RecurringDraft) =
+            ok(store.write { RecurringOps.save(it, draft, ScheduleSaveMode.Create(it.generation)) })
+        schedule(
+            RecurringDraft(
+                listOf(SplitInput(chen)), "Rent", Category.RENT, Money(1_500_000, sek), flat,
+                participants = flatmates, unit = RecurrenceUnit.MONTH, startOn = today.minusDays(2),
+            ),
+        )
+        schedule(
+            RecurringDraft(
+                listOf(SplitInput(me)), "Streaming", Category.ENTERTAINMENT, Money(1_299, eur),
+                participants = listOf(SplitInput(me), SplitInput(erik)), unit = RecurrenceUnit.MONTH,
+                startOn = today.plusDays(3), autoPost = true,
+            ),
+        )
 
         // One earlier import, so the import history isn't empty.
         ok(store.writeWith { _, context ->

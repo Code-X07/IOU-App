@@ -42,7 +42,7 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 - Live split feedback: `previewSplit(draft, editing)` returns the shares and the payers the draft would get. When editing, it also returns the stored ones (`storedShares`, `storedPayers`) and whether saving would recompute each list (`recomputed`, `payersRecomputed`); the two are decided separately.
 - "Paid by": `ActivityItem.payers` lists each payer once (`PayerView`: person, `paid` in the effect currency, and the EXACT amount in the paid currency as `inputValue`); transfers have none. `paidBy` is the first payer, for screens that still show one name. The edit draft carries `payers` and `payerSplit`.
 - Outside groups an entry involves exactly me and one other person. Anything else returns `NeedsGroup(people)`: offer to create a group from those people.
-- Schedules (spec §5.7): build a `RecurringDraft` (the expense template without date or FX, plus `unit`, `interval` 1–99, `startOn`, `endOn`, `autoPost`) and save with `ScheduleSaveMode.Create(basis)` or `ScheduleSaveMode.Update(id, token)`. Template errors use the same `LedgerError`s as entries; `RecurringOps` (save, delete, restore) is not yet exposed through `LedgerApi`. `OccurrenceNotDue(nextDue)` means a post or skip happened out of order or past `endOn`: show the occurrence to handle first.
+- Schedules (spec §5.7) go through `RecurringApi` (`Apis.recurring`, injected as `RecurringApi`); see "Recurring expenses" below. Template errors use the same `LedgerError`s as entries. `OccurrenceNotDue(nextDue)` means a post or skip happened out of order or past `endOn`: show the occurrence to handle first.
 
 ### Currencies
 
@@ -67,6 +67,15 @@ Payment handles: fill an edit form's `HandleDraft` from the `PaymentHandleView`,
 
 - Group detail has `settlePlan`; person detail has `inGroups`. Call `settleUpFromPlan(item)` to get a pre-filled `SettleUpDraft`, let the user adjust amount or currency, and save with `SaveMode.Create(draft.basis)`.
 - `settleUpWithPerson(id, basis)` gives one draft per non-zero currency outside groups.
+
+## Recurring expenses
+
+- `RecurringApi` (spec §5.7): `observeSchedules(includeDeleted, onHold)`, `observeSchedule(id)`, `observeDue()`, `saveSchedule(draft, ScheduleSaveMode.Create(basis) | Update(id, token))`, `deleteSchedule` / `restoreSchedule`, `occurrenceDraft(id)`, `postOccurrence(id, occurrence, draft, token)`, `skipOccurrences(id, through, token)`.
+- A `RecurringDraft` is an expense template (payers, participants, split, total, group, description, category, note) plus `unit` (`WEEK`, `MONTH`, `YEAR`), `interval` (1–99), `startOn`, optional `endOn` and `autoPost`. Edit forms start from `ScheduleDetail.editDraft`; show `ScheduleSummary.next` before saving, because an edit never skips a date by itself.
+- Held schedules (`ScheduleSummary.holds` not empty: an archived group or person) belong on their own screen: `observeSchedules(onHold = true)`; the main list uses `onHold = false`. Held schedules have nothing due.
+- The due list is oldest first. Post with `occurrenceDraft` → let the user change anything → `postOccurrence` with that occurrence and token; or skip through a date. Out of order → `OccurrenceNotDue(nextDue)`. `confirmToResume` marks an auto-post schedule whose older dates must be posted or skipped before it posts again ("Confirm these to resume auto-posting"); `autoPostError` says why an auto-post stopped (e.g. `RateRequired`, `MemberRemoved`).
+- Posted expenses are normal expenses; `ActivityItem.recurringId` / `recurringOn` link them to their schedule. Schedule history reverts through `LedgerApi.revertTo`; "Open as draft" gives `VersionDraft.OfSchedule`.
+- Notifications (real build only): ask for `POST_NOTIFICATIONS` the first time a schedule is saved (Android 13+). A tap opens `MainActivity` with the extra `iou.open = "due"`, plus `iou.schedule = <schedule ID>` when the notification is about one schedule; open the due list (both on launch and in `onNewIntent`).
 
 ## App lock and screen protection
 

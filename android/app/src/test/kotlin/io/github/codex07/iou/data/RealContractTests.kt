@@ -9,6 +9,7 @@ import io.github.codex07.iou.api.contract.ImportExportApiContract
 import io.github.codex07.iou.api.contract.ImportFixture
 import io.github.codex07.iou.api.contract.LedgerApiContract
 import io.github.codex07.iou.api.contract.PeopleApiContract
+import io.github.codex07.iou.api.contract.RecurringApiContract
 import io.github.codex07.iou.api.contract.SettingsApiContract
 import io.github.codex07.iou.api.contract.SetupApiContract
 import io.github.codex07.iou.testutil.RealHarness
@@ -97,6 +98,12 @@ class RealImportExportApiContractTest : ImportExportApiContract() {
 }
 
 class RealSettingsApiContractTest : SettingsApiContract() {
+    private val harness = harness()
+    override fun newApis() = harness.start().apis
+    @AfterEach fun stop() = harness.stop()
+}
+
+class RealRecurringApiContractTest : RecurringApiContract() {
     private val harness = harness()
     override fun newApis() = harness.start().apis
     @AfterEach fun stop() = harness.stop()

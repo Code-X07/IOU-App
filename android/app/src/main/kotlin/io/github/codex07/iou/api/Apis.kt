@@ -1,6 +1,6 @@
 package io.github.codex07.iou.api
 
-/** All eight interfaces of one implementation; used by contract tests and Compose previews. */
+/** All nine interfaces of one implementation; used by contract tests and Compose previews. */
 data class Apis(
     val setup: SetupApi,
     val people: PeopleApi,
@@ -10,4 +10,5 @@ data class Apis(
     val backup: BackupApi,
     val importExport: ImportExportApi,
     val settings: SettingsApi,
+    val recurring: RecurringApi,
 )

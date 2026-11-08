@@ -8,10 +8,13 @@ import io.github.codex07.iou.store.InMemoryDeviceSettings
 import io.github.codex07.iou.store.LedgerContent
 import io.github.codex07.iou.store.LedgerStore
 import io.github.codex07.iou.store.LockGate
+import io.github.codex07.iou.store.QuoteSource
 import io.github.codex07.iou.store.RateLookup
+import io.github.codex07.iou.store.RecurringRunner
 import io.github.codex07.iou.store.StoreGroupsApi
 import io.github.codex07.iou.store.StoreLedgerApi
 import io.github.codex07.iou.store.StorePeopleApi
+import io.github.codex07.iou.store.StoreRecurringApi
 import io.github.codex07.iou.store.StoreSettingsApi
 import io.github.codex07.iou.store.StoreSetupApi
 import io.github.codex07.iou.store.TimedLockGate
@@ -25,10 +28,14 @@ object FakeApis {
     fun store(clock: Clock = Clock.systemUTC(), ids: IdGenerator = IdGenerator.Random, zone: () -> ZoneId = { clock.zone }): LedgerStore =
         LedgerStore(clock, ids, DeviceId(ids.next()), rates = MutableStateFlow(RateLookup(FakeRates::rate)), initial = LedgerContent(), zone = zone)
 
+    /** The fake's runner: demo rates, no notifications (spec §6.3). */
+    fun runner(store: LedgerStore): RecurringRunner = RecurringRunner(store, QuoteSource { date, from, to -> FakeRates.quote(date, from, to) })
+
     fun create(
         store: LedgerStore,
         device: DeviceSettingsStore = InMemoryDeviceSettings(),
         lock: LockGate = TimedLockGate(device),
+        runner: RecurringRunner = runner(store),
     ): Apis = Apis(
         setup = StoreSetupApi(store),
         people = StorePeopleApi(store),
@@ -38,6 +45,7 @@ object FakeApis {
         backup = FakeBackupApi(store, device),
         importExport = FakeImportExportApi(store),
         settings = StoreSettingsApi(store, device, lock),
+        recurring = StoreRecurringApi(store, runner),
     )
 
     /** The fake with demo data, as the `fake` flavor and Compose previews use it. */
@@ -46,5 +54,9 @@ object FakeApis {
         device: DeviceSettingsStore = InMemoryDeviceSettings(),
         lock: LockGate = TimedLockGate(device),
         zone: () -> ZoneId = { clock.zone },
-    ): Apis = create(store(clock, zone = zone).also { runBlocking { SeedData.populate(it) } }, device, lock)
+    ): Apis = create(seededStore(clock, zone), device, lock)
+
+    /** The in-memory store with demo data. */
+    fun seededStore(clock: Clock = Clock.systemUTC(), zone: () -> ZoneId = { clock.zone }): LedgerStore =
+        store(clock, zone = zone).also { runBlocking { SeedData.populate(it) } }
 }

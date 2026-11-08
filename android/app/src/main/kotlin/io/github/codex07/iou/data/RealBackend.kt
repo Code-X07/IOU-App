@@ -14,10 +14,12 @@ import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.money.CurrencyCode
 import io.github.codex07.iou.store.DocumentStore
 import io.github.codex07.iou.store.LedgerStore
+import io.github.codex07.iou.store.RecurringRunner
 import io.github.codex07.iou.store.StoreFxApi
 import io.github.codex07.iou.store.StoreGroupsApi
 import io.github.codex07.iou.store.StoreLedgerApi
 import io.github.codex07.iou.store.StorePeopleApi
+import io.github.codex07.iou.store.StoreRecurringApi
 import io.github.codex07.iou.store.StoreSettingsApi
 import io.github.codex07.iou.store.StoreSetupApi
 import io.github.codex07.iou.store.TimedLockGate
@@ -69,6 +71,9 @@ class RealBackend(
     val store = LedgerStore(clock, ids, DeviceIdFile.read(deviceIdFile, ids), RoomJournal(databases), fx.lookup, zone = zone)
     val restores = RestoreProcedure(store, files, databases, fx, ids, restoreHook)
 
+    /** Auto-posting (spec §5.7) with rates from the lookup chain; `RecurringTriggers` and the worker drive it. */
+    val runner = RecurringRunner(store, fx)
+
     /** The app-lock policy; `security.AppSecurity` feeds it the process lifecycle. */
     val lock = TimedLockGate(device, elapsed)
 
@@ -87,6 +92,7 @@ class RealBackend(
         backup = RealBackupApi(store, device, documents, backupFormat, fx, restores, interrupted, appVersion),
         importExport = RealImportExportApi(store, documents, LedgerExport(appVersion)),
         settings = StoreSettingsApi(store, device, lock),
+        recurring = StoreRecurringApi(store, runner),
     )
 
     private val started: Job = scope.launch { start() }
@@ -128,7 +134,8 @@ class RealBackend(
         fun currenciesInUse(state: LedgerState): Set<CurrencyCode> =
             state.transfers.values.flatMap { listOf(it.amount.currency, it.effectAmount.currency) }.toSet() +
                 state.expenses.values.flatMap { listOf(it.total.currency, it.effectTotal.currency) } +
-                state.groups.values.map { it.defaultCurrency }
+                state.groups.values.map { it.defaultCurrency } +
+                state.schedules.values.map { it.total.currency }
 
         /** The app's backend: files in the app's private storage, the framework SQLite driver, SAF documents. */
         fun android(context: Context): RealBackend {

@@ -24,7 +24,7 @@ Two new features are coming in M2: expenses paid by several people, and recurrin
 ## Notifications (real build only)
 
 - The core posts the notifications ("due" and "posted") and runs a background job.
-- UI work: ask for the `POST_NOTIFICATIONS` permission the first time a schedule is saved (Android 13+), and handle the `iou.open` extra on `MainActivity` (value `"due"`, optionally a schedule ID) by opening the due list.
+- UI work: ask for the `POST_NOTIFICATIONS` permission the first time a schedule is saved (Android 13+), and handle the `iou.open` extra on `MainActivity` (value `"due"`; `iou.schedule` carries the schedule ID when the notification is about one schedule) by opening the due list.
 - The fake build has no background job and no notifications; due items still appear in the fake.
 
 ## Fake data

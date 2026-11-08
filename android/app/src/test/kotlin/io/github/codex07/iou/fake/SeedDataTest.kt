@@ -56,6 +56,13 @@ class SeedDataTest {
     }
 
     @Test
+    fun `the seed has a confirm-first schedule with one date due and an auto-post schedule`() = runTest {
+        val schedules = apis.recurring.observeSchedules().first()
+        schedules.map { it.description to it.autoPost }.toSet() shouldBe setOf("Rent" to false, "Streaming" to true)
+        apis.recurring.observeDue().first().map { it.description } shouldBe listOf("Rent")
+    }
+
+    @Test
     fun `every api returns seeded data`() = runTest {
         val loan = apis.ledger.observeActivity().first().first { it.description == null && it.note == "Concert tickets" }
         apis.ledger.observeEntry(loan.entryId).first()!!.history.size shouldBeGreaterThan 1
@@ -75,7 +82,7 @@ class SeedDataTest {
             .map { revisions -> revisions.maxBy { it.version }.snapshot }
         val state = snapshot.state
         val current: List<LedgerEntity> = state.people.values + state.handles.values + state.groups.values +
-            state.members.values + state.entries
+            state.members.values + state.entries + state.schedules.values
         latest.toSet() shouldBe current.toSet()
     }
 }
