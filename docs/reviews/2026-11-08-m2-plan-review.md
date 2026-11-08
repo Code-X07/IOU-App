@@ -69,3 +69,19 @@ One finding, real.
 | Finding | Fix | Where |
 | --- | --- | --- |
 | 1 | The kept-owner rule moves into a local `groupUnderKeptOwner`, which the CONFLICT branch now calls. After the owned rows are written, the plan also walks every owner in the file that the import leaves deleted here (`OwnerAction.NONE`, deleted locally). For each local owned row that the file contains but that isn't a classified row, it applies the same rule from the file's `deletedAt` values. Duplicates are still not shown in the preview, since their visible state doesn't change. Undo already gives such a row its own pre-import `deletedAt` back (`ownUndo`). Test: a new `GroupImportTest` case where both rows are duplicates and the export shows the handle deleted apart; the handle ends 1 ns before the person, and restoring the person leaves it deleted. | Plan Part 5 Task 1, Global Constraints; spec §7.4 "The owner ends deleted" |
+
+# M2 plan review, round 5 (2026-11-08)
+
+Two findings, both real.
+
+## Findings
+
+1. **[Medium] Skipping an invalid handle still changes its restore cascade** (Part 5, `ImportAnalysis.build` / `plan`). `sourceDeletedAt` was built from every decoded row, including the handles and memberships that validation later rejects. Round 4's duplicate pass took every owned row missing from the classified rows for a duplicate, so a skipped invalid handle still moved the local row into the cascade of a person kept deleted. Restoring the person then brought the handle back. Round 2's `joinsCascade` (owner deleted by the import) read the same map and had the same flaw.
+2. **[Medium] Resolving one of two due schedules removes the other's notification** (Part 4, `RecurringNoticePlanner` / `AndroidRecurringNotices`). When the group shrank to one schedule, the planner removed the group summary. Android removes a summary's children with it, but the planner didn't redraw the unchanged schedule left, and its record still said "shown", so no later pass brought it back.
+
+## Resolution (2026-11-08)
+
+| Finding | Fix | Where |
+| --- | --- | --- |
+| 1 | `classify` records `duplicateKeys`. The analysis it builds keeps the file's `deletedAt` for owners, and for owned rows only where they are kept classified rows or duplicates (`keptDeletedAt`). A rejected row therefore leaves no trace in `plan`, the preview or `joinsCascade`. Validation still runs with the full map; it only checks invariants, and moving the `deletedAt` of a row that is already deleted breaks none. Test: a new `GroupImportTest` case where the export's handle fails the IBAN check and is skipped; the handle keeps its earlier `deletedAt`, and restoring the person leaves it deleted. | Plan Part 5 Task 1 |
+| 2 | The planner redraws, silently, the schedule left when the group shrinks to one (`ungrouped`). `AndroidRecurringNotices` already removes the summary before it redraws; a comment now says the order matters. Test: the planner's group-summary test checks that rent is redrawn silently once and not again. Device check 7 is extended. | Plan Part 4 Task 4, Global Constraints, manual check 9.7; spec §5.7 "Due" |

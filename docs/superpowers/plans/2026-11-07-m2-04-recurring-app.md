@@ -14,7 +14,7 @@
 - **Snapshots (spec §5.5):** a schedule snapshot holds its row and its participant rows; the schema-1 upcaster gives expenses `recurringId` / `recurringOn` = null. Backups carry `schedules` and `participants`; a participant row whose schedule is missing makes the backup `CorruptFile`.
 - **Runner (spec §5.7):** per pass, each schedule that auto-posts, by ID: post its due occurrences oldest first while the next one is on or after `autoPostFrom` and on or before today; a conversion takes the rate for the occurrence date from the lookup chain's steps 1–3 (a stale rate is fine); any failure (`RateRequired`, a rule such as `MemberRemoved`, a lost race) stops that schedule at that occurrence, is kept in memory as its `autoPostError` and is cleared by a later pass that gets past it; other schedules still run. Held schedules are skipped, including one put on hold while its rate was being fetched. A ledger without me (before setup, or after undoing a restore onto a fresh install) posts nothing, and the pass and `redraw()` report an empty due list, which clears the notifications of a discarded ledger.
 - **Triggers:** start-up load and every new generation (restore, undo-restore), every change of the import batches (import, undo), every change of the due list whatever wrote it (an archive through `PeopleApi` / `GroupsApi`, a merge, a revert), every process `ON_START`, every successful `RecurringApi` write, and the real flavor's unique periodic work `recurring-post` (6 hours, no constraints, policy `KEEP`). Date-relative reads (`observeDue`, `observeSchedules`, `observeSchedule`) also start over when a pass runs for a new day (`RecurringRunner.today`). An app-lock switch (`RecurringNotices.redraw`) is not a pass: it runs `RecurringRunner.redraw()`, which reports the current due list at once without posting or waiting for a running pass. A post re-checks under the write lock that the schedule still auto-posts (a hold started during a rate request leaves its token valid) and posts nothing otherwise.
-- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same.
+- **Notifications (real flavor, spec §5.7):** channel "Recurring expenses due" (default importance): one per schedule with due occurrences, re-notified only when its oldest due occurrence or its failure changes, redrawn silently when app lock is switched on or off; the group summary is redrawn only when the group changes and never alerts, and when the group shrinks to one schedule the summary is removed (Android removes its children with it) and the schedule left is redrawn silently; the last notified state per schedule (including whether it was redacted) and whether a detailed posted summary may be showing in `noBackupFilesDir/recurring-notified.json` (unreadable = empty). Channel "Recurring expenses posted" (low importance): one summary per pass that posted; switching app lock on removes a detailed one. Tap → `MainActivity` with `iou.open = "due"` and, for a single schedule, `iou.schedule = <id>`. `VISIBILITY_PRIVATE`. While app lock is on, no text names people, amounts or descriptions. Without the permission nothing is shown and posting works the same.
 - **Permissions:** the real flavor's manifest adds `POST_NOTIFICATIONS`; the UI asks for it (the friend's work, `docs/m2-ui-contract-changes.md`).
 - No `ui/` file changes.
 
@@ -1900,6 +1900,9 @@ class RecurringNoticePlannerTest {
         val one = RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01")), emptyList(), false, unchanged.notified)
         one.cancel shouldBe setOf(gym)
         one.summary shouldBe 0
+        // Removing the summary removes rent's notification too, so rent is drawn again, silently, and only once.
+        one.show.map { it.schedule to it.silent } shouldBe listOf(rent to true)
+        RecurringNoticePlanner.plan(listOf(due(rent, "2026-03-01")), emptyList(), false, one.notified).show shouldBe emptyList()
     }
 }
 ```
@@ -1984,7 +1987,9 @@ data class NoticePlan(
  * The notification logic of spec §5.7, without Android: one due notification per schedule with due occurrences,
  * shown again only when its oldest due occurrence, failure or backlog state changes, and redrawn silently when app
  * lock is switched on or off; texts that name no person, amount or description while app lock is on, and no detailed
- * posted summary left showing once it is on. The group summary is redrawn only when the group changes.
+ * posted summary left showing once it is on. The group summary is redrawn only when the group changes. When the
+ * group shrinks to one schedule its summary is removed, and Android removes the summary's children with it, so the
+ * schedule left is redrawn silently.
  */
 object RecurringNoticePlanner {
 
@@ -1992,8 +1997,10 @@ object RecurringNoticePlanner {
         val bySchedule = due.groupBy { it.schedule }.toSortedMap(compareBy { it.value })
         val drawn = if (locked) "locked" else "open"
         val keys = bySchedule.mapValues { (_, items) -> "${key(items.first())}|$drawn" }
+        // Removing the group summary takes the group's notifications with it, unchanged ones included.
+        val ungrouped = last.due.size > 1 && bySchedule.size == 1
         val show = bySchedule
-            .filter { (id, _) -> last.due[id.value] != keys.getValue(id) }
+            .filter { (id, _) -> ungrouped || last.due[id.value] != keys.getValue(id) }
             .map { (id, items) ->
                 val before = last.due[id.value]?.substringBeforeLast('|')
                 dueNotice(id, items, locked, silent = before == key(items.first()))
@@ -2127,6 +2134,7 @@ class AndroidRecurringNotices(
         val last = notified.read()
         val plan = RecurringNoticePlanner.plan(due, posted, settings.value.appLockEnabled, last)
         plan.cancel.forEach { manager.cancel(it.value, DUE_ID) }
+        // Before the redraws: removing the summary removes its children too, and the planner redraws the one left.
         if (plan.summary == 0) manager.cancel(GROUP_SUMMARY_TAG, DUE_ID)
         if (plan.cancelPosted) manager.cancel(POSTED_TAG, POSTED_ID)
         // What a pass that can't draw records: cancellations happened, nothing new was shown.
@@ -2385,7 +2393,7 @@ Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug bu
 4. Turn app lock on and repeat 2–3: neither notification names a person, an amount or a description. Then, with a detailed due and a detailed posted notification showing (lock off), switch app lock on in the app: the due notification is redrawn without its description or amount and makes no sound, and the posted one is removed.
 5. Deny or revoke the notification permission and run the worker: the date is still posted, nothing is shown.
 6. Tap a due notification: `MainActivity` opens with `iou.open = "due"` (and `iou.schedule` for one schedule); `adb shell dumpsys activity activities | grep iou.open` shows the extra if the UI does not yet handle it.
-7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34).
+7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34). Then post every due occurrence of one of them in the app: its notification goes, and the other schedule's notification is still shown (silently redrawn, without the group).
 
 - [ ] Result recorded:
 ```

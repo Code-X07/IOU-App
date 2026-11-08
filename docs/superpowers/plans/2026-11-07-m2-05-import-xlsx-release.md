@@ -659,6 +659,36 @@ class GroupImportTest {
     }
 
     @Test
+    fun `a skipped invalid handle keeps its own deletedAt under a person kept deleted`() = runTest {
+        val x = PersonId("person-x")
+        val handleId = HandleId("handle-x")
+        val earlier = T0.minusSeconds(3_600)
+        val local = TestLedger().run {
+            me()
+            handle(person("X", deleted = true), deleted = true, id = handleId.value)
+            state
+        }.let { state ->
+            val handle = state.handles.getValue(handleId)
+            state.with(handle.copy(meta = handle.meta.copy(deletedAt = earlier)))
+        }
+        val source = TestLedger().run {
+            me()
+            // Right shape, wrong mod-97 checksum.
+            handle(person("X"), value = "DE00000000000000000000", id = handleId.value)
+            state
+        }
+        val bench = ImportBench(local)
+        val preview = bench.preview(source)
+
+        preview.invalidRows.size shouldBe 1
+        bench.commit(preview, ImportChoices(skipInvalidRows = true))
+
+        bench.state.handles.getValue(handleId).meta.deletedAt shouldBe earlier
+        with(bench) { people.restorePerson(x, token(state.people.getValue(x))).ok() }
+        bench.state.handles.getValue(handleId).isDeleted shouldBe true
+    }
+
+    @Test
     fun `a group entry naming someone without a membership is an invalid row`() = runTest {
         val source = TestLedger().run {
             me()
@@ -677,7 +707,7 @@ class GroupImportTest {
 }
 ```
 
-The membership rows of the third test are conflicts of their own (the file shows them deleted with the group), so they are listed before the choice too; taking the group turns their choice into "deleted with Flat". The revision reasons come from the group's delete cascade: `reasonConflict` of the group, then " with Flat". In the fourth test the handle was deleted an hour before its person here, but the export shows both deleted at once: the handle is a duplicate (only its `deletedAt` differs, and sync columns are not compared), yet deleting the person moves it into the person's cascade (`joinsCascade`, `Writer.regroup`), so restoring the person brings it back as in the source. In the fifth test the person stays deleted (no choice taken) and the export shows the handle active: the handle takes the person's local `deletedAt` (`Writer.regroup`), so it comes back with the person. In the sixth test both rows are duplicates (only the handle's `deletedAt` differs), yet the export shows the handle deleted before the person: under the person kept deleted it moves 1 ns before the person's `deletedAt`, so restoring the person leaves it deleted.
+The membership rows of the third test are conflicts of their own (the file shows them deleted with the group), so they are listed before the choice too; taking the group turns their choice into "deleted with Flat". The revision reasons come from the group's delete cascade: `reasonConflict` of the group, then " with Flat". In the fourth test the handle was deleted an hour before its person here, but the export shows both deleted at once: the handle is a duplicate (only its `deletedAt` differs, and sync columns are not compared), yet deleting the person moves it into the person's cascade (`joinsCascade`, `Writer.regroup`), so restoring the person brings it back as in the source. In the fifth test the person stays deleted (no choice taken) and the export shows the handle active: the handle takes the person's local `deletedAt` (`Writer.regroup`), so it comes back with the person. In the sixth test both rows are duplicates (only the handle's `deletedAt` differs), yet the export shows the handle deleted before the person: under the person kept deleted it moves 1 ns before the person's `deletedAt`, so restoring the person leaves it deleted. In the seventh test the export's handle fails its IBAN check and the invalid row is skipped: it writes nothing, and the file's `deletedAt` for it is dropped before `plan` (`keptDeletedAt`), so the local handle stays outside the person's cascade.
 
 In `test/.../io/ImportReaderTest.kt`, replace the test `an export decodes to the same records, except group rows until M2` (from its `@Test` line through its closing brace) with:
 
@@ -1157,7 +1187,7 @@ class ImportAnalysis private constructor(
     val invalid: List<InvalidRow>,
     private val duplicates: Int,
     private val mappedKeys: Set<ImportRowKey>,
-    /** When the file shows each owner and owned row (people, handles, groups, memberships) deleted, duplicates included. */
+    /** When the file shows each owner (people, groups) and each kept or duplicate owned row (handles, memberships) deleted. */
     private val sourceDeletedAt: Map<ImportRowKey, Instant?>,
 ) {
     private val owners: List<Classified<*>> get() = people + groups
@@ -1545,11 +1575,16 @@ class ImportAnalysis private constructor(
             }
 
             var duplicates = 0
+            val duplicateKeys = mutableSetOf<ImportRowKey>()
             fun <T : LedgerEntity> classify(rows: List<Incoming<T>>, local: (T) -> T?): List<Classified<T>> = rows.mapNotNull { row ->
                 val existing = local(row.record)
                 when {
                     existing == null -> Classified(row, null, Classification.NEW)
-                    same(existing, row.record) -> { duplicates++; null }
+                    same(existing, row.record) -> {
+                        duplicates++
+                        duplicateKeys += row.record.rowKey
+                        null
+                    }
                     else -> Classified(row, existing, Classification.CONFLICT)
                 }
             }
@@ -1674,10 +1709,16 @@ class ImportAnalysis private constructor(
             classifiedTransfers = classifiedTransfers.kept()
             classifiedExpenses = classifiedExpenses.kept()
 
+            // The file's deletedAt of an owned row counts only for a duplicate or a kept row: a handle or membership
+            // rejected as invalid (and skipped) must not move the local row into or out of a cascade (spec §7.4).
+            // Owners keep theirs, as it describes the file's grouping of their other rows.
+            val kept = (classifiedHandles + classifiedMembers).map { it.key }.toSet() + duplicateKeys
+            val keptDeletedAt = sourceDeletedAt.filterKeys { it.type == EntityType.PERSON || it.type == EntityType.GROUP || it in kept }
+
             return ImportAnalysis(
                 state, fileName, mapFrom, classifiedPeople, classifiedHandles, classifiedGroups, classifiedMembers, newSnapshots,
                 classifiedTransfers, classifiedExpenses, invalid.sortedWith(compareBy({ it.table }, { it.rowNumber })), duplicates,
-                mappedKeys, sourceDeletedAt,
+                mappedKeys, keptDeletedAt,
             )
         }
 
@@ -1721,7 +1762,7 @@ with:
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat testRealDebugUnitTest --tests "io.github.codex07.iou.io.*" --tests "io.github.codex07.iou.data.RealImportTest"`
-Expected: PASS: the seven group tests, the updated reader test, and every M1 import test unchanged.
+Expected: PASS: the eight group tests, the updated reader test, and every M1 import test unchanged.
 
 Then: `.\gradlew.bat testFakeDebugUnitTest testRealDebugUnitTest`
 Expected: PASS. A real-flavor contract test that imports an own export of a ledger with groups now finds its group rows as duplicates instead of invalid rows; if one asserted the old invalid rows, update it to expect none and say so in the report.
