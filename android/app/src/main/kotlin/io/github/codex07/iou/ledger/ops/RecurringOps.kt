@@ -11,6 +11,7 @@ import io.github.codex07.iou.ledger.engine.IdentityResolver
 import io.github.codex07.iou.ledger.engine.SplitResolver
 import io.github.codex07.iou.ledger.model.Change
 import io.github.codex07.iou.ledger.model.ParticipantRole
+import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.RecurringExpense
 import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.ledger.model.RecurringParticipant
@@ -95,15 +96,9 @@ object RecurringOps {
         resolver: IdentityResolver,
         resolve: (List<SplitInput>) -> LedgerResult<*>,
     ): List<RecurringParticipant> {
-        inputs.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
-        inputs.groupingBy { it.personId }.eachCount().entries.firstOrNull { it.value > 1 }?.let {
-            fail(if (role == ParticipantRole.PAYER) LedgerError.DuplicatePayer(it.key) else LedgerError.DuplicateParticipant(it.key))
-        }
-        val combined = try {
-            EntryOps.combineInputs(inputs, type, resolver)
-        } catch (overflow: ArithmeticException) {
-            fail(LedgerError.AmountTooLarge)
-        }
+        val duplicate: (PersonId) -> LedgerError =
+            if (role == ParticipantRole.PAYER) LedgerError::DuplicatePayer else LedgerError::DuplicateParticipant
+        val combined = with(EntryOps) { checkedInputs(inputs, type, resolver, duplicate) }
         resolve(combined).bind()
         if (stored != null) {
             val storedInputs = EntryOps.combineInputs(stored.map { SplitInput(it.personId, it.inputValue) }, type, resolver)

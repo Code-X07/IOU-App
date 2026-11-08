@@ -182,13 +182,7 @@ object EntryOps {
         val required = requiredEffectCurrency(ctx.state, draft.groupId, draft.total.currency, settlesCurrency = null)
         val fx = resolveFx(ctx, draft.total, required, draft.fx, existing, draft.occurredOn)
         val resolver = IdentityResolver(ctx.state)
-        // Negatives are rejected per record first: combining records of one person could hide one, and
-        // combining is exact arithmetic, so an overflow there is AmountTooLarge (index decision 4).
-        draft.participants.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
-        // The same record twice is a malformed draft (spec §4.4); only distinct records of one merged person combine.
-        draft.participants.groupingBy { it.personId }.eachCount().entries.firstOrNull { it.value > 1 }
-            ?.let { fail(LedgerError.DuplicateParticipant(it.key)) }
-        val inputs = combined(draft.participants, draft.splitType, resolver)
+        val inputs = checkedInputs(draft.participants, draft.splitType, resolver, LedgerError::DuplicateParticipant)
         // The effect total is an input of both lists: the paid amount, its currency and the FX choice.
         val sameEffect = existing != null &&
             (draft.fx == null || draft.fx == FxChoice.KeepExisting) &&
@@ -204,10 +198,7 @@ object EntryOps {
         }
 
         // Payers follow the same steps on their own inputs, and are kept or recomputed on their own (spec §4.4).
-        draft.payers.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
-        draft.payers.groupingBy { it.personId }.eachCount().entries.firstOrNull { it.value > 1 }
-            ?.let { fail(LedgerError.DuplicatePayer(it.key)) }
-        val payerInputs = combined(draft.payers, draft.payerSplit.splitType, resolver)
+        val payerInputs = checkedInputs(draft.payers, draft.payerSplit.splitType, resolver, LedgerError::DuplicatePayer)
         val keepPayers = existing != null && sameEffect &&
             draft.payerSplit == existing.payerSplit &&
             payerInputs.toSet() == payerInputsOf(existing, resolver).toSet()
@@ -219,13 +210,26 @@ object EntryOps {
         return fx to SharePreview(fx.effect, shares, recomputed = !keep, payers = payers, payersRecomputed = !keepPayers)
     }
 
-    /** [inputs] combined per canonical person (spec §4.4); an overflow while adding is `AmountTooLarge`. */
-    private fun ResultScope.combined(inputs: List<SplitInput>, type: SplitType, resolver: IdentityResolver): List<SplitInput> =
-        try {
+    /**
+     * Draft inputs (participants, payers, schedule template rows) checked per record, then combined per canonical
+     * person (spec §4.4). Negatives are rejected per record first: combining records of one person could hide
+     * one. The same record twice is a malformed draft ([duplicate]); only distinct records of one merged person
+     * combine. Combining is exact arithmetic, so an overflow there is `AmountTooLarge` (index decision 4).
+     */
+    internal fun ResultScope.checkedInputs(
+        inputs: List<SplitInput>,
+        type: SplitType,
+        resolver: IdentityResolver,
+        duplicate: (PersonId) -> LedgerError,
+    ): List<SplitInput> {
+        inputs.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
+        inputs.groupingBy { it.personId }.eachCount().entries.firstOrNull { it.value > 1 }?.let { fail(duplicate(it.key)) }
+        return try {
             combineInputs(inputs, type, resolver)
         } catch (overflow: ArithmeticException) {
             fail(LedgerError.AmountTooLarge)
         }
+    }
 
     private fun ResultScope.resolveFx(
         ctx: WriteContext,
