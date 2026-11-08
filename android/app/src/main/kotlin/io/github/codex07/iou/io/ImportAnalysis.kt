@@ -14,12 +14,12 @@ import io.github.codex07.iou.ledger.engine.RevisionDiff
 import io.github.codex07.iou.ledger.model.Change
 import io.github.codex07.iou.ledger.model.EntityType
 import io.github.codex07.iou.ledger.model.Entry
-import io.github.codex07.iou.ledger.model.EntryId
 import io.github.codex07.iou.ledger.model.Expense
 import io.github.codex07.iou.ledger.model.FieldChange
 import io.github.codex07.iou.ledger.model.FxSnapshot
+import io.github.codex07.iou.ledger.model.Group
 import io.github.codex07.iou.ledger.model.GroupId
-import io.github.codex07.iou.ledger.model.HandleId
+import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.ImportBatchId
 import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.LedgerState
@@ -32,8 +32,10 @@ import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.ledger.rules.FieldRules
 import io.github.codex07.iou.ledger.rules.LedgerValidator
 import io.github.codex07.iou.ledger.rules.WriteOp
+import io.github.codex07.iou.money.CurrencyCode
 import io.github.codex07.iou.money.Money
 import java.time.Instant
+import java.time.LocalDate
 
 /** How an incoming row compares with the local ledger (spec §7.4). */
 enum class Classification { NEW, DUPLICATE, CONFLICT }
@@ -47,8 +49,8 @@ data class Classified<T : LedgerEntity>(val incoming: Incoming<T>, val local: T?
 /**
  * What an import would do to one local ledger (spec §7.4, §7.5 steps 2–4): identity mapping, classification
  * by UUID, row validation with attribution, and, for a set of choices, the preview rows, the balance changes
- * and the plan the commit writes. Owned rows follow their owner through the §5.2 cascade; in M1 the only
- * owners are people with their payment handles (group rows wait for M2).
+ * and the plan the commit writes. Owned rows follow their owner through the §5.2 cascade: people own their
+ * payment handles, groups their memberships ([Owners]).
  */
 class ImportAnalysis private constructor(
     val state: LedgerState,
@@ -56,17 +58,20 @@ class ImportAnalysis private constructor(
     private val mappedFrom: PersonId?,
     val people: List<Classified<Person>>,
     val handles: List<Classified<PaymentHandle>>,
+    val groups: List<Classified<Group>>,
+    val members: List<Classified<GroupMember>>,
     val snapshots: List<Incoming<FxSnapshot>>,
     val transfers: List<Classified<Transfer>>,
     val expenses: List<Classified<Expense>>,
     val invalid: List<InvalidRow>,
     private val duplicates: Int,
     private val mappedKeys: Set<ImportRowKey>,
-    /** When the file shows each of its people deleted, duplicates of local rows included. */
-    private val sourceDeletedAt: Map<PersonId, Instant?>,
+    /** When the file shows each kept or duplicate owner and owned row (people, groups, handles, memberships) deleted. */
+    private val sourceDeletedAt: Map<ImportRowKey, Instant?>,
 ) {
+    private val owners: List<Classified<*>> get() = people + groups
     private val entries: List<Classified<out Entry>> get() = transfers + expenses
-    private val rows: List<Classified<out LedgerEntity>> get() = people + handles + entries
+    private val rows: List<Classified<*>> get() = people + handles + groups + members + entries
 
     val counts: ImportCounts
         get() = ImportCounts(
@@ -80,7 +85,7 @@ class ImportAnalysis private constructor(
 
     private enum class OwnerAction { NONE, CREATE_DELETED, DELETE, RESTORE }
 
-    private fun Classified<Person>.action(take: Set<ImportRowKey>): OwnerAction {
+    private fun Classified<*>.action(take: Set<ImportRowKey>): OwnerAction {
         val taken = kind == Classification.CONFLICT && key in take
         return when {
             kind == Classification.NEW && record.isDeleted -> OwnerAction.CREATE_DELETED
@@ -89,19 +94,26 @@ class ImportAnalysis private constructor(
         }
     }
 
-    private fun ownerName(id: PersonId): String =
-        people.firstOrNull { it.record.id == id }?.record?.displayName ?: state.people[id]?.displayName ?: id.value
+    private fun owner(key: ImportRowKey): Classified<*>? = owners.firstOrNull { it.key == key }
 
-    /** How [handle]'s deleted state is decided: by its owner's cascade, or (null) by its own row. */
-    private fun forcedBy(handle: PaymentHandle, local: PaymentHandle?, take: Set<ImportRowKey>): ImportRowChoice? {
-        val owner = people.firstOrNull { it.record.id == handle.personId }
-        val name = ownerName(handle.personId)
+    /** An owner's name as the file has it, else as the ledger has it. */
+    private fun ownerName(key: ImportRowKey): String = when (val record = owner(key)?.record ?: state.entity(key.type, key.id)) {
+        is Person -> record.displayName
+        is Group -> record.name
+        else -> key.id
+    }
+
+    /** How an owned [row]'s deleted state is decided: by its owner's cascade, or (null) by its own row. */
+    private fun forcedBy(row: LedgerEntity, local: LedgerEntity?, take: Set<ImportRowKey>): ImportRowChoice? {
+        val ownerKey = Owners.ownerOf(row) ?: return null
+        val owner = owner(ownerKey)
+        val name = ownerName(ownerKey)
         return when (owner?.action(take)) {
             OwnerAction.CREATE_DELETED, OwnerAction.DELETE -> ImportRowChoice.DeletedWith(name)
             OwnerAction.RESTORE ->
                 if (local != null && local.meta.deletedAt == owner.local!!.meta.deletedAt) ImportRowChoice.RestoredWith(name) else null
-            // The owner stays deleted locally: its handles end deleted too.
-            else -> if (state.people[handle.personId]?.isDeleted == true) ImportRowChoice.DeletedWith(name) else null
+            // The owner stays deleted locally: its owned rows end deleted too.
+            else -> if (state.entity(ownerKey.type, ownerKey.id)?.isDeleted == true) ImportRowChoice.DeletedWith(name) else null
         }
     }
 
@@ -111,52 +123,60 @@ class ImportAnalysis private constructor(
     fun previewRows(take: Set<ImportRowKey>): List<ImportRow> {
         val shown = mutableListOf<ImportRow>()
         for (row in rows) {
-            val handle = row.record as? PaymentHandle
-            val forced = handle?.let { forcedBy(it, row.local as PaymentHandle?, take) }
+            val forced = forcedBy(row.record, row.local, take)
             if (row.kind == Classification.CONFLICT || forced != null) {
                 shown += ImportRow(row.key, label(row.record), diff(row.local, row.record), forced ?: ImportRowChoice.KeepOrTake, changedSinceLastPreview = false)
             }
         }
         val listed = shown.map { it.key }.toSet()
-        for (owner in people) {
+        for (owner in owners) {
             val action = owner.action(take)
-            val local = state.handles.values.filter { it.personId == owner.record.id }
+            val name = ownerName(owner.key)
+            val local = Owners.owned(state, owner.key)
             val touched = when (action) {
-                OwnerAction.DELETE -> local.filter { !it.isDeleted }.map { it to ImportRowChoice.DeletedWith(owner.record.displayName) }
-                OwnerAction.RESTORE -> local.filter { it.meta.deletedAt == owner.local!!.meta.deletedAt }
-                    .map { it to ImportRowChoice.RestoredWith(owner.record.displayName) }
+                OwnerAction.DELETE -> local.filter { !it.isDeleted || joinsCascade(it, owner.key) }.map { it to ImportRowChoice.DeletedWith(name) }
+                OwnerAction.RESTORE -> local.filter { it.meta.deletedAt == owner.local!!.meta.deletedAt }.map { it to ImportRowChoice.RestoredWith(name) }
                 else -> emptyList()
             }
-            for ((handle, choice) in touched) {
-                val key = ImportRowKey(EntityType.PAYMENT_HANDLE, handle.id.value)
-                if (key in listed) continue
-                val after = handle.withMeta(handle.meta.copy(deletedAt = if (action == OwnerAction.DELETE) Instant.EPOCH else null))
-                shown += ImportRow(key, label(handle), diff(handle, after), choice, changedSinceLastPreview = false)
+            for ((entity, choice) in touched) {
+                if (entity.rowKey in listed) continue
+                val after = entity.withMeta(entity.meta.copy(deletedAt = if (action == OwnerAction.DELETE) Instant.EPOCH else null))
+                shown += ImportRow(entity.rowKey, label(entity), diff(entity, after), choice, changedSinceLastPreview = false)
             }
         }
         return shown
     }
 
-    /** Non-group balances with each person before and after the import with [take], where they differ. */
+    /**
+     * Non-group balances with each person, then my net in each group, before and after the import with [take],
+     * where they differ. A group's line is labelled "<name> (group)".
+     */
     fun balanceChanges(take: Set<ImportRowKey>): List<BalanceChange> {
-        val before = LedgerEngine.compute(state).pairwise
-        val afterState = state.applying(plan(take, PREVIEW_BATCH, Instant.EPOCH).changes)
-        val after = LedgerEngine.compute(afterState).pairwise
-        return (before.keys + after.keys).mapNotNull { person ->
-            val was = before[person].orEmpty()
-            val now = after[person].orEmpty()
+        val before = LedgerEngine.compute(state)
+        val afterState = state.applying(plan(take, PREVIEW_BATCH, Instant.EPOCH, PREVIEW_DAY).changes)
+        val after = LedgerEngine.compute(afterState)
+        val people = (before.pairwise.keys + after.pairwise.keys).mapNotNull { person ->
+            val was = before.net(person)
+            val now = after.net(person)
             if (was == now) return@mapNotNull null
-            val name = afterState.people[person]?.displayName ?: person.value
-            BalanceChange(name, was.toMoney(), now.toMoney())
+            BalanceChange(afterState.people[person]?.displayName ?: person.value, was.toMoney(), now.toMoney())
         }.sortedBy { it.counterpart }
+        val groups = (before.groupNets.keys + after.groupNets.keys).mapNotNull { group ->
+            val was = before.myGroupNet(group)
+            val now = after.myGroupNet(group)
+            if (was == now) return@mapNotNull null
+            BalanceChange("${afterState.groups[group]?.name ?: group.value} (group)", was.toMoney(), now.toMoney())
+        }.sortedBy { it.counterpart }
+        return people + groups
     }
 
-    private fun Map<io.github.codex07.iou.money.CurrencyCode, Long>.toMoney() =
-        entries.sortedBy { it.key.code }.map { Money(it.value, it.key) }
+    private fun Map<CurrencyCode, Long>.toMoney() = entries.sortedBy { it.key.code }.map { Money(it.value, it.key) }
 
     private fun label(entity: LedgerEntity): String = when (entity) {
         is Person -> "Person ${entity.displayName}"
-        is PaymentHandle -> "${entity.type.name} ${entity.label} of ${ownerName(entity.personId)}"
+        is PaymentHandle -> "${entity.type.name} ${entity.label} of ${names.person(entity.personId)}"
+        is Group -> "Group ${entity.name}"
+        is GroupMember -> "Membership of ${names.person(entity.personId)} in ${names.group(entity.groupId)}"
         is Transfer -> "Transfer of ${entity.amount} on ${entity.occurredOn}"
         is Expense -> "Expense ${entity.description} on ${entity.occurredOn}"
         else -> "${entity.entityType} ${entity.entityId}"
@@ -165,67 +185,107 @@ class ImportAnalysis private constructor(
     private fun diff(local: LedgerEntity?, incoming: LedgerEntity): List<FieldChange> = RevisionDiff.diff(local, incoming, names)
 
     private val names = object : DiffNames {
-        override fun person(id: PersonId) = ownerName(id)
-        override fun group(id: GroupId) = state.groups[id]?.name ?: id.value
+        override fun person(id: PersonId) = ownerName(ImportRowKey(EntityType.PERSON, id.value))
+        override fun group(id: GroupId) = ownerName(ImportRowKey(EntityType.GROUP, id.value))
     }
 
     // ---- Commit plan ----
 
     /**
-     * The rows the commit writes for [take] (spec §7.5 step 6): creates and updates in dependency order, then
-     * deletions (entries, owned rows on their own, owners with their cascade). Invalid rows are left out. Rows
-     * get [batch] as their `importBatchId` and a reason naming the file and source version.
+     * The rows the commit writes for [take] (spec §7.5 step 6): creates and updates in dependency order (people,
+     * handles, groups, memberships, entries), then deletions (entries, owned rows on their own, owners with their
+     * cascade). Invalid rows are left out. Rows get [batch] as their `importBatchId` and a reason naming the file
+     * and source version. [today] is the import day (Task 3 gives it to new schedules).
      */
-    fun plan(take: Set<ImportRowKey>, batch: ImportBatchId, now: Instant): PlanResult {
+    fun plan(take: Set<ImportRowKey>, batch: ImportBatchId, now: Instant, today: LocalDate): PlanResult {
         val writer = Writer(state, batch, now)
-        val ownerActions = people.associate { it.record.id to it.action(take) }
+        val ownerActions = owners.associate { it.key to it.action(take) }
+        val ownedDeletions = mutableListOf<Pair<Classified<*>, Instant>>()
 
-        for (row in people) {
-            when (row.kind) {
-                Classification.NEW -> writer.create(row.record, reasonNew(row))
-                Classification.CONFLICT -> if (row.key in take) writer.update(row, reasonConflict(row))
-                Classification.DUPLICATE -> Unit
-            }
-            if (ownerActions[row.record.id] == OwnerAction.RESTORE) {
-                val restoredAt = row.local!!.meta.deletedAt
-                writer.restore(row.record.id.value, EntityType.PERSON, reasonConflict(row))
-                state.handles.values.filter { it.personId == row.record.id && it.meta.deletedAt == restoredAt }.forEach {
-                    writer.restore(it.id.value, EntityType.PAYMENT_HANDLE, "${reasonConflict(row)} with ${row.record.displayName}")
+        fun writeOwners(rows: List<Classified<*>>) {
+            for (row in rows) {
+                when (row.kind) {
+                    Classification.NEW -> writer.create(row.record, reasonNew(row))
+                    Classification.CONFLICT -> if (row.key in take) writer.update(row, reasonConflict(row))
+                    Classification.DUPLICATE -> Unit
+                }
+                if (ownerActions[row.key] == OwnerAction.RESTORE) {
+                    val restoredAt = row.local!!.meta.deletedAt
+                    writer.restore(row.key, reasonConflict(row))
+                    Owners.owned(state, row.key).filter { it.meta.deletedAt == restoredAt }.forEach {
+                        writer.restore(it.rowKey, "${reasonConflict(row)} with ${ownerName(row.key)}")
+                    }
                 }
             }
         }
-        val handleDeletions = mutableListOf<Pair<Classified<PaymentHandle>, Instant>>()
-        for (row in handles) {
-            val ownerAction = ownerActions[row.record.personId] ?: OwnerAction.NONE
-            val ownerLocal = state.people[row.record.personId]
-            when (row.kind) {
-                Classification.NEW -> {
-                    writer.create(row.record, reasonNew(row))
-                    when {
-                        ownerAction == OwnerAction.CREATE_DELETED || ownerAction == OwnerAction.DELETE ->
-                            if (deletedApart(row)) handleDeletions += row to now.minusNanos(1)
-                        // Under an owner that stays deleted, it goes with the owner unless the file shows it deleted
-                        // apart; then it is deleted on its own, just before the owner, so restoring the owner skips it.
-                        ownerAction == OwnerAction.NONE && ownerLocal?.isDeleted == true ->
-                            handleDeletions += row to ownerLocal.meta.deletedAt!!.let { if (deletedApart(row)) it.minusNanos(1) else it }
-                        row.record.isDeleted -> handleDeletions += row to now
+
+        /**
+         * [owned], deleted here under an owner the import leaves deleted (at [ownerAt]), grouped as the file shows it
+         * (spec §7.4): with the owner it takes [ownerAt], so it comes back with the owner; [apart] it stays apart, or
+         * moves 1 ns before the owner if it was deleted with the owner here.
+         */
+        fun groupUnderKeptOwner(owned: LedgerEntity, apart: Boolean, ownerKey: ImportRowKey, ownerAt: Instant, reason: String) {
+            if (!apart) writer.regroup(owned.rowKey, ownerAt, "$reason with ${ownerName(ownerKey)}")
+            else if (owned.meta.deletedAt == ownerAt) writer.regroup(owned.rowKey, ownerAt.minusNanos(1), "$reason, deleted in the source")
+        }
+
+        fun writeOwned(rows: List<Classified<*>>) {
+            for (row in rows) {
+                val ownerKey = checkNotNull(Owners.ownerOf(row.record))
+                val ownerAction = ownerActions[ownerKey] ?: OwnerAction.NONE
+                val ownerLocal = state.entity(ownerKey.type, ownerKey.id)
+                when (row.kind) {
+                    Classification.NEW -> {
+                        writer.create(row.record, reasonNew(row))
+                        when {
+                            ownerAction == OwnerAction.CREATE_DELETED || ownerAction == OwnerAction.DELETE ->
+                                if (deletedApart(row)) ownedDeletions += row to now.minusNanos(1)
+                            // Under an owner that stays deleted, it goes with the owner unless the file shows it deleted
+                            // apart; then it is deleted on its own, just before the owner, so restoring the owner skips it.
+                            ownerAction == OwnerAction.NONE && ownerLocal?.isDeleted == true ->
+                                ownedDeletions += row to ownerLocal.meta.deletedAt!!.let { if (deletedApart(row)) it.minusNanos(1) else it }
+                            row.record.isDeleted -> ownedDeletions += row to now
+                        }
                     }
-                }
-                Classification.CONFLICT -> {
-                    if (row.key in take) writer.update(row, reasonConflict(row))
-                    val local = row.local!!
-                    when {
-                        // Its deleted state isn't a choice here ("deleted with <owner>"), whether or not it is taken.
-                        ownerAction == OwnerAction.DELETE -> if (deletedApart(row)) handleDeletions += row to now.minusNanos(1)
-                        row.key in take && forcedBy(row.record, local, take) == null && local.isDeleted != row.record.isDeleted ->
-                            if (row.record.isDeleted) handleDeletions += row to now else writer.restore(row.record.id.value, EntityType.PAYMENT_HANDLE, reasonConflict(row))
+                    Classification.CONFLICT -> {
+                        if (row.key in take) writer.update(row, reasonConflict(row))
+                        val local = row.local!!
+                        when {
+                            // Its deleted state isn't a choice here ("deleted with <owner>"), whether or not it is taken.
+                            ownerAction == OwnerAction.DELETE -> if (deletedApart(row)) ownedDeletions += row to now.minusNanos(1)
+                            // Under an owner kept deleted (so the row is deleted here too) it takes the owner's deletedAt,
+                            // so it comes back with the owner, unless the file shows it deleted apart: then it stays apart,
+                            // or moves 1 ns before the owner if it was deleted with the owner here (spec §7.4).
+                            ownerAction == OwnerAction.NONE && ownerLocal?.isDeleted == true ->
+                                groupUnderKeptOwner(local, deletedApart(row), ownerKey, ownerLocal.meta.deletedAt!!, reasonConflict(row))
+                            row.key in take && forcedBy(row.record, local, take) == null && local.isDeleted != row.record.isDeleted ->
+                                if (row.record.isDeleted) ownedDeletions += row to now else writer.restore(row.key, reasonConflict(row))
+                        }
                     }
+                    Classification.DUPLICATE -> Unit
                 }
-                Classification.DUPLICATE -> Unit
+            }
+        }
+
+        writeOwners(people)
+        writeOwned(handles)
+        writeOwners(groups)
+        writeOwned(members)
+        // Duplicates are not classified rows (business fields and deleted state match, and `deletedAt` is never
+        // compared), but under an owner kept deleted the file's `deletedAt` still decides which cascade they are in.
+        // Only owners in the map are visited, so the rows of a rejected (skipped) owner stay as they are.
+        val classifiedKeys = rows.map { it.key }.toSet()
+        for (ownerKey in sourceDeletedAt.keys.filter { it.type == EntityType.PERSON || it.type == EntityType.GROUP }) {
+            if ((ownerActions[ownerKey] ?: OwnerAction.NONE) != OwnerAction.NONE) continue
+            val ownerAt = state.entity(ownerKey.type, ownerKey.id)?.meta?.deletedAt ?: continue
+            for (owned in Owners.owned(state, ownerKey)) {
+                if (owned.rowKey in classifiedKeys || owned.rowKey !in sourceDeletedAt) continue
+                val apart = sourceDeletedAt[owned.rowKey] != sourceDeletedAt[ownerKey]
+                groupUnderKeptOwner(owned, apart, ownerKey, ownerAt, "Import from $fileName")
             }
         }
         val snapshots = this.snapshots.map { it.record }
-        val entryDeletions = mutableListOf<Classified<out Entry>>()
+        val entryDeletions = mutableListOf<Classified<*>>()
         for (row in entries) {
             when (row.kind) {
                 Classification.NEW -> {
@@ -236,21 +296,28 @@ class ImportAnalysis private constructor(
                     writer.update(row, reasonConflict(row))
                     val local = row.local!!
                     if (local.isDeleted != row.record.isDeleted) {
-                        if (row.record.isDeleted) entryDeletions += row else writer.restore(row.record.entityId, row.record.entityType, reasonConflict(row))
+                        if (row.record.isDeleted) entryDeletions += row else writer.restore(row.key, reasonConflict(row))
                     }
                 }
                 Classification.DUPLICATE -> Unit
             }
         }
-        for (row in entryDeletions) writer.delete(row.record.entityId, row.record.entityType, now, reasonDeleted(row))
-        for ((row, at) in handleDeletions) writer.delete(row.record.id.value, EntityType.PAYMENT_HANDLE, at, reasonDeleted(row))
-        for (row in people) {
-            val action = ownerActions.getValue(row.record.id)
+        for (row in entryDeletions) writer.delete(row.key, now, reasonDeleted(row))
+        for ((row, at) in ownedDeletions) writer.delete(row.key, at, reasonDeleted(row))
+        for (row in owners) {
+            val action = ownerActions.getValue(row.key)
             if (action != OwnerAction.CREATE_DELETED && action != OwnerAction.DELETE) continue
             val reason = if (action == OwnerAction.DELETE) reasonConflict(row) else reasonDeleted(row)
-            writer.delete(row.record.id.value, EntityType.PERSON, now, reason)
-            writer.current.handles.values.filter { it.personId == row.record.id && !it.isDeleted }.forEach {
-                writer.delete(it.id.value, EntityType.PAYMENT_HANDLE, now, "$reason with ${row.record.displayName}")
+            writer.delete(row.key, now, reason)
+            Owners.owned(writer.current, row.key).filter { !it.isDeleted }.forEach {
+                writer.delete(it.rowKey, now, "$reason with ${ownerName(row.key)}")
+            }
+            // Owned rows deleted here earlier, on their own, that the file shows deleted with the owner join its
+            // cascade, so restoring the owner brings back what went together in the source.
+            if (action == OwnerAction.DELETE) {
+                Owners.owned(state, row.key).filter { joinsCascade(it, row.key) }.forEach {
+                    writer.regroup(it.rowKey, now, "$reason with ${ownerName(row.key)}")
+                }
             }
         }
         return PlanResult(writer.changes, snapshots, writer.current.applyingSnapshots(snapshots))
@@ -264,12 +331,22 @@ class ImportAnalysis private constructor(
     private fun LedgerState.applyingSnapshots(snapshots: List<FxSnapshot>) = snapshots.fold(this) { s, snapshot -> s.with(snapshot) }
 
     /**
-     * A handle the file shows deleted at another time than its owner as the file shows it (the owner's row counts
-     * even when it duplicates the local one): it is deleted on its own, so restoring the owner later doesn't bring
-     * it back (spec §7.4).
+     * An owned row the file shows deleted at another time than its owner as the file shows it (the owner's row
+     * counts even when it duplicates the local one): it is deleted on its own, so restoring the owner later doesn't
+     * bring it back (spec §7.4).
      */
-    private fun deletedApart(row: Classified<PaymentHandle>) =
-        row.record.isDeleted && row.record.meta.deletedAt != sourceDeletedAt[row.record.personId]
+    private fun deletedApart(row: Classified<*>) =
+        row.record.isDeleted && row.record.meta.deletedAt != sourceDeletedAt[Owners.ownerOf(row.record)]
+
+    /**
+     * An owned row already deleted locally that the file shows deleted together with its owner [ownerKey] (same
+     * `deletedAt` in the file, even where the row duplicates the local one). When the import deletes the owner, the
+     * row gets the owner's new `deletedAt` (spec §7.4); the preview lists it as "deleted with <owner>".
+     */
+    private fun joinsCascade(owned: LedgerEntity, ownerKey: ImportRowKey): Boolean {
+        val ownerAt = sourceDeletedAt[ownerKey] ?: return false
+        return owned.isDeleted && sourceDeletedAt[owned.rowKey] == ownerAt
+    }
 
     private fun mapping(row: Classified<*>) = if (mappedFrom != null && row.key in mappedKeys) ", source identity ${mappedFrom.value} mapped to me" else ""
 
@@ -292,42 +369,57 @@ class ImportAnalysis private constructor(
         private fun next(entity: LedgerEntity, deletedAt: Instant?): SyncMeta =
             entity.meta.copy(updatedAt = now, authorId = me, version = entity.meta.version + 1, deletedAt = deletedAt, importBatchId = batch)
 
-        private fun find(id: String, type: EntityType): LedgerEntity = when (type) {
-            EntityType.PERSON -> current.people.getValue(PersonId(id))
-            EntityType.PAYMENT_HANDLE -> current.handles.getValue(HandleId(id))
-            EntityType.TRANSFER -> current.transfers.getValue(EntryId(id))
-            EntityType.EXPENSE -> current.expenses.getValue(EntryId(id))
-            else -> error("$type rows are not imported in M1")
-        }
+        private fun find(key: ImportRowKey): LedgerEntity = checkNotNull(current.entity(key.type, key.id)) { "No ${key.type} ${key.id}" }
 
         /** Version 1, active; a row deleted in the source is deleted afterwards. */
         fun create(record: LedgerEntity, reason: String) =
             write(record.withMeta(SyncMeta(createdAt = now, updatedAt = now, authorId = me, importBatchId = batch)), RevisionAction.CREATED, reason)
 
-        /** The incoming business fields on the local row; the deleted state changes separately. */
-        fun update(row: Classified<*>, reason: String) {
-            val local = find(row.record.entityId, row.record.entityType)
-            if (local.withMeta(NEUTRAL) == row.record.withMeta(NEUTRAL)) return
-            write(row.record.withMeta(next(local, local.meta.deletedAt)), RevisionAction.UPDATED, reason)
+        /** [record]'s business fields (by default the incoming ones) on the local row; the deleted state changes separately. */
+        fun update(row: Classified<*>, reason: String, record: LedgerEntity = row.record) {
+            val local = find(row.key)
+            if (local.withMeta(NEUTRAL) == record.withMeta(NEUTRAL)) return
+            write(record.withMeta(next(local, local.meta.deletedAt)), RevisionAction.UPDATED, reason)
         }
 
-        fun delete(id: String, type: EntityType, at: Instant, reason: String) {
-            val entity = find(id, type)
+        fun delete(key: ImportRowKey, at: Instant, reason: String) {
+            val entity = find(key)
             if (!entity.isDeleted) write(entity.withMeta(next(entity, at)), RevisionAction.DELETED, reason)
         }
 
-        fun restore(id: String, type: EntityType, reason: String) {
-            val entity = find(id, type)
+        fun restore(key: ImportRowKey, reason: String) {
+            val entity = find(key)
             if (entity.isDeleted) write(entity.withMeta(next(entity, null)), RevisionAction.RESTORED, reason)
+        }
+
+        /** Moves an already deleted row's `deletedAt` to [at]: its owner's, to join the cascade, or 1 ns before it, to leave it. */
+        fun regroup(key: ImportRowKey, at: Instant, reason: String) {
+            val entity = find(key)
+            if (entity.isDeleted && entity.meta.deletedAt != at) write(entity.withMeta(next(entity, at)), RevisionAction.UPDATED, reason)
         }
     }
 
     companion object {
         private val PREVIEW_BATCH = ImportBatchId("preview")
+        private val PREVIEW_DAY: LocalDate = LocalDate.EPOCH
         private val NEUTRAL = SyncMeta(Instant.EPOCH, Instant.EPOCH, PersonId(""))
 
         /** Business fields and deleted state equal: the sync columns are ignored (spec §7.4). */
         private fun same(a: LedgerEntity, b: LedgerEntity) = a.withMeta(NEUTRAL) == b.withMeta(NEUTRAL) && a.isDeleted == b.isDeleted
+
+        private fun personKey(id: PersonId) = ImportRowKey(EntityType.PERSON, id.value)
+
+        private fun groupKey(id: GroupId) = ImportRowKey(EntityType.GROUP, id.value)
+
+        /** The rows [record] references by ID, as keys. */
+        private fun references(record: LedgerEntity): Set<ImportRowKey> = when (record) {
+            is Person -> setOfNotNull(record.mergedIntoId?.let(::personKey))
+            is PaymentHandle -> setOf(personKey(record.personId))
+            is GroupMember -> setOf(personKey(record.personId), groupKey(record.groupId))
+            is Transfer -> setOfNotNull(personKey(record.fromPersonId), personKey(record.toPersonId), record.groupId?.let(::groupKey))
+            is Expense -> record.personIds.map(::personKey).toSet() + setOfNotNull(record.groupId?.let(::groupKey))
+            else -> emptySet()
+        }
 
         /**
          * Analyses [decoded] against [state]. With [mapFrom], every reference to that source me becomes the local
@@ -347,8 +439,11 @@ class ImportAnalysis private constructor(
             val incoming = decoded.ledger
             val people = incoming.people.filter { mapFrom == null || it.record.id != mapFrom }
                 .map { row -> row.mapped { it.copy(mergedIntoId = it.mergedIntoId?.let(::mapped)) } }
-            val sourceDeletedAt = people.associate { it.record.id to it.record.meta.deletedAt }
             val handles = incoming.handles.map { row -> row.mapped { it.copy(personId = mapped(it.personId)) } }
+            val groups = incoming.groups
+            val members = incoming.members.map { row -> row.mapped { it.copy(personId = mapped(it.personId)) } }
+            val sourceDeletedAt = (people.map { it.record } + handles.map { it.record } + groups.map { it.record } + members.map { it.record })
+                .associate { it.rowKey to it.meta.deletedAt }
             val transfers = incoming.transfers.map { row -> row.mapped { it.copy(fromPersonId = mapped(it.fromPersonId), toPersonId = mapped(it.toPersonId)) } }
             val expenses = incoming.expenses.map { row ->
                 row.mapped { e ->
@@ -360,11 +455,16 @@ class ImportAnalysis private constructor(
             }
 
             var duplicates = 0
+            val duplicateKeys = mutableSetOf<ImportRowKey>()
             fun <T : LedgerEntity> classify(rows: List<Incoming<T>>, local: (T) -> T?): List<Classified<T>> = rows.mapNotNull { row ->
                 val existing = local(row.record)
                 when {
                     existing == null -> Classified(row, null, Classification.NEW)
-                    same(existing, row.record) -> { duplicates++; null }
+                    same(existing, row.record) -> {
+                        duplicates++
+                        duplicateKeys += row.record.rowKey
+                        null
+                    }
                     else -> Classified(row, existing, Classification.CONFLICT)
                 }
             }
@@ -386,6 +486,8 @@ class ImportAnalysis private constructor(
 
             var classifiedPeople = classify(people) { state.people[it.id] }
             var classifiedHandles = classify(handles) { state.handles[it.id] }
+            var classifiedGroups = classify(groups) { state.groups[it.id] }
+            var classifiedMembers = classify(members) { state.members[it.id] }
             var classifiedTransfers = classify(transfers) { state.transfers[it.id] }
             var classifiedExpenses = classify(expenses) { state.expenses[it.id] }
 
@@ -406,47 +508,47 @@ class ImportAnalysis private constructor(
             }
             classifiedPeople = classifiedPeople.checked()
             classifiedHandles = classifiedHandles.checked()
+            classifiedGroups = classifiedGroups.checked()
+            classifiedMembers = classifiedMembers.checked()
             classifiedTransfers = classifiedTransfers.checked()
             classifiedExpenses = classifiedExpenses.checked()
 
             // State invariants (spec §3.4) over the complete state the import would produce with every conflict
             // taken, cascades included. Only when it breaks one are rows blamed: a row is to blame for a violation
-            // that goes away without it. Leaving out a new person would leave the rows that name them dangling, and
-            // the validator then reports only that broken structure (rule 15), hiding every other violation; so a
-            // new person is left out together with those rows, and is to blame only for a violation that stays
-            // while just those rows are left out. People and handles answer first, for the violations that also
-            // remain with the incoming active entries left out; incoming deletions stay in, as they can be what
-            // makes a deletion valid (a person deleted together with their transfers). Entries answer for the rest.
-            // Each round repeats until nothing is broken or no row is to blame, and both passes run again while
-            // either blames a row, since one broken rule (above all a dangling reference) can hide others.
+            // that goes away without it. Leaving out a new row (a person or a group) would leave the rows that name
+            // it dangling, and the validator then reports only that broken structure (rule 15), hiding every other
+            // violation; so a new row is left out together with those rows, and is to blame only for a violation
+            // that stays while just those rows are left out. People, handles, groups and memberships answer first,
+            // for the violations that also remain with the incoming active entries left out; incoming deletions stay
+            // in, as they can be what makes a deletion valid (a person deleted together with their transfers).
+            // Entries answer for the rest. Each round repeats until nothing is broken or no row is to blame, and
+            // both passes run again while either blames a row, since one broken rule (above all a dangling
+            // reference) can hide others.
             val rejected = mutableSetOf<ImportRowKey>()
             fun <T : LedgerEntity> List<Classified<T>>.kept() = filter { it.key !in rejected }
             fun violations(withActiveEntries: Boolean, without: Set<ImportRowKey> = emptySet()): Set<RuleViolation> {
                 fun <T : LedgerEntity> List<Classified<T>>.taken(entries: Boolean) =
                     kept().filter { it.key !in without && (!entries || withActiveEntries || it.record.isDeleted) }
                 val rows = ImportAnalysis(
-                    state, fileName, mapFrom, classifiedPeople.taken(false), classifiedHandles.taken(false), newSnapshots,
+                    state, fileName, mapFrom, classifiedPeople.taken(false), classifiedHandles.taken(false),
+                    classifiedGroups.taken(false), classifiedMembers.taken(false), newSnapshots,
                     classifiedTransfers.taken(true), classifiedExpenses.taken(true), emptyList(), 0, emptySet(), sourceDeletedAt,
                 )
-                val after = rows.plan(rows.rows.filter { it.kind == Classification.CONFLICT }.map { it.key }.toSet(), PREVIEW_BATCH, Instant.EPOCH).state
+                val take = rows.rows.filter { it.kind == Classification.CONFLICT }.map { it.key }.toSet()
+                val after = rows.plan(take, PREVIEW_BATCH, Instant.EPOCH, PREVIEW_DAY).state
                 return LedgerValidator.validate(state, after, WriteOp.Import).toSet()
             }
-            fun references(row: Classified<*>): Set<PersonId> = when (val record = row.record) {
-                is Person -> setOfNotNull(record.mergedIntoId)
-                is PaymentHandle -> setOf(record.personId)
-                is Transfer -> setOf(record.fromPersonId, record.toPersonId)
-                is Expense -> record.personIds
-                else -> emptySet()
-            }
-            // The kept rows that name [row] if it is a new person, directly or through other new people.
+            fun keptRows(): List<Classified<*>> = classifiedPeople.kept() + classifiedHandles.kept() + classifiedGroups.kept() +
+                classifiedMembers.kept() + classifiedTransfers.kept() + classifiedExpenses.kept()
+            // The kept rows that name [row] if it is new, directly or through other new rows.
             fun dependents(row: Classified<*>): Set<ImportRowKey> {
-                val rows = classifiedPeople.kept() + classifiedHandles.kept() + classifiedTransfers.kept() + classifiedExpenses.kept()
-                val gone = mutableSetOf<PersonId>()
+                val rows = keptRows()
+                val gone = mutableSetOf<ImportRowKey>()
                 val found = mutableSetOf<ImportRowKey>()
                 var next: List<Classified<*>> = listOf(row)
                 while (next.isNotEmpty()) {
-                    gone += next.mapNotNull { r -> (r.record as? Person)?.id?.takeIf { r.local == null } }
-                    next = rows.filter { it.key != row.key && it.key !in found && references(it).any(gone::contains) }
+                    gone += next.filter { it.local == null }.map { it.key }
+                    next = rows.filter { it.key != row.key && it.key !in found && references(it.record).any(gone::contains) }
                     found += next.map { it.key }
                 }
                 return found
@@ -469,7 +571,7 @@ class ImportAnalysis private constructor(
             }
             while (violations(withActiveEntries = true).isNotEmpty()) {
                 val owners = blame(
-                    classifiedPeople + classifiedHandles,
+                    classifiedPeople + classifiedHandles + classifiedGroups + classifiedMembers,
                     broken = { violations(withActiveEntries = false) intersect violations(withActiveEntries = true) },
                     without = { violations(withActiveEntries = false, without = it) },
                 )
@@ -482,12 +584,21 @@ class ImportAnalysis private constructor(
             }
             classifiedPeople = classifiedPeople.kept()
             classifiedHandles = classifiedHandles.kept()
+            classifiedGroups = classifiedGroups.kept()
+            classifiedMembers = classifiedMembers.kept()
             classifiedTransfers = classifiedTransfers.kept()
             classifiedExpenses = classifiedExpenses.kept()
 
+            // The file's deletedAt counts only for a duplicate or a kept row: a row rejected as invalid (and skipped),
+            // owner or owned, must not move a local row into or out of a cascade (spec §7.4, §7.5). Without its
+            // owner's time, an owned row the file shows deleted counts as deleted apart from it.
+            val kept = (classifiedPeople + classifiedHandles + classifiedGroups + classifiedMembers).map { it.key }.toSet() + duplicateKeys
+            val keptDeletedAt = sourceDeletedAt.filterKeys { it in kept }
+
             return ImportAnalysis(
-                state, fileName, mapFrom, classifiedPeople, classifiedHandles, newSnapshots,
-                classifiedTransfers, classifiedExpenses, invalid.sortedWith(compareBy({ it.table }, { it.rowNumber })), duplicates, mappedKeys, sourceDeletedAt,
+                state, fileName, mapFrom, classifiedPeople, classifiedHandles, classifiedGroups, classifiedMembers, newSnapshots,
+                classifiedTransfers, classifiedExpenses, invalid.sortedWith(compareBy({ it.table }, { it.rowNumber })), duplicates,
+                mappedKeys, keptDeletedAt,
             )
         }
 

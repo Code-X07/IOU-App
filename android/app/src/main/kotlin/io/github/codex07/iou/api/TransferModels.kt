@@ -94,7 +94,10 @@ sealed interface ImportRowChoice {
 
 data class InvalidRow(val table: String, val rowNumber: Int, val reason: String, val error: LedgerError?)
 
-/** Balance with a person (or my net in a group) before and after the import, per currency. */
+/**
+ * Non-group balance with a person, or my net in a group ([counterpart] "<group name> (group)"), before and after
+ * the import, per currency. People come first, then groups, each by name.
+ */
 data class BalanceChange(val counterpart: String, val before: List<Money>, val after: List<Money>)
 
 data class ImportChoices(

@@ -38,7 +38,7 @@ class ImportReaderTest {
     private fun LedgerResult<ImportFile>.error() = (this as LedgerResult.Err).error
 
     @Test
-    fun `an export decodes to the same records, except group rows until M2`() {
+    fun `an export decodes to the same records`() {
         val state = FakeApis.store(Clock.fixed(T0, ZoneOffset.UTC), SequentialIds("seed"))
             .also { runBlocking { SeedData.populate(it) } }
             .let { runBlocking { it.loaded().state } }
@@ -47,13 +47,12 @@ class ImportReaderTest {
             val decoded = decode(export(state, excel))
             decoded.ledger.people.map { it.record } shouldContainExactlyInAnyOrder state.people.values
             decoded.ledger.handles.map { it.record } shouldContainExactlyInAnyOrder state.handles.values
+            decoded.ledger.groups.map { it.record } shouldContainExactlyInAnyOrder state.groups.values
+            decoded.ledger.members.map { it.record } shouldContainExactlyInAnyOrder state.members.values
             decoded.ledger.fxSnapshots.map { it.record } shouldContainExactlyInAnyOrder state.fxSnapshots.values
-            decoded.ledger.transfers.map { it.record } shouldContainExactlyInAnyOrder state.transfers.values.filter { it.groupId == null }
-            decoded.ledger.expenses.map { it.record } shouldContainExactlyInAnyOrder state.expenses.values.filter { it.groupId == null }
-
-            val grouped = state.groups.size + state.members.size + state.entries.count { it.groupId != null }
-            decoded.invalid.size shouldBe grouped
-            decoded.invalid.map { it.reason }.toSet() shouldBe setOf(ImportDecoder.GROUPS_IN_M2)
+            decoded.ledger.transfers.map { it.record } shouldContainExactlyInAnyOrder state.transfers.values
+            decoded.ledger.expenses.map { it.record } shouldContainExactlyInAnyOrder state.expenses.values
+            decoded.invalid shouldBe emptyList()
         }
     }
 

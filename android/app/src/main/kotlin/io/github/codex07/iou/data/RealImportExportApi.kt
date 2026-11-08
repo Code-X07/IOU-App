@@ -176,7 +176,7 @@ class RealImportExportApi(
                 analysis.invalid.isNotEmpty() && !choices.skipInvalidRows -> LedgerResult.Err(LedgerError.InvalidField("invalidRows"))
                 else -> {
                     val id = ImportBatchId(context.ids.next())
-                    val plan = analysis.plan(choices.takeIncoming, id, context.now)
+                    val plan = analysis.plan(choices.takeIncoming, id, context.now, context.today)
                     val violation = LedgerValidator.validate(snapshot.state, plan.state, WriteOp.Import).firstOrNull()
                     if (violation != null) {
                         LedgerResult.Err(violation.error)
