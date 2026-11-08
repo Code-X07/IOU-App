@@ -104,10 +104,11 @@ class LedgerWorkbookTest {
 
     @Test
     fun `group sheet names are valid and unique`() {
-        val used = mutableSetOf("summary", "report")
+        val used = mutableSetOf("summary", "report", "history") // Excel reserves "History"
 
         LedgerWorkbook.sheetName("a/b:c", used) shouldBe "a b c"
         LedgerWorkbook.sheetName("Report", used) shouldBe "Report (2)"
+        LedgerWorkbook.sheetName("History", used) shouldBe "History (2)"
         LedgerWorkbook.sheetName("'quoted'", used) shouldBe "quoted"
         LedgerWorkbook.sheetName("x".repeat(40), used) shouldBe "x".repeat(31)
         LedgerWorkbook.sheetName("x".repeat(40), used) shouldBe "x".repeat(27) + " (2)"

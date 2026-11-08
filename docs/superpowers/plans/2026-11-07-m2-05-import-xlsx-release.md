@@ -3212,10 +3212,11 @@ class LedgerWorkbookTest {
 
     @Test
     fun `group sheet names are valid and unique`() {
-        val used = mutableSetOf("summary", "report")
+        val used = mutableSetOf("summary", "report", "history") // Excel reserves "History"
 
         LedgerWorkbook.sheetName("a/b:c", used) shouldBe "a b c"
         LedgerWorkbook.sheetName("Report", used) shouldBe "Report (2)"
+        LedgerWorkbook.sheetName("History", used) shouldBe "History (2)"
         LedgerWorkbook.sheetName("'quoted'", used) shouldBe "quoted"
         LedgerWorkbook.sheetName("x".repeat(40), used) shouldBe "x".repeat(31)
         LedgerWorkbook.sheetName("x".repeat(40), used) shouldBe "x".repeat(27) + " (2)"
@@ -3437,7 +3438,7 @@ class LedgerWorkbook(private val export: LedgerExport) {
         val workbook = Workbook(out, APP, VERSION)
         summarySheet(workbook.newWorksheet("Summary"), state, scope, balances, resolver, groups)
         reportSheet(workbook.newWorksheet("Report"), lines)
-        val used = mutableSetOf("summary", "report")
+        val used = mutableSetOf("summary", "report", "history") // Excel reserves "History"
         for (group in groups) groupSheet(workbook.newWorksheet(sheetName(group.name, used)), state, group, balances, resolver)
         workbook.finish()
         return LedgerResult.Ok(lines.size)
