@@ -26,6 +26,8 @@ interface LedgerDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertExpenses(rows: List<ExpenseRow>)
     @Query("DELETE FROM expense_share WHERE expenseId = :expenseId") suspend fun deleteShares(expenseId: String)
     @Insert suspend fun insertShares(rows: List<ShareRow>)
+    @Query("DELETE FROM expense_payer WHERE expenseId = :expenseId") suspend fun deletePayers(expenseId: String)
+    @Insert suspend fun insertPayers(rows: List<PayerRow>)
 
     /** Snapshots are immutable (spec §3.2): a second insert of the same ID fails the transaction. */
     @Insert suspend fun insertFxSnapshots(rows: List<FxSnapshotRow>)
@@ -41,6 +43,7 @@ interface LedgerDao {
     @Query("SELECT * FROM transfer") suspend fun transfers(): List<TransferRow>
     @Query("SELECT * FROM expense") suspend fun expenses(): List<ExpenseRow>
     @Query("SELECT * FROM expense_share ORDER BY expenseId, position") suspend fun shares(): List<ShareRow>
+    @Query("SELECT * FROM expense_payer ORDER BY expenseId, position") suspend fun payers(): List<PayerRow>
     @Query("SELECT * FROM fx_snapshot") suspend fun fxSnapshots(): List<FxSnapshotRow>
     @Query("SELECT * FROM entry_revision ORDER BY rowid") suspend fun revisions(): List<RevisionRow>
     @Query("SELECT * FROM import_batch ORDER BY rowid") suspend fun importBatches(): List<ImportBatchRow>
@@ -51,9 +54,10 @@ interface LedgerDao {
 @Database(
     entities = [
         PersonRow::class, HandleRow::class, GroupRow::class, MemberRow::class, TransferRow::class, ExpenseRow::class,
-        ShareRow::class, FxSnapshotRow::class, RevisionRow::class, ImportBatchRow::class, AppSettingRow::class, FxRateRow::class,
+        ShareRow::class, PayerRow::class, FxSnapshotRow::class, RevisionRow::class, ImportBatchRow::class, AppSettingRow::class,
+        FxRateRow::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class IouDatabase : RoomDatabase() {
@@ -73,6 +77,7 @@ abstract class IouDatabase : RoomDatabase() {
                 Room.databaseBuilder(context, IouDatabase::class.java, file)
             }
             return builder
+                .addMigrations(*Migrations.ALL)
                 .setDriver(driver)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .setQueryCoroutineContext(Dispatchers.IO)

@@ -18,6 +18,7 @@ import io.github.codex07.iou.ledger.model.ImportBatch
 import io.github.codex07.iou.ledger.model.ImportBatchId
 import io.github.codex07.iou.ledger.model.ImportSource
 import io.github.codex07.iou.ledger.model.MembershipId
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
@@ -102,7 +103,7 @@ fun TransferRow.toTransfer() = Transfer(
 )
 
 fun Expense.toRow(): ExpenseRow = meta.columns().let {
-    ExpenseRow(id.value, groupId?.value, payers.single().personId.value, description, category?.name, total.amountMinor, total.currency.code,
+    ExpenseRow(id.value, groupId?.value, payerSplit.name, description, category?.name, total.amountMinor, total.currency.code,
         effectTotal.amountMinor, effectTotal.currency.code, fxSnapshotId?.value, splitType.name, occurredOn.text(), note,
         it.createdAt, it.updatedAt, it.authorId, it.deletedAt, it.version, it.importBatchId)
 }
@@ -110,9 +111,13 @@ fun Expense.toRow(): ExpenseRow = meta.columns().let {
 fun Expense.shareRows(): List<ShareRow> =
     shares.mapIndexed { position, share -> ShareRow(id.value, share.personId.value, position, share.shareMinor, share.inputValue) }
 
-/** [shares] are this expense's share rows, in any order. */
-fun ExpenseRow.toExpense(shares: List<ShareRow>) = Expense(
-    id = EntryId(id), groupId = groupId?.let(::GroupId), payers = ExpensePayer.single(PersonId(payerPersonId), effectTotalMinor),
+fun Expense.payerRows(): List<PayerRow> =
+    payers.mapIndexed { position, payer -> PayerRow(id.value, payer.personId.value, position, payer.paidMinor, payer.inputValue) }
+
+/** [shares] and [payers] are this expense's owned rows, in any order. */
+fun ExpenseRow.toExpense(shares: List<ShareRow>, payers: List<PayerRow>) = Expense(
+    id = EntryId(id), groupId = groupId?.let(::GroupId), payerSplit = PayerSplit.valueOf(payerSplit),
+    payers = payers.sortedBy { it.position }.map { ExpensePayer(PersonId(it.personId), it.paidMinor, it.inputValue) },
     description = description,
     category = category?.let(Category::valueOf), total = Money(totalMinor, CurrencyCode(currency)),
     effectTotal = Money(effectTotalMinor, CurrencyCode(effectCurrency)), fxSnapshotId = fxSnapshotId?.let(::FxSnapshotId),

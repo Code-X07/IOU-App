@@ -43,6 +43,8 @@ class RoomJournal(private val databases: DatabaseProvider) : LedgerJournal {
             for (expense in expenses) {
                 dao.deleteShares(expense.id.value)
                 dao.insertShares(expense.shareRows())
+                dao.deletePayers(expense.id.value)
+                dao.insertPayers(expense.payerRows())
             }
             dao.insertRevisions(entry.revisions.map { it.toRow() })
             dao.upsertImportBatches(entry.importBatches.map { it.toRow() })

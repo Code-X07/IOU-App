@@ -17,23 +17,34 @@ import io.github.codex07.iou.ledger.model.Transfer
 import java.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * The JSON of `EntryRevision.snapshotJson` (spec §3.2, §5.5): the entity's row, an expense with its share
- * rows, plus a `schema` number. Stored snapshots are never rewritten. When a migration changes a row,
+ * The JSON of `EntryRevision.snapshotJson` (spec §3.2, §5.5): the entity's row, an expense with its share and
+ * payer rows, plus a `schema` number. Stored snapshots are never rewritten. When a migration changes a row,
  * [CURRENT_SCHEMA] goes up and an entry in [upcasters] turns the previous schema's JSON into the next one's
  * when it is read.
  */
 object SnapshotCodec {
-    const val CURRENT_SCHEMA = 1
+    const val CURRENT_SCHEMA = 2
 
-    /** Schema n → n + 1, applied in order to older snapshots. Empty until the first row change. */
-    private val upcasters: Map<Int, (JsonObject) -> JsonObject> = emptyMap()
+    /** Schema n → n + 1, applied in order to older snapshots. */
+    private val upcasters: Map<Int, (JsonObject) -> JsonObject> = mapOf(1 to ::schema1To2)
+
+    /** Schema 1 → 2 (spec §5.5): an expense's `payerPersonId` becomes one EQUAL payer row; other entities are unchanged. */
+    private fun schema1To2(snapshot: JsonObject): JsonObject {
+        val expense = snapshot["expense"]?.takeIf { it !is JsonNull }?.jsonObject
+            ?: return JsonObject(snapshot + ("schema" to JsonPrimitive(2)))
+        val (row, payer) = Migrations.expense1To2(expense)
+        return JsonObject(snapshot + mapOf("schema" to JsonPrimitive(2), "expense" to row, "payers" to JsonArray(listOf(payer))))
+    }
 
     internal val json = Json {
         encodeDefaults = true
@@ -51,6 +62,7 @@ object SnapshotCodec {
         val transfer: TransferRow? = null,
         val expense: ExpenseRow? = null,
         val shares: List<ShareRow>? = null,
+        val payers: List<PayerRow>? = null,
     )
 
     fun encode(entity: LedgerEntity): String = json.encodeToString(
@@ -61,7 +73,7 @@ object SnapshotCodec {
             is Group -> Snapshot(CURRENT_SCHEMA, group = entity.toRow())
             is GroupMember -> Snapshot(CURRENT_SCHEMA, member = entity.toRow())
             is Transfer -> Snapshot(CURRENT_SCHEMA, transfer = entity.toRow())
-            is Expense -> Snapshot(CURRENT_SCHEMA, expense = entity.toRow(), shares = entity.shareRows())
+            is Expense -> Snapshot(CURRENT_SCHEMA, expense = entity.toRow(), shares = entity.shareRows(), payers = entity.payerRows())
         },
     )
 
@@ -80,7 +92,7 @@ object SnapshotCodec {
             ?: snapshot.group?.toGroup()
             ?: snapshot.member?.toMember()
             ?: snapshot.transfer?.toTransfer()
-            ?: snapshot.expense?.toExpense(snapshot.shares.orEmpty())
+            ?: snapshot.expense?.toExpense(snapshot.shares.orEmpty(), snapshot.payers.orEmpty())
             ?: throw IllegalArgumentException("Snapshot names no entity")
     }
 }

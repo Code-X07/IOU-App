@@ -27,6 +27,7 @@ data class LedgerRows(
     val transfers: List<TransferRow> = emptyList(),
     val expenses: List<ExpenseRow> = emptyList(),
     val shares: List<ShareRow> = emptyList(),
+    val payers: List<PayerRow> = emptyList(),
     val fxSnapshots: List<FxSnapshotRow> = emptyList(),
     val revisions: List<RevisionRow> = emptyList(),
     val importBatches: List<ImportBatchRow> = emptyList(),
@@ -36,13 +37,16 @@ data class LedgerRows(
     /** The ledger these rows hold; defaults for missing settings. Throws for rows that don't map (bad enums, dates, snapshots). */
     fun toContent(): LedgerContent {
         val sharesByExpense = shares.groupBy { it.expenseId }
+        val payersByExpense = payers.groupBy { it.expenseId }
         val state = LedgerState(
             people = people.associate { PersonId(it.id) to it.toPerson() },
             handles = handles.associate { HandleId(it.id) to it.toHandle() },
             groups = groups.associate { GroupId(it.id) to it.toGroup() },
             members = members.associate { MembershipId(it.id) to it.toMember() },
             transfers = transfers.associate { EntryId(it.id) to it.toTransfer() },
-            expenses = expenses.associate { EntryId(it.id) to it.toExpense(sharesByExpense[it.id].orEmpty()) },
+            expenses = expenses.associate {
+                EntryId(it.id) to it.toExpense(sharesByExpense[it.id].orEmpty(), payersByExpense[it.id].orEmpty())
+            },
             fxSnapshots = fxSnapshots.associate { FxSnapshotId(it.id) to it.toSnapshot() },
         )
         val values = settings.associate { it.key to it.value }
@@ -72,6 +76,7 @@ data class LedgerRows(
         unique("transfer", transfers) { it.id }
         unique("expense", expenses) { it.id }
         unique("expense_share", shares) { it.expenseId to it.personId }
+        unique("expense_payer", payers) { it.expenseId to it.personId }
         unique("fx_snapshot", fxSnapshots) { it.id }
         unique("entry_revision", revisions) { it.id }
         unique("import_batch", importBatches) { it.id }
@@ -88,6 +93,7 @@ data class LedgerRows(
         dao.upsertTransfers(transfers)
         dao.upsertExpenses(expenses)
         dao.insertShares(shares)
+        dao.insertPayers(payers)
         dao.insertFxSnapshots(fxSnapshots)
         dao.insertRevisions(revisions)
         dao.upsertImportBatches(importBatches)
@@ -104,6 +110,7 @@ data class LedgerRows(
             transfers = dao.transfers(),
             expenses = dao.expenses(),
             shares = dao.shares(),
+            payers = dao.payers(),
             fxSnapshots = dao.fxSnapshots(),
             revisions = dao.revisions(),
             importBatches = dao.importBatches(),
@@ -122,6 +129,7 @@ data class LedgerRows(
                 transfers = state.transfers.values.map { it.toRow() },
                 expenses = state.expenses.values.map { it.toRow() },
                 shares = state.expenses.values.flatMap { it.shareRows() },
+                payers = state.expenses.values.flatMap { it.payerRows() },
                 fxSnapshots = state.fxSnapshots.values.map { it.toRow() },
                 revisions = content.revisions.map { it.toRow() },
                 importBatches = content.importBatches.map { it.toRow() },

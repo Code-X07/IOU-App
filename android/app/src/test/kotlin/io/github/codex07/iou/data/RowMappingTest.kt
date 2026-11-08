@@ -45,6 +45,9 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import java.time.Instant
 import java.time.LocalDate
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.Test
 
 /** Every optional field set, instants with nanoseconds: the mapping must be lossless (AC M1-7). */
@@ -64,7 +67,8 @@ class RowMappingTest {
         TransferMethod.CARD, "Revolut", GroupId("g-1"), LocalDate.parse("2026-02-01"), "Taxi", meta,
     )
     private val expense = Expense(
-        EntryId("e-1"), GroupId("g-1"), PayerSplit.EQUAL, ExpensePayer.single(PersonId("p-1"), 3_000), "Dinner", Category.DINING,
+        EntryId("e-1"), GroupId("g-1"), PayerSplit.EXACT,
+        listOf(ExpensePayer(PersonId("p-1"), 1_875, 250), ExpensePayer(ME, 1_125, 150)), "Dinner", Category.DINING,
         Money(400, JPY), eur(3_000), FxSnapshotId("fx-1"),
         SplitType.EXACT,
         listOf(ExpenseShare(PersonId("p-1"), 2_000, 2_000), ExpenseShare(ME, 1_000, 1_000), ExpenseShare(PersonId("p-0"), 0, null)),
@@ -83,7 +87,8 @@ class RowMappingTest {
         group.toRow().toGroup() shouldBe group
         member.toRow().toMember() shouldBe member
         transfer.toRow().toTransfer() shouldBe transfer
-        expense.toRow().toExpense(expense.shareRows().reversed()) shouldBe expense
+        expense.toRow().toExpense(expense.shareRows().reversed(), expense.payerRows().reversed()) shouldBe expense
+        expense.payerRows().map { it.position } shouldBe listOf(0, 1)
         snapshot.toRow().toSnapshot() shouldBe snapshot
         batch.toRow().toBatch() shouldBe batch
     }
@@ -92,15 +97,15 @@ class RowMappingTest {
     fun `snapshots carry their schema and decode to the same entity`() {
         entities.forEach { entity ->
             val json = SnapshotCodec.encode(entity)
-            json shouldContain "\"schema\":1"
+            json shouldContain "\"schema\":2"
             SnapshotCodec.decode(json) shouldBe entity
         }
     }
 
     @Test
     fun `a snapshot from a newer schema is refused`() {
-        val newer = SnapshotCodec.encode(person).replace("\"schema\":1", "\"schema\":2")
-        shouldThrow<IllegalArgumentException> { SnapshotCodec.decode(newer) }.message shouldBe "Snapshot schema 2 is newer than 1"
+        val newer = SnapshotCodec.encode(person).replace("\"schema\":2", "\"schema\":3")
+        shouldThrow<IllegalArgumentException> { SnapshotCodec.decode(newer) }.message shouldBe "Snapshot schema 3 is newer than 2"
     }
 
     @Test
@@ -110,5 +115,17 @@ class RowMappingTest {
             reason = "Reverted to v1", importBatchId = ImportBatchId("batch-1"), snapshot = expense,
         )
         revision.toRow().toRevision() shouldBe revision
+    }
+
+    @Test
+    fun `a schema-1 expense snapshot reads as one EQUAL payer paying the effect total`() {
+        val single = expense.copy(payerSplit = PayerSplit.EQUAL, payers = ExpensePayer.single(PersonId("p-1"), 3_000))
+        val row = SnapshotCodec.json.encodeToJsonElement(ExpenseRow.serializer(), single.toRow()).jsonObject
+        val v1Row = JsonObject(row - "payerSplit" + ("payerPersonId" to JsonPrimitive("p-1")))
+        val v2 = SnapshotCodec.json.parseToJsonElement(SnapshotCodec.encode(single)).jsonObject
+        val v1 = JsonObject(v2 - "payers" + mapOf("schema" to JsonPrimitive(1), "expense" to v1Row))
+
+        SnapshotCodec.decode(v1.toString()) shouldBe single
+        SnapshotCodec.decode(SnapshotCodec.encode(person).replace("\"schema\":2", "\"schema\":1")) shouldBe person
     }
 }

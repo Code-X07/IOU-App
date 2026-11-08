@@ -107,7 +107,7 @@ data class TransferRow(
 data class ExpenseRow(
     @PrimaryKey val id: String,
     val groupId: String?,
-    val payerPersonId: String,
+    val payerSplit: String,
     val description: String,
     val category: String?,
     val totalMinor: Long,
@@ -134,6 +134,17 @@ data class ShareRow(
     val personId: String,
     val position: Int,
     val shareMinor: Long,
+    val inputValue: Long?,
+)
+
+/** Owned by its expense like [ShareRow] (spec §3.2); [position] keeps the expense's payer order. */
+@Serializable
+@Entity(tableName = "expense_payer", primaryKeys = ["expenseId", "personId"])
+data class PayerRow(
+    val expenseId: String,
+    val personId: String,
+    val position: Int,
+    val paidMinor: Long,
     val inputValue: Long?,
 )
 
