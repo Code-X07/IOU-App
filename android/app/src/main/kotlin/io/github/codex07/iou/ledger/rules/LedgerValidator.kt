@@ -39,7 +39,8 @@ object LedgerValidator {
     private fun fieldTargets(after: LedgerState, op: WriteOp): List<LedgerEntity> = when (op) {
         is WriteOp.Edit -> op.changes.map { it.entity }.filter { !it.isDeleted }
         WriteOp.Import, WriteOp.UndoImport ->
-            (after.people.values + after.handles.values + after.groups.values + after.members.values + after.entries)
+            (after.people.values + after.handles.values + after.groups.values + after.members.values + after.entries +
+                after.schedules.values)
                 .filter { !it.isDeleted }
     }
 }

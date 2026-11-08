@@ -61,7 +61,8 @@ internal object EditRules {
                             add(7, LedgerError.GroupSettingsLocked(new.id))
                         }
                     }
-                    if (previous != null && !previous.isDeleted && new.isDeleted && after.entries.any { it.groupId == new.id }) {
+                    val groupReferenced = after.entries.any { it.groupId == new.id } || after.schedules.values.any { it.groupId == new.id }
+                    if (previous != null && !previous.isDeleted && new.isDeleted && groupReferenced) {
                         add(10, LedgerError.StillReferenced(new.id.value))
                     }
                 }
@@ -97,6 +98,7 @@ internal object EditRules {
         // Rule 10
         if (newlyDeleted) {
             val referenced = after.entries.any { new.id in it.personIds } ||
+                after.schedules.values.any { new.id in it.personIds } ||
                 after.members.values.any { it.personId == new.id } ||
                 after.people.values.any { !it.isDeleted && it.mergedIntoId == new.id }
             if (referenced) add(10, LedgerError.StillReferenced(new.id.value))

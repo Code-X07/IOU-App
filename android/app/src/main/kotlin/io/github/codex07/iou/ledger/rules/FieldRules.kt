@@ -56,12 +56,18 @@ object FieldRules {
             is PaymentHandle -> listOfNotNull(blank(entity.label, "label"), handleValue(entity))
             is Group -> listOfNotNull(blank(entity.name, "name"))
             is GroupMember -> emptyList()
-            is RecurringExpense -> emptyList() // Task 2
+            is RecurringExpense -> listOfNotNull(
+                blank(entity.description, "description"),
+                amount(entity.total),
+                LedgerError.InvalidField("interval").takeIf { entity.interval !in 1..99 },
+                entity.endOn?.takeIf { it.isBefore(entity.startOn) }?.let { LedgerError.InvalidField("endOn") },
+            ) + template(entity)
             is Transfer -> listOfNotNull(amount(entity.amount), amount(entity.effectAmount))
             is Expense -> listOfNotNull(
                 blank(entity.description, "description"),
                 amount(entity.total),
                 amount(entity.effectTotal),
+                recurringLink(entity),
             ) + shares(entity) + payers(entity)
         }.map { RuleViolation(0, it) }
     }
@@ -140,6 +146,36 @@ object FieldRules {
         val inputs = expense.payers.map { SplitInput(it.personId, it.inputValue) }
         val resolved = SplitResolver.resolvePayers(expense.payerSplit, expense.effectTotal.amountMinor, expense.total.amountMinor, inputs)
         return listOfNotNull((resolved as? LedgerResult.Err)?.error)
+    }
+
+    /** Spec §3.4 rule 0: an expense names both its schedule and its occurrence date, or neither. */
+    private fun recurringLink(expense: Expense): LedgerError? =
+        if ((expense.recurringId == null) != (expense.recurringOn == null)) {
+            LedgerError.CorruptData("${expense.id} names only one of recurringId and recurringOn")
+        } else {
+            null
+        }
+
+    /**
+     * A schedule's template rows as stored (spec §3.4 rule 0): payers and participants resolve over the template
+     * total, and EQUAL rows carry no input. Without a valid total there is nothing to resolve over; the amount
+     * error is reported instead.
+     */
+    private fun template(schedule: RecurringExpense): List<LedgerError> {
+        val total = schedule.total.amountMinor
+        if (total <= 0 || total > MAX_MINOR) return emptyList()
+        val payers = schedule.payerRows.map { SplitInput(it.personId, it.inputValue) }
+        val shares = schedule.shareRows.map { SplitInput(it.personId, it.inputValue) }
+        val equalWithInputs = listOfNotNull(
+            LedgerError.CorruptData("EQUAL payers of ${schedule.id} carry an input")
+                .takeIf { schedule.payerSplit == PayerSplit.EQUAL && payers.any { it.value != null } },
+            LedgerError.CorruptData("EQUAL participants of ${schedule.id} carry an input")
+                .takeIf { schedule.splitType == SplitType.EQUAL && shares.any { it.value != null } },
+        )
+        return listOfNotNull(
+            (SplitResolver.resolve(schedule.splitType, total, total, shares) as? LedgerResult.Err)?.error,
+            (SplitResolver.resolvePayers(schedule.payerSplit, total, total, payers) as? LedgerResult.Err)?.error,
+        ) + equalWithInputs
     }
 
     /**

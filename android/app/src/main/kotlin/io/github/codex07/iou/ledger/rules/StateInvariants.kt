@@ -52,6 +52,11 @@ internal object StateInvariants {
             e.shares.forEach { person(it.personId, e.id.value) }
             group(e.groupId, e.id.value)
             snapshot(e.fxSnapshotId, e.id.value)
+            e.recurringId?.let { if (it !in state.schedules) problems += "${e.id.value} references missing schedule $it" }
+        }
+        state.schedules.values.forEach { s ->
+            s.participants.forEach { person(it.personId, s.id.value) }
+            group(s.groupId, s.id.value)
         }
         IdentityResolver(state).brokenChains.sortedBy { it.value }.forEach {
             problems += "merge chain of $it loops or ends at a missing person"
@@ -67,6 +72,7 @@ internal object StateInvariants {
         val me = state.me
         val liveEntries = state.entries.filter { !it.isDeleted }
         val liveGroups = state.groups.values.filter { !it.isDeleted }
+        val liveSchedules = state.schedules.values.filter { !it.isDeleted }.sortedBy { it.id.value }
 
         // Rule 1
         for (entry in liveEntries.filter { it.groupId == null }) {
@@ -76,6 +82,10 @@ internal object StateInvariants {
                 is Expense -> people.size == 2 && me.id in people
             }
             if (!ok) add(1, LedgerError.NeedsGroup(people))
+        }
+        for (schedule in liveSchedules.filter { it.groupId == null }) {
+            val people = schedule.personIds.map(resolver::canonical).toSet()
+            if (people.size != 2 || me.id !in people) add(1, LedgerError.NeedsGroup(people))
         }
 
         // Rule 2
@@ -87,6 +97,11 @@ internal object StateInvariants {
         for (entry in liveEntries) {
             val groupId = entry.groupId ?: continue
             val missing = entry.personIds.map(resolver::canonical).filterNot { resolver.hasMembership(groupId, it) }.toSet()
+            if (missing.isNotEmpty()) add(3, LedgerError.NotGroupMember(groupId, missing))
+        }
+        for (schedule in liveSchedules) {
+            val groupId = schedule.groupId ?: continue
+            val missing = schedule.personIds.map(resolver::canonical).filterNot { resolver.hasMembership(groupId, it) }.toSet()
             if (missing.isNotEmpty()) add(3, LedgerError.NotGroupMember(groupId, missing))
         }
 
@@ -130,6 +145,11 @@ internal object StateInvariants {
                 listOfNotNull(entry.groupId?.takeIf { state.groups.getValue(it).isDeleted }?.value)
             if (dead.isNotEmpty()) add(10, LedgerError.DeletedReference(setOf(entry.id.value) + dead))
         }
+        for (schedule in liveSchedules) {
+            val dead = schedule.personIds.filter { state.people.getValue(it).isDeleted }.map { it.value } +
+                listOfNotNull(schedule.groupId?.takeIf { state.groups.getValue(it).isDeleted }?.value)
+            if (dead.isNotEmpty()) add(10, LedgerError.DeletedReference(setOf(schedule.id.value) + dead))
+        }
 
         // Rule 11
         for (person in state.people.values.filter { !it.isDeleted && it.mergedIntoId != null }) {
@@ -141,6 +161,17 @@ internal object StateInvariants {
 
         // Rules 14, 16, 17
         for (entry in liveEntries) fxRule(state, entry)?.let { (rule, error) -> add(rule, error) }
+
+        // Rule 18: one live expense per occurrence
+        state.expenses.values
+            .filter { !it.isDeleted && it.recurringId != null && it.recurringOn != null }
+            .groupBy { it.recurringId!! to it.recurringOn!! }
+            .filterValues { it.size > 1 }
+            .entries.sortedWith(compareBy({ it.key.first.value }, { it.key.second }))
+            .forEach { (key, expenses) ->
+                val ids = expenses.map { it.id.value }.sorted().joinToString()
+                add(18, LedgerError.CorruptData("${key.first} has ${expenses.size} expenses for ${key.second}: $ids"))
+            }
 
         return out
     }
