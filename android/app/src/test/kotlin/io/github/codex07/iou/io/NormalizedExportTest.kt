@@ -10,9 +10,11 @@ import io.github.codex07.iou.testutil.TestLedger
 import io.github.codex07.iou.testutil.eur
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldStartWith
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.time.LocalDate
 import java.util.zip.ZipInputStream
 import kotlinx.serialization.json.Json
 import org.apache.commons.csv.CSVFormat
@@ -54,7 +56,8 @@ class NormalizedExportTest {
         val (rows, entries) = export()
         entries.keys.toList() shouldContainExactly listOf(
             "people.csv", "payment_handles.csv", "groups.csv", "group_members.csv", "fx_snapshots.csv",
-            "transfers.csv", "expenses.csv", "expense_shares.csv", "expense_payers.csv", "manifest.json",
+            "transfers.csv", "recurring_expenses.csv", "recurring_participants.csv", "expenses.csv", "expense_shares.csv",
+            "expense_payers.csv", "manifest.json",
         )
         rows shouldBe 6
         val manifest = Json.decodeFromString(ExportManifest.serializer(), entries.getValue("manifest.json"))
@@ -63,7 +66,8 @@ class NormalizedExportTest {
             scope = "full-ledger", textEscaping = "quote-prefix-v1", delimiter = ",", bom = false,
             tables = mapOf(
                 "people" to 3, "payment_handles" to 1, "groups" to 0, "group_members" to 0, "fx_snapshots" to 0,
-                "transfers" to 2, "expenses" to 0, "expense_shares" to 0, "expense_payers" to 0,
+                "transfers" to 2, "recurring_expenses" to 0, "recurring_participants" to 0, "expenses" to 0, "expense_shares" to 0,
+                "expense_payers" to 0,
             ),
         )
     }
@@ -121,11 +125,42 @@ class NormalizedExportTest {
 
         entries.getValue("expenses.csv").lines().first() shouldBe
             "id,group_id,payer_split,description,category,total_minor,total,currency,effect_total_minor,effect_total," +
-            "effect_currency,fx_snapshot_id,split_type,occurred_on,note,version,created_at,updated_at,author_id,deleted_at"
+            "effect_currency,fx_snapshot_id,split_type,occurred_on,note,recurring_id,recurring_on,version,created_at,updated_at," +
+            "author_id,deleted_at"
         entries.getValue("expense_payers.csv") shouldBe
             "expense_id,position,person_id,paid_minor,paid,input_value\r\n" +
             "e-1,0,person-x,7000,70.00,7000\r\n" +
             "e-1,1,person-0-me,3000,30.00,3000\r\n"
+    }
+
+    @Test
+    fun `schedules write their template and participants, and posted expenses their link`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        val rent = ledger.schedule(
+            x, eur(90_000), listOf(ME, x), id = "rent", handledThrough = LocalDate.parse("2026-02-01"),
+            autoPost = true, autoPostFrom = LocalDate.parse("2026-03-01"),
+        )
+        ledger.expense(
+            x, eur(90_000), mapOf(ME to 45_000L, x to 45_000L), id = "e-1", recurring = rent,
+            recurringOn = LocalDate.parse("2026-02-01"),
+        )
+        val out = ByteArrayOutputStream()
+        LedgerExport("0.1.0").normalized(ledger.state, T0, excelFriendly = false, out)
+        val entries = io.github.codex07.iou.testutil.Zips.read(out.toByteArray())
+
+        entries.getValue("recurring_expenses.csv") shouldBe
+            "id,group_id,description,category,note,total_minor,total,currency,payer_split,split_type,unit,interval,start_on," +
+            "end_on,handled_through,auto_post_from,auto_post,version,created_at,updated_at,author_id,deleted_at\r\n" +
+            "rent,,Schedule rent,,,90000,900.00,EUR,EQUAL,EQUAL,MONTH,1,2026-01-01,,2026-02-01,2026-03-01,true,1," +
+            "2026-01-01T00:00:00Z,2026-01-01T00:00:00Z,person-0-me,\r\n"
+        entries.getValue("recurring_participants.csv") shouldBe
+            "recurring_id,role,position,person_id,input_value\r\n" +
+            "rent,PAYER,0,person-x,\r\n" +
+            "rent,SHARE,0,person-0-me,\r\n" +
+            "rent,SHARE,1,person-x,\r\n"
+        entries.getValue("expenses.csv").lines()[1] shouldContain ",rent,2026-02-01,1,"
     }
 
     @Test

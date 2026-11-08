@@ -19,6 +19,7 @@ import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.PayerSplit
+import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.ledger.model.SplitType
 import io.github.codex07.iou.ledger.model.SyncMeta
 import io.github.codex07.iou.ledger.model.Transfer
@@ -298,7 +299,11 @@ object ImportDecoder {
                 occurredOn = date("occurred_on"),
                 note = optional("note"),
                 meta = meta(),
+                recurringId = if (schemaVersion < 2) null else optional("recurring_id")?.let(::RecurringId),
+                recurringOn = if (schemaVersion < 2) null else optionalDate("recurring_on"),
             )
         }
+
+        fun optionalDate(column: String): LocalDate? = optional(column)?.let { date(column) }
     }
 }

@@ -8,8 +8,11 @@ import io.github.codex07.iou.ledger.model.Group
 import io.github.codex07.iou.ledger.model.GroupMember
 import io.github.codex07.iou.ledger.model.LedgerEntity
 import io.github.codex07.iou.ledger.model.LedgerState
+import io.github.codex07.iou.ledger.model.ParticipantRole
 import io.github.codex07.iou.ledger.model.PaymentHandle
 import io.github.codex07.iou.ledger.model.Person
+import io.github.codex07.iou.ledger.model.RecurringExpense
+import io.github.codex07.iou.ledger.model.RecurringParticipant
 import io.github.codex07.iou.ledger.model.Transfer
 import io.github.codex07.iou.money.Money
 
@@ -42,13 +45,20 @@ data class ShareLine(val expense: Expense, val position: Int, val share: Expense
 /** An expense payer with the expense it belongs to and its position in the expense's payer list. */
 data class PayerLine(val expense: Expense, val position: Int, val payer: ExpensePayer)
 
+/** A schedule's payer or participant with its schedule and its position among the rows of its role. */
+data class ParticipantLine(val schedule: RecurringExpense, val position: Int, val participant: RecurringParticipant)
+
 /**
  * The normalized shape (spec §7.2): one table per entity, every row including deleted ones and the me person.
  * Amounts appear as `*_minor` integers next to decimal strings; instants are ISO-8601 UTC, dates `yyyy-MM-dd`,
  * enums by name, booleans `true`/`false`. The sync columns are the same for every entity table.
  */
 object NormalizedTables {
-    /** 2 from M2: `expense_payers` and `expenses.payer_split` replace `expenses.payer_person_id`. */
+    /**
+     * 2 from M2: `expense_payers` and `expenses.payer_split` replace `expenses.payer_person_id`; schedules come in
+     * `recurring_expenses` and `recurring_participants`, and expenses name the occurrence they fill
+     * (`recurring_id`, `recurring_on`).
+     */
     const val SCHEMA_VERSION = 2
 
     private fun <T : LedgerEntity> sync(): List<Column<T>> = listOf(
@@ -131,6 +141,45 @@ object NormalizedTables {
         ) + sync(),
     ) { it.transfers.values.toList() }
 
+    val recurringExpenses = CsvTable(
+        "recurring_expenses",
+        listOf<Column<RecurringExpense>>(
+            Column("id", text = true) { it.id.value },
+            Column("group_id", text = true) { it.groupId?.value },
+            Column("description", text = true) { it.description },
+            Column("category") { it.category?.name },
+            Column("note", text = true) { it.note },
+        ) + money("total", "currency") { it.total } + listOf(
+            Column("payer_split") { it.payerSplit.name },
+            Column("split_type") { it.splitType.name },
+            Column("unit") { it.unit.name },
+            Column("interval") { it.interval.toString() },
+            Column("start_on") { it.startOn.toString() },
+            Column("end_on") { it.endOn?.toString() },
+            Column("handled_through") { it.handledThrough?.toString() },
+            Column("auto_post_from") { it.autoPostFrom.toString() },
+            Column("auto_post") { it.autoPost.toString() },
+        ) + sync(),
+    ) { it.schedules.values.toList() }
+
+    /** PAYER rows, then SHARE rows of each schedule, `position` counted per role (as in Room, Part 4). */
+    val recurringParticipants = CsvTable(
+        "recurring_participants",
+        listOf<Column<ParticipantLine>>(
+            Column("recurring_id", text = true) { it.schedule.id.value },
+            Column("role") { it.participant.role.name },
+            Column("position") { it.position.toString() },
+            Column("person_id", text = true) { it.participant.personId.value },
+            Column("input_value") { it.participant.inputValue?.toString() },
+        ),
+    ) { state ->
+        state.schedules.values.flatMap { schedule ->
+            ParticipantRole.entries.flatMap { role ->
+                schedule.participants.filter { it.role == role }.mapIndexed { i, row -> ParticipantLine(schedule, i, row) }
+            }
+        }
+    }
+
     val expenses = CsvTable(
         "expenses",
         listOf<Column<Expense>>(
@@ -144,6 +193,8 @@ object NormalizedTables {
             Column("split_type") { it.splitType.name },
             Column("occurred_on") { it.occurredOn.toString() },
             Column("note", text = true) { it.note },
+            Column("recurring_id", text = true) { it.recurringId?.value },
+            Column("recurring_on") { it.recurringOn?.toString() },
         ) + sync(),
         legacyTextColumns = setOf(SCHEMA_1_PAYER),
     ) { it.expenses.values.toList() }
@@ -192,9 +243,12 @@ object NormalizedTables {
     const val SCHEMA_1_PAYER = "payer_person_id"
 
     /** In dependency order, which is also the order an import applies them (spec §7.5). */
-    val all: List<CsvTable<*>> =
-        listOf(people, paymentHandles, groups, groupMembers, fxSnapshots, transfers, expenses, expenseShares, expensePayers)
+    val all: List<CsvTable<*>> = listOf(
+        people, paymentHandles, groups, groupMembers, fxSnapshots, transfers, recurringExpenses, recurringParticipants,
+        expenses, expenseShares, expensePayers,
+    )
 
     /** The tables a file of [schemaVersion] holds: every one of them, and no others (spec §7.4). */
-    fun tablesOf(schemaVersion: Int): List<CsvTable<*>> = if (schemaVersion >= 2) all else all - expensePayers
+    fun tablesOf(schemaVersion: Int): List<CsvTable<*>> =
+        if (schemaVersion >= 2) all else all - setOf(expensePayers, recurringExpenses, recurringParticipants)
 }

@@ -11,6 +11,7 @@ import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.LedgerState
 import io.github.codex07.iou.testutil.ME
+import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.SequentialIds
 import io.github.codex07.iou.testutil.T0
 import io.github.codex07.iou.testutil.TestLedger
@@ -174,7 +175,22 @@ class ImportReaderTest {
         expense.payerSplit shouldBe PayerSplit.EQUAL
         expense.payers shouldBe listOf(ExpensePayer(io.github.codex07.iou.ledger.model.PersonId("=person-x"), 3_000))
         reader.read(Zips.edit(v1, "manifest.json") { it.replace("\"schemaVersion\":1", "\"schemaVersion\":2") }).error() shouldBe
-            LedgerError.CorruptFile("Missing expense_payers.csv")
+            LedgerError.CorruptFile("Missing recurring_expenses.csv")
+    }
+
+    @Test
+    fun `posted expenses keep their schedule link`() {
+        val ledger = TestLedger()
+        ledger.me()
+        val x = ledger.person("X")
+        val rent = ledger.schedule(x, eur(1_000), listOf(ME, x), id = "rent")
+        ledger.expense(x, eur(1_000), mapOf(ME to 500L, x to 500L), id = "e-1", recurring = rent, recurringOn = D0)
+
+        val expense = decode(export(ledger.state)).ledger.expenses.single().record
+
+        expense shouldBe ledger.state.expenses.values.single()
+        expense.recurringId shouldBe rent
+        expense.recurringOn shouldBe D0
     }
 
     @Test

@@ -41,7 +41,7 @@ class RealExportTest {
         val normalized = backend.apis.importExport.export(ExportRequest(ExportShape.NORMALIZED, ExportFormat.CSV), zip)
         val tableRows = state.people.size + state.handles.size + state.groups.size + state.members.size +
             state.fxSnapshots.size + state.transfers.size + state.expenses.size + state.expenses.values.sumOf { it.shares.size } +
-            state.expenses.values.sumOf { it.payers.size }
+            state.expenses.values.sumOf { it.payers.size } + state.schedules.size + state.schedules.values.sumOf { it.participants.size }
         normalized shouldBe LedgerResult.Ok(ExportInfo(tableRows))
         ZipFile(harness.documents.file(zip)).use { file ->
             file.getInputStream(file.getEntry("manifest.json")).readBytes().toString(Charsets.UTF_8) shouldStartWith
