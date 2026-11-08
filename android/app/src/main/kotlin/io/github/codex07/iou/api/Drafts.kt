@@ -5,6 +5,7 @@ import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.GroupId
 import io.github.codex07.iou.ledger.model.HandleType
 import io.github.codex07.iou.ledger.model.LedgerGeneration
+import io.github.codex07.iou.ledger.model.PayerSplit
 import io.github.codex07.iou.ledger.model.PersonId
 import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.model.SplitType
@@ -62,12 +63,14 @@ data class TransferDraft(
 ) : EntryDraft
 
 /**
- * An expense to create or save. [participants] carry the split inputs (see [SplitInput]); EXACT inputs
- * are in [total]'s currency. [fx] is needed in a CONVERT group when [total]'s currency differs from the
- * group currency.
+ * An expense to create or save. [payers] and [participants] carry split inputs (see [SplitInput]); EXACT
+ * values of both are in [total]'s currency. [payerSplit] divides the total among the payers (spec §4.4):
+ * `EQUAL` with no values, or `EXACT` amounts that are each greater than 0 and add up to [total]. A single
+ * payer is one entry with no value. [fx] is needed in a CONVERT group when [total]'s currency differs from
+ * the group currency.
  */
 data class ExpenseDraft(
-    val payer: PersonId,
+    val payers: List<SplitInput>,
     val description: String,
     val category: Category? = null,
     val total: Money,
@@ -77,7 +80,30 @@ data class ExpenseDraft(
     val occurredOn: LocalDate,
     val note: String? = null,
     val fx: FxChoice? = null,
-) : EntryDraft
+    val payerSplit: PayerSplit = PayerSplit.EQUAL,
+) : EntryDraft {
+
+    /** A single-payer draft with the parameters in their pre-M2 order: [payer] paid the whole total. */
+    constructor(
+        payer: PersonId,
+        description: String,
+        category: Category? = null,
+        total: Money,
+        groupId: GroupId? = null,
+        splitType: SplitType = SplitType.EQUAL,
+        participants: List<SplitInput>,
+        occurredOn: LocalDate,
+        note: String? = null,
+        fx: FxChoice? = null,
+    ) : this(listOf(SplitInput(payer)), description, category, total, groupId, splitType, participants, occurredOn, note, fx, PayerSplit.EQUAL)
+
+    /**
+     * The first payer, kept so single-payer forms still compile. A draft rebuilt from it alone has one payer,
+     * so saving it replaces every other payer of the expense.
+     */
+    @Deprecated("An expense can have several payers: use payers and payerSplit.", ReplaceWith("payers.first().personId"))
+    val payer: PersonId get() = payers.first().personId
+}
 
 /** A pre-filled repayment built by the core, with the generation it was prepared against (spec §4.6). */
 data class SettleUpDraft(

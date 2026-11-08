@@ -33,8 +33,17 @@ import io.github.codex07.iou.money.CurrencyCode
 import io.github.codex07.iou.money.Money
 import java.time.LocalDate
 
-/** What saving an expense draft would store (no write). */
-data class SharePreview(val effectTotal: Money, val shares: List<ExpenseShare>, val recomputed: Boolean)
+/**
+ * What saving an expense draft would store (no write). [recomputed] and [payersRecomputed] are false when the
+ * stored shares, or the stored payer rows, would be kept as they are (spec §4.4).
+ */
+data class SharePreview(
+    val effectTotal: Money,
+    val shares: List<ExpenseShare>,
+    val recomputed: Boolean,
+    val payers: List<ExpensePayer>,
+    val payersRecomputed: Boolean,
+)
 
 /** Transfers and expenses: FX choices (spec §4.5), split recompute rules (spec §4.4), delete and restore. */
 object EntryOps {
@@ -85,10 +94,8 @@ object EntryOps {
         val expense = Expense(
             id = existing?.id ?: EntryId(ctx.ids.next()),
             groupId = draft.groupId,
-            payers = ExpensePayer.single(
-                storedPerson(IdentityResolver(ctx.state), draft.payer, existing?.payers?.singleOrNull()?.personId),
-                preview.effectTotal.amountMinor,
-            ),
+            payerSplit = draft.payerSplit,
+            payers = preview.payers,
             description = draft.description.trim(),
             category = draft.category,
             total = draft.total,
@@ -105,7 +112,7 @@ object EntryOps {
         Planned(expense.id, validated(ctx, listOf(Change(expense, action)), listOfNotNull(fx.newSnapshot)))
     }
 
-    /** The shares a save would store, for `previewSplit` (spec §4.4). Writes nothing. */
+    /** The shares and payers a save would store, for `previewSplit` (spec §4.4). Writes nothing. */
     fun previewShares(ctx: WriteContext, draft: ExpenseDraft, existing: Expense?): LedgerResult<SharePreview> =
         ledgerResult { sharesFor(ctx, draft, existing).second }
 
@@ -153,6 +160,10 @@ object EntryOps {
     fun splitInputsOf(expense: Expense, resolver: IdentityResolver): List<SplitInput> =
         combineInputs(expense.shares.map { SplitInput(it.personId, it.inputValue) }, expense.splitType, resolver)
 
+    /** The stored payers as an edit draft shows them: canonical people, records of one person combined (spec §4.4). */
+    fun payerInputsOf(expense: Expense, resolver: IdentityResolver): List<SplitInput> =
+        combineInputs(expense.payers.map { SplitInput(it.personId, it.inputValue) }, expense.payerSplit.splitType, resolver)
+
     // ---- internals ----
 
     /**
@@ -177,26 +188,44 @@ object EntryOps {
         // The same record twice is a malformed draft (spec §4.4); only distinct records of one merged person combine.
         draft.participants.groupingBy { it.personId }.eachCount().entries.firstOrNull { it.value > 1 }
             ?.let { fail(LedgerError.DuplicateParticipant(it.key)) }
-        val inputs = try {
-            combineInputs(draft.participants, draft.splitType, resolver)
-        } catch (overflow: ArithmeticException) {
-            null
-        } ?: fail(LedgerError.AmountTooLarge)
-
-        val keep = existing != null &&
+        val inputs = combined(draft.participants, draft.splitType, resolver)
+        // The effect total is an input of both lists: the paid amount, its currency and the FX choice.
+        val sameEffect = existing != null &&
             (draft.fx == null || draft.fx == FxChoice.KeepExisting) &&
             draft.total == existing.total &&
-            fx.effect == existing.effectTotal &&
+            fx.effect == existing.effectTotal
+        val keep = existing != null && sameEffect &&
             draft.splitType == existing.splitType &&
             inputs.toSet() == splitInputsOf(existing, resolver).toSet()
-
         val shares = if (keep) {
             existing!!.shares
         } else {
             SplitResolver.resolve(draft.splitType, fx.effect.amountMinor, draft.total.amountMinor, inputs).bind()
         }
-        return fx to SharePreview(fx.effect, shares, recomputed = !keep)
+
+        // Payers follow the same steps on their own inputs, and are kept or recomputed on their own (spec §4.4).
+        draft.payers.firstOrNull { (it.value ?: 0L) < 0L }?.let { fail(LedgerError.NegativeInput(it.personId)) }
+        draft.payers.groupingBy { it.personId }.eachCount().entries.firstOrNull { it.value > 1 }
+            ?.let { fail(LedgerError.DuplicatePayer(it.key)) }
+        val payerInputs = combined(draft.payers, draft.payerSplit.splitType, resolver)
+        val keepPayers = existing != null && sameEffect &&
+            draft.payerSplit == existing.payerSplit &&
+            payerInputs.toSet() == payerInputsOf(existing, resolver).toSet()
+        val payers = if (keepPayers) {
+            existing!!.payers
+        } else {
+            SplitResolver.resolvePayers(draft.payerSplit, fx.effect.amountMinor, draft.total.amountMinor, payerInputs).bind()
+        }
+        return fx to SharePreview(fx.effect, shares, recomputed = !keep, payers = payers, payersRecomputed = !keepPayers)
     }
+
+    /** [inputs] combined per canonical person (spec §4.4); an overflow while adding is `AmountTooLarge`. */
+    private fun ResultScope.combined(inputs: List<SplitInput>, type: SplitType, resolver: IdentityResolver): List<SplitInput> =
+        try {
+            combineInputs(inputs, type, resolver)
+        } catch (overflow: ArithmeticException) {
+            fail(LedgerError.AmountTooLarge)
+        }
 
     private fun ResultScope.resolveFx(
         ctx: WriteContext,

@@ -36,6 +36,7 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 ## Entries
 
 - New transfer or expense: build a `TransferDraft`/`ExpenseDraft` and call `saveTransfer`/`saveExpense` with `SaveMode.Create(basis)`.
+- Payers: `ExpenseDraft.payers` is a list of `SplitInput`, like `participants`, divided by `payerSplit`: `EQUAL` (no values) or `EXACT` (each payer's amount in the paid currency, each > 0, adding up to the total). One payer is one entry with no value. Errors on the payer side: `NoPayers`, `PaidRemaining(diffMinor)`, `DuplicatePayer(personId)`, and `NegativeInput` / `MissingInput` / `InvalidAmount` / `AmountTooLarge` naming a payer. The old constructor `ExpenseDraft(payer, description, …)` still works and makes one payer; `draft.payer` (deprecated) is the first payer only, so a form that edits through it saves one payer.
 - Edit: start from `EntryDetail.editDraft` (it's already pre-filled correctly, including FX and merged participants), change fields, save with `SaveMode.Update(id, token)`.
 - Parse typed amounts with `Inputs.amount(text, currency)` and codes with `Inputs.currency(text)`.
 - Live split feedback: `previewSplit(draft, editing)`. When editing, it also returns the stored shares and whether saving would recompute them.
