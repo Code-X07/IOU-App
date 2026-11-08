@@ -32,6 +32,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.runCurrent
@@ -39,6 +40,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /** Auto-posting and its triggers (spec §5.7, AC 29–32). */
+@OptIn(ExperimentalCoroutinesApi::class)
 class RecurringRunnerTest {
 
     private fun d(text: String) = LocalDate.parse(text)
