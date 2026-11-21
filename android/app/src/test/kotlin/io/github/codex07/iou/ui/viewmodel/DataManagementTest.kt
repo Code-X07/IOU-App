@@ -194,6 +194,68 @@ class DataManagementTest {
         assertTrue(vm.state.value.preview!!.rows.first { it.key == restored }.choice is ImportRowChoice.RestoredWith); vm.end()
     }
 
+    @Test fun `forced schedule dates stay visible while only mixed schedule conflicts can be selected`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        val forcedKey = ImportRowKey(EntityType.RECURRING_EXPENSE, "advanced-schedule")
+        val mixedKey = ImportRowKey(EntityType.RECURRING_EXPENSE, "mixed-schedule")
+        val handled = FieldChange("handledThrough", "2026-10-01", "2026-11-01")
+        val description = FieldChange("description", "Rent", "New rent")
+        val owner = ImportRowChoice.KeepOrTake
+        val rows = listOf(
+            ImportRow(forcedKey, "Schedule Streaming", listOf(handled), owner, false, listOf(handled)),
+            ImportRow(mixedKey, "Schedule Rent", listOf(description, handled), owner, false, listOf(handled)),
+        )
+        val applied = mutableListOf<ImportChoices>()
+        val api = object : ImportExportApi by a.importExport {
+            override suspend fun parseImport(source: DocumentRef) =
+                a.importExport.parseImport(source).map { it.copy(rows = rows) }
+
+            override suspend fun refreshPreview(preview: ImportPreview) = LedgerResult.Ok(preview.copy(rows = rows))
+
+            override fun applyChoices(preview: ImportPreview, choices: ImportChoices): ImportPreview {
+                applied += choices
+                return preview
+            }
+        }
+        val vm = vm(a, io = api)
+        vm.open("import")
+        runCurrent()
+        vm.simulateImport("normal")
+        runCurrent()
+        vm.choices { it.copy(takeIncoming = setOf(forcedKey, mixedKey)) }
+        assertEquals(setOf(mixedKey), vm.state.value.choices.takeIncoming)
+        assertTrue(applied.all { forcedKey !in it.takeIncoming })
+        vm.refresh()
+        runCurrent()
+        assertEquals(setOf(mixedKey), vm.state.value.choices.takeIncoming)
+        val (forced, mixed) = vm.state.value.preview!!.rows
+        assertEquals(listOf(handled), forced.forcedChanges)
+        assertEquals(listOf(handled), mixed.forcedChanges)
+        assertEquals(listOf(description, handled), mixed.changes)
+        vm.end()
+    }
+
+    @Test fun `preview carries person and labelled group balances together through review`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        val eur = io.github.codex07.iou.money.CurrencyCode("EUR")
+        val before = listOf(io.github.codex07.iou.money.Money(-100, eur))
+        val after = listOf(io.github.codex07.iou.money.Money(200, eur))
+        val balances = listOf(BalanceChange("Alex", emptyList(), after), BalanceChange("Flat (group)", before, after))
+        val api = object : ImportExportApi by a.importExport {
+            override suspend fun parseImport(source: DocumentRef) =
+                a.importExport.parseImport(source).map { it.copy(balanceChanges = balances) }
+        }
+        val vm = vm(a, io = api)
+        vm.open("import")
+        runCurrent()
+        vm.simulateImport("normal")
+        runCurrent()
+        assertEquals(balances, vm.state.value.preview!!.balanceChanges)
+        vm.choices { it.copy(takeIncoming = setOf(vm.state.value.preview!!.rows.first().key)) }
+        assertEquals(balances, vm.state.value.preview!!.balanceChanges)
+        vm.end()
+    }
+
     @Test fun `invalid rows require deliberate skipping before import confirmation`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val vm = vm(a); vm.open("import"); runCurrent(); vm.simulateImport("invalid"); runCurrent()
         assertTrue(vm.state.value.preview!!.invalidRows.isNotEmpty())

@@ -34,6 +34,15 @@ data class ExportFields(
     }
 }
 
+internal val ImportRow.optionalChanges: List<FieldChange>
+    get() = if (forcedChanges.isEmpty()) changes else changes - forcedChanges.toSet()
+
+internal val ImportRow.onlyForcedChanges: Boolean
+    get() = forcedChanges.isNotEmpty() && optionalChanges.isEmpty()
+
+internal val ImportRow.canChooseIncoming: Boolean
+    get() = choice == ImportRowChoice.KeepOrTake && !onlyForcedChanges
+
 enum class DocumentOperation { BACKUP, RESTORE, IMPORT, EXPORT }
 data class DocumentPickerRequest(val id: Long, val operation: DocumentOperation, val create: Boolean, val mime: String, val name: String, val launched: Boolean = false)
 enum class DataConfirmation { RESTORE, UNDO_RESTORE, COMMIT_IMPORT, UNDO_IMPORT }

@@ -9,7 +9,7 @@ M2 adds expenses paid by several people, recurring expenses, group and schedule 
 - [x] **Notification permission:** ask for `POST_NOTIFICATIONS` the first time a schedule is saved (Android 13+). The real build already declares it in its manifest.
 - [x] **Notification taps:** in `MainActivity`, read the intent extra `iou.open`; for `"due"` open the due list, and when `iou.schedule` is present, that schedule. The due list opens after unlock and focuses the schedule when it is still available.
 - [x] **XLSX export:** the export Format field offers XLSX for report and normalized workbooks. Normalized export remains full-ledger and Excel-friendly formatting applies to CSV.
-- [ ] **Import preview:** show schedule rows with `forcedChanges` like the "deleted with" rows (nothing to choose), and the "<group> (group)" balance lines. See "Import and export" below.
+- [x] **Import preview:** Show always-applied schedule changes, choices for mixed conflicts, owner-controlled outcomes, and the "<group> (group)" balance lines. See "Import and export" below.
 
 ## Multiple payers
 
