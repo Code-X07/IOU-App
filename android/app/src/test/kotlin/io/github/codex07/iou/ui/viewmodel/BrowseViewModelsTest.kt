@@ -5,6 +5,7 @@ import io.github.codex07.iou.api.*
 import io.github.codex07.iou.fake.FakeApis
 import io.github.codex07.iou.ledger.model.*
 import io.github.codex07.iou.money.CurrencyCode
+import io.github.codex07.iou.money.Money
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -131,6 +132,23 @@ class BrowseViewModelsTest {
             assertTrue(deleted.history.size > detail.history.size)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test fun `activity search finds a payer who is not a participant`() = runTest(dispatcher) {
+        val apis = FakeApis.seeded()
+        val people = apis.people.observePeople().first().map { it.person }
+        val me = apis.ledger.observeActivity().first().first { it.paidBy.isMe }.paidBy.id
+        val chen = people.first { it.displayName == "Chen" }.id
+        val erik = people.first { it.displayName == "Erik" }.id
+        val trip = (apis.groups.createGroup(GroupDraft("Payer search", CurrencyCode("EUR"), FxMode.KEEP), listOf(chen, erik),
+            apis.backup.observeLedgerGeneration().first()) as LedgerResult.Ok).value
+        val id = (apis.ledger.saveExpense(ExpenseDraft(
+            payers = listOf(SplitInput(me), SplitInput(erik)), description = "Snacks", total = Money(3_000, CurrencyCode("EUR")),
+            groupId = trip, participants = listOf(SplitInput(me), SplitInput(chen)), occurredOn = LocalDate.of(2026, 11, 4),
+        ), SaveMode.Create(apis.backup.observeLedgerGeneration().first())) as LedgerResult.Ok).value
+        val item = apis.ledger.observeActivity().first().first { it.entryId == id }
+        assertFalse(item.participants.any { it.displayName == "Erik" })
+        assertTrue(ActivityQuery(text = "Erik").matches(item))
     }
 
     @Test fun `unknown detail produces missing and failed read can retry`() = runTest(dispatcher) {

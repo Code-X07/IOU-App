@@ -31,6 +31,7 @@ import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.TransferKind
 import io.github.codex07.iou.money.Money
 import io.github.codex07.iou.ui.format.MoneyFormatter
+import io.github.codex07.iou.ui.format.PayerFormat
 import io.github.codex07.iou.ui.theme.MoneyFeatures
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -207,7 +208,7 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
         TransferKind.REPAYMENT -> R.string.repayment_title
         null -> R.string.transfer_title
     })
-    val payer = if (item.paidBy.isMe) stringResource(R.string.you) else item.paidBy.displayName
+    val payer = PayerFormat.names(item, stringResource(R.string.you))
     FinancialPreviewRow(onClick, leading = {
         Box(Modifier.size(40.dp).background(colors.primaryContainer, MaterialTheme.shapes.small), contentAlignment = Alignment.Center) {
             Icon(when {

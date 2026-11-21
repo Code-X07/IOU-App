@@ -6,8 +6,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.codex07.iou.R
 import io.github.codex07.iou.api.*
 import io.github.codex07.iou.ui.forms.restoreAction
 import io.github.codex07.iou.ledger.model.*
@@ -99,8 +102,22 @@ fun EntryDetailScreen(state: BrowseState<EntryDetail>, hidden: Boolean, retry: (
                 InfoLine("Date", item.occurredOn.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG)))
                 InfoLine("Type", item.typeLabel())
                 item.category?.let { InfoLine("Category", it.name.lowercase().replace('_', ' ')) }
-                InfoLine(if (item.kind == EntryKind.EXPENSE) "Payer" else "Sender", item.paidBy.displayName)
-                if (!item.paidBy.isMe) TextButton(onClick = { openPerson(item.paidBy.id.value) }) { Text("View payer") }
+                if (item.kind == EntryKind.EXPENSE) {
+                    Text("Paid by", style = MaterialTheme.typography.titleSmall)
+                    item.payers.forEach { payer ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(if (payer.person.isMe) stringResource(R.string.you) else payer.person.displayName,
+                                    style = MaterialTheme.typography.bodyLarge)
+                                MoneyText(payer.paid, hidden)
+                            }
+                            if (!payer.person.isMe) TextButton(onClick = { openPerson(payer.person.id.value) }) { Text("View person") }
+                        }
+                    }
+                } else {
+                    InfoLine("Sender", item.paidBy.displayName)
+                    if (!item.paidBy.isMe) TextButton(onClick = { openPerson(item.paidBy.id.value) }) { Text("View payer") }
+                }
                 item.receiver?.let { person ->
                     InfoLine("Recipient", person.displayName)
                     if (!person.isMe) TextButton(onClick = { openPerson(person.id.value) }) { Text("View recipient") }
