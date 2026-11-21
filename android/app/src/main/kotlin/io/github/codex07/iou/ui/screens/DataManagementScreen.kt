@@ -159,8 +159,13 @@ private fun ExportEditor(fields: ExportFields, catalog: DataCatalog?, enabled: B
     ChoiceField("Export shape", fields.shape.name, ExportShape.entries.map { it.name to if (it == ExportShape.NORMALIZED) "Normalized full ledger" else "Human-readable report" }, { value -> vm.exportChange {
         it.copy(shape = ExportShape.valueOf(value), scope = "full", from = "", to = "")
     } }, enabled)
-    ChoiceField("Format", fields.format.name, listOf("CSV" to "CSV (ZIP for normalized)"), { value -> vm.exportChange { it.copy(format = ExportFormat.valueOf(value), excelFriendly = false) } }, enabled)
-    Text("XLSX export arrives in a later version.", style = MaterialTheme.typography.bodySmall)
+    val csvLabel = if (fields.shape == ExportShape.NORMALIZED) "CSV ZIP" else "CSV"
+    ChoiceField("Format", fields.format.name, listOf("CSV" to csvLabel, "XLSX" to "XLSX workbook"),
+        { value -> vm.exportChange { it.copy(format = ExportFormat.valueOf(value), excelFriendly = false) } }, enabled)
+    if (fields.format == ExportFormat.XLSX) {
+        Text(if (fields.shape == ExportShape.NORMALIZED) "One worksheet per ledger table."
+            else "Summary, report, and applicable group worksheets.", style = MaterialTheme.typography.bodySmall)
+    }
     if (fields.shape == ExportShape.REPORT) {
         val scopes = listOf("full" to "Full ledger report") + catalog?.people.orEmpty().map { "person:${it.person.id.value}" to "Person · ${it.person.displayName}" } + catalog?.groups.orEmpty().map { "group:${it.group.id.value}" to "Group · ${it.group.name}" }
         ChoiceField("Report scope", fields.scope, scopes, { value -> vm.exportChange { it.copy(scope = value) } }, enabled)

@@ -129,9 +129,19 @@ class DataManagementTest {
         assertTrue(ExportFields().request() is LedgerResult.Ok)
         assertTrue(ExportFields(scope = "person:id").request().errorOrNull() is LedgerError.InvalidField)
         assertTrue(ExportFields(from = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
-        assertTrue(ExportFields(format = ExportFormat.XLSX, excelFriendly = true).request().errorOrNull() is LedgerError.InvalidField)
-        for (scope in listOf("full", "person:id", "group:id")) {
-            assertTrue(ExportFields(ExportShape.REPORT, ExportFormat.CSV, scope, "2026-01-01", "2026-12-31").request() is LedgerResult.Ok)
+        assertEquals("text/csv", ExportFields(shape = ExportShape.REPORT).mime())
+        for (format in ExportFormat.entries) {
+            for (scope in listOf("full", "person:id", "group:id")) {
+                assertTrue(ExportFields(ExportShape.REPORT, format, scope, "2026-01-01", "2026-12-31").request() is LedgerResult.Ok)
+            }
+            assertEquals(LedgerError.InvalidField("scope"), ExportFields(format = format, scope = "group:id").request().errorOrNull())
+            assertEquals(LedgerError.InvalidField("scope"), ExportFields(format = format, from = "2026-01-01").request().errorOrNull())
+        }
+        for (shape in ExportShape.entries) {
+            val xlsx = ExportFields(shape, ExportFormat.XLSX, excelFriendly = true)
+            assertEquals("xlsx", xlsx.extension())
+            assertEquals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx.mime())
+            assertEquals(false, xlsx.request().getOrNull()?.excelFriendly)
         }
         assertTrue(ExportFields(ExportShape.REPORT, from = "2026-12-31", to = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
         assertEquals("zip", ExportFields().extension()); assertEquals("application/zip", ExportFields().mime())
@@ -264,16 +274,31 @@ class DataManagementTest {
         vm.end()
     }
 
-    @Test fun `xlsx export is rejected before any picker opens`() = runTest(dispatcher) {
-        assertEquals(LedgerError.InvalidField("format"), ExportFields(shape = ExportShape.REPORT, format = ExportFormat.XLSX).request().errorOrNull())
-        val a = FakeApis.seeded(); val vm = vm(a); vm.open("export"); runCurrent()
+    @Test fun `fake requests XLSX while the picker and result identify the simulation`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        var selectedFormat: ExportFormat? = null
+        val api = object : ImportExportApi by a.importExport {
+            override suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo> {
+                selectedFormat = request.format
+                return a.importExport.export(request, target)
+            }
+        }
+        val vm = vm(a, io = api); vm.open("export"); runCurrent()
         vm.exportChange { it.copy(shape = ExportShape.REPORT, format = ExportFormat.XLSX) }
         vm.pickExport()
-        assertNull(vm.state.value.picker); assertEquals(LedgerError.InvalidField("format"), vm.state.value.error)
+        val picker = checkNotNull(vm.state.value.picker)
+        assertEquals("IOU-SIMULATION-EMPTY-export.txt", picker.name)
+        assertEquals("text/plain", picker.mime)
+        vm.documentResult("document")
+        runCurrent()
+        assertNull(vm.state.value.error)
+        assertEquals(ExportFormat.XLSX, selectedFormat)
+        assertTrue(vm.state.value.message!!.contains("Export simulation"))
+        assertTrue(vm.state.value.message!!.contains("No financial data was written"))
         vm.end()
     }
 
-    @Test fun `real data services write a usable backup and a zip export to the chosen documents`() = runTest(dispatcher) {
+    @Test fun `real data services write usable backups CSV ZIP and both XLSX shapes`() = runTest(dispatcher) {
         val harness = io.github.codex07.iou.testutil.RealHarness(java.time.Clock.fixed(io.github.codex07.iou.testutil.T0, java.time.ZoneOffset.UTC), io.github.codex07.iou.testutil.SequentialIds("vm"))
         try {
             val backend = harness.start(); SeedData.populate(backend.store); val a = backend.apis
@@ -293,6 +318,21 @@ class DataManagementTest {
             vm.documentResult("export.zip")
             awaitState(vm) { !it.busy && it.message?.startsWith("Exported") == true }
             java.util.zip.ZipFile(harness.documents.file(DocumentRef("export.zip"))).use { assertNotNull(it.getEntry("manifest.json")) }
+
+            for (shape in ExportShape.entries) {
+                vm.exportChange { it.copy(shape = shape, format = ExportFormat.XLSX) }
+                vm.pickExport()
+                assertEquals("iou-export.xlsx", vm.state.value.picker!!.name)
+                assertEquals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", vm.state.value.picker!!.mime)
+                val target = "${shape.name}.xlsx"
+                vm.documentResult(target)
+                awaitState(vm) { !it.busy && it.message?.startsWith("Exported") == true }
+                org.dhatim.fastexcel.reader.ReadableWorkbook(harness.documents.file(DocumentRef(target)).inputStream()).use { book ->
+                    val sheets = book.sheets.map { it.name }.toList()
+                    if (shape == ExportShape.REPORT) assertTrue(sheets.containsAll(listOf("Summary", "Report", "Lisbon trip")))
+                    else assertTrue(sheets.containsAll(listOf("people", "expense_payers", "recurring_expenses")))
+                }
+            }
             vm.end()
         } finally { harness.stop() }
     }
