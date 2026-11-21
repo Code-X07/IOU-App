@@ -4,7 +4,7 @@ M2 adds expenses paid by several people, recurring expenses, group and schedule 
 
 ## UI to-do before v0.2.0
 
-- [ ] **Payers on the expense form:** move the form to `ExpenseDraft.payers` / `payerSplit` (EQUAL or EXACT amounts) and show every payer wherever "paid by" appears (activity, entry detail, group expenses) from `ActivityItem.payers`. See "Multiple payers" below.
+- [x] **Payers on the expense form:** move the form to `ExpenseDraft.payers` / `payerSplit` (EQUAL or EXACT amounts) and show every payer wherever "paid by" appears (activity, entry detail, group expenses) from `ActivityItem.payers`. See "Multiple payers" below.
 - [ ] **Schedule screens:** schedule list, schedule detail and edit form (with the next date shown before saving), a separate "on hold" list, and the due list with post / skip and the "confirm these to resume auto-posting" line. Inject `RecurringApi` (also `Apis.recurring`). See "Recurring expenses" below.
 - [ ] **Notification permission:** ask for `POST_NOTIFICATIONS` the first time a schedule is saved (Android 13+). The real build already declares it in its manifest.
 - [ ] **Notification taps:** in `MainActivity`, read the intent extra `iou.open`; for `"due"` open the due list, and when `iou.schedule` is present, that schedule. Today the extras are ignored and the app just opens.
