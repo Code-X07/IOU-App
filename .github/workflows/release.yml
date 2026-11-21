@@ -58,7 +58,7 @@ jobs:
           RELEASE_VERSION_CODE: ${{ github.run_number }}
         run: |
           export RELEASE_VERSION_NAME="${GITHUB_REF_NAME#v}"
-          ./gradlew --no-daemon assembleRealRelease
+          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process assembleRealRelease
 
       - name: Verify the signature
         run: |

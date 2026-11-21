@@ -32,7 +32,7 @@ jobs:
 
       - name: Lint (both flavors), unit tests (incl. domain purity check), debug builds
         run: >
-          ./gradlew --no-daemon
+          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process
           lintFakeDebug
           lintRealDebug
           testFakeDebugUnitTest
