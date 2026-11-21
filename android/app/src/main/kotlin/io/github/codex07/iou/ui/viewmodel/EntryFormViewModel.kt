@@ -68,7 +68,7 @@ class EntryFormViewModel @Inject constructor(
         if (me == null) { fail(LedgerError.InvalidField("participants")); return }
         val contacts = people.observePeople(includeArchived = true).first().map { it.person }
         val allGroups = groups.observeGroups(includeArchived = true).first().mapNotNull { groups.observeGroup(it.group.id).first() }
-        var fields = EntryFields(expense = purpose == "expense", payer = me!!.id.value,
+        var fields = EntryFields(expense = purpose == "expense", payer = me!!.id.value, payers = listOf(me!!.id.value),
             participants = listOf(me!!.id.value), currency = ledger.observeOverview().first().homeCurrency.code,
             kind = if (purpose == "repayment") TransferKind.REPAYMENT else TransferKind.LOAN)
         var snapshot: FxSnapshotView? = null
@@ -111,7 +111,7 @@ class EntryFormViewModel @Inject constructor(
         fields.copy(group = value, fxMode = if (id == null) FxInputMode.AUTO else fields.fxMode, acceptStale = false)
     }
     fun useCreatedGroup(value: String) { chooseGroup(value) }
-    fun groupMembersForDraft(): Set<PersonId> = (state.value.fields.participants + state.value.fields.payer + state.value.fields.receiver)
+    fun groupMembersForDraft(): Set<PersonId> = (state.value.fields.participants + state.value.fields.payers + state.value.fields.payer + state.value.fields.receiver)
         .filter { it.isNotBlank() && it != me?.id?.value }.map(::PersonId).toSet()
     fun reviewLatest() { reopen { load("expense", id?.value) } }
     override fun cancelPending() {

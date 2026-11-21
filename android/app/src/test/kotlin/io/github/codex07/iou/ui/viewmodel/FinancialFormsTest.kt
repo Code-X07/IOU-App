@@ -29,7 +29,7 @@ class FinancialFormsTest {
         (a.groups.createGroup(GroupDraft("Forms test", eur, mode), a.people.observePeople().first().take(2).map { it.person.id }, basis(a)) as LedgerResult.Ok).value
     private suspend fun expenseFields(a: Apis, group: GroupId? = null): EntryFields {
         val self = me(a).value; val friend = other(a).value
-        return EntryFields(amount = "12,50", currency = "EUR", description = "Native form test", payer = self,
+        return EntryFields(amount = "12,50", currency = "EUR", description = "Native form test", payers = listOf(self),
             participants = listOf(self, friend), group = group?.value, date = LocalDate.of(2026, 11, 4).toString())
     }
 
