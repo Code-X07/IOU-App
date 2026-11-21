@@ -17,6 +17,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.codex07.iou.api.SetupState
 import io.github.codex07.iou.ui.components.*
 import io.github.codex07.iou.ui.forms.userMessage
+import io.github.codex07.iou.ui.navigation.RecurringNotificationRoute
 import io.github.codex07.iou.ui.settings.ThemePreference
 import io.github.codex07.iou.ui.theme.IOUTheme
 import io.github.codex07.iou.ui.viewmodel.*
@@ -24,7 +25,9 @@ import io.github.codex07.iou.ui.viewmodel.*
 @Composable
 fun IouRoot(security: SecurityViewModel, requestAuthentication: (AuthPurpose) -> Unit,
             launchAuthentication: (AuthenticationRequest) -> Unit, cancelAuthentication: () -> Unit,
-            settings: AppSettingsViewModel = hiltViewModel()) {
+            settings: AppSettingsViewModel = hiltViewModel(),
+            dueRequest: RecurringNotificationRoute? = null, onDueOpened: (RecurringNotificationRoute) -> Unit = {},
+            onScheduleSaved: () -> Unit = {}) {
     val protection by security.state.collectAsStateWithLifecycle()
     val page by settings.page.collectAsStateWithLifecycle()
     val theme by settings.theme.collectAsStateWithLifecycle()
@@ -56,7 +59,11 @@ fun IouRoot(security: SecurityViewModel, requestAuthentication: (AuthPurpose) ->
                     if (action.message == null) CircularProgressIndicator() else { Text(action.message.orEmpty()); Button(onClick = settings::retry) { Text("Retry settings") } }
                 }
                 page?.setup is SetupState.NeedsSetup -> SetupScreen(settings)
-                else -> holder.SaveableStateProvider("financial-app") { IOUApp(settingsModel = settings, security = security, requestAuthentication = requestAuthentication, ledgerGeneration = generation) }
+                else -> holder.SaveableStateProvider("financial-app") {
+                    IOUApp(settingsModel = settings, security = security, requestAuthentication = requestAuthentication,
+                        ledgerGeneration = generation, dueRequest = dueRequest, onDueOpened = onDueOpened,
+                        onScheduleSaved = onScheduleSaved)
+                }
             }
         }
     }

@@ -129,9 +129,19 @@ class DataManagementTest {
         assertTrue(ExportFields().request() is LedgerResult.Ok)
         assertTrue(ExportFields(scope = "person:id").request().errorOrNull() is LedgerError.InvalidField)
         assertTrue(ExportFields(from = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
-        assertTrue(ExportFields(format = ExportFormat.XLSX, excelFriendly = true).request().errorOrNull() is LedgerError.InvalidField)
-        for (scope in listOf("full", "person:id", "group:id")) {
-            assertTrue(ExportFields(ExportShape.REPORT, ExportFormat.CSV, scope, "2026-01-01", "2026-12-31").request() is LedgerResult.Ok)
+        assertEquals("text/csv", ExportFields(shape = ExportShape.REPORT).mime())
+        for (format in ExportFormat.entries) {
+            for (scope in listOf("full", "person:id", "group:id")) {
+                assertTrue(ExportFields(ExportShape.REPORT, format, scope, "2026-01-01", "2026-12-31").request() is LedgerResult.Ok)
+            }
+            assertEquals(LedgerError.InvalidField("scope"), ExportFields(format = format, scope = "group:id").request().errorOrNull())
+            assertEquals(LedgerError.InvalidField("scope"), ExportFields(format = format, from = "2026-01-01").request().errorOrNull())
+        }
+        for (shape in ExportShape.entries) {
+            val xlsx = ExportFields(shape, ExportFormat.XLSX, excelFriendly = true)
+            assertEquals("xlsx", xlsx.extension())
+            assertEquals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx.mime())
+            assertEquals(false, xlsx.request().getOrNull()?.excelFriendly)
         }
         assertTrue(ExportFields(ExportShape.REPORT, from = "2026-12-31", to = "2026-01-01").request().errorOrNull() is LedgerError.InvalidField)
         assertEquals("zip", ExportFields().extension()); assertEquals("application/zip", ExportFields().mime())
@@ -182,6 +192,68 @@ class DataManagementTest {
         assertEquals(setOf(selectable), vm.state.value.choices.takeIncoming)
         assertTrue(vm.state.value.preview!!.rows.first { it.key == deleted }.choice is ImportRowChoice.DeletedWith)
         assertTrue(vm.state.value.preview!!.rows.first { it.key == restored }.choice is ImportRowChoice.RestoredWith); vm.end()
+    }
+
+    @Test fun `forced schedule dates stay visible while only mixed schedule conflicts can be selected`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        val forcedKey = ImportRowKey(EntityType.RECURRING_EXPENSE, "advanced-schedule")
+        val mixedKey = ImportRowKey(EntityType.RECURRING_EXPENSE, "mixed-schedule")
+        val handled = FieldChange("handledThrough", "2026-10-01", "2026-11-01")
+        val description = FieldChange("description", "Rent", "New rent")
+        val owner = ImportRowChoice.KeepOrTake
+        val rows = listOf(
+            ImportRow(forcedKey, "Schedule Streaming", listOf(handled), owner, false, listOf(handled)),
+            ImportRow(mixedKey, "Schedule Rent", listOf(description, handled), owner, false, listOf(handled)),
+        )
+        val applied = mutableListOf<ImportChoices>()
+        val api = object : ImportExportApi by a.importExport {
+            override suspend fun parseImport(source: DocumentRef) =
+                a.importExport.parseImport(source).map { it.copy(rows = rows) }
+
+            override suspend fun refreshPreview(preview: ImportPreview) = LedgerResult.Ok(preview.copy(rows = rows))
+
+            override fun applyChoices(preview: ImportPreview, choices: ImportChoices): ImportPreview {
+                applied += choices
+                return preview
+            }
+        }
+        val vm = vm(a, io = api)
+        vm.open("import")
+        runCurrent()
+        vm.simulateImport("normal")
+        runCurrent()
+        vm.choices { it.copy(takeIncoming = setOf(forcedKey, mixedKey)) }
+        assertEquals(setOf(mixedKey), vm.state.value.choices.takeIncoming)
+        assertTrue(applied.all { forcedKey !in it.takeIncoming })
+        vm.refresh()
+        runCurrent()
+        assertEquals(setOf(mixedKey), vm.state.value.choices.takeIncoming)
+        val (forced, mixed) = vm.state.value.preview!!.rows
+        assertEquals(listOf(handled), forced.forcedChanges)
+        assertEquals(listOf(handled), mixed.forcedChanges)
+        assertEquals(listOf(description, handled), mixed.changes)
+        vm.end()
+    }
+
+    @Test fun `preview carries person and labelled group balances together through review`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        val eur = io.github.codex07.iou.money.CurrencyCode("EUR")
+        val before = listOf(io.github.codex07.iou.money.Money(-100, eur))
+        val after = listOf(io.github.codex07.iou.money.Money(200, eur))
+        val balances = listOf(BalanceChange("Alex", emptyList(), after), BalanceChange("Flat (group)", before, after))
+        val api = object : ImportExportApi by a.importExport {
+            override suspend fun parseImport(source: DocumentRef) =
+                a.importExport.parseImport(source).map { it.copy(balanceChanges = balances) }
+        }
+        val vm = vm(a, io = api)
+        vm.open("import")
+        runCurrent()
+        vm.simulateImport("normal")
+        runCurrent()
+        assertEquals(balances, vm.state.value.preview!!.balanceChanges)
+        vm.choices { it.copy(takeIncoming = setOf(vm.state.value.preview!!.rows.first().key)) }
+        assertEquals(balances, vm.state.value.preview!!.balanceChanges)
+        vm.end()
     }
 
     @Test fun `invalid rows require deliberate skipping before import confirmation`() = runTest(dispatcher) {
@@ -264,16 +336,31 @@ class DataManagementTest {
         vm.end()
     }
 
-    @Test fun `xlsx export is rejected before any picker opens`() = runTest(dispatcher) {
-        assertEquals(LedgerError.InvalidField("format"), ExportFields(shape = ExportShape.REPORT, format = ExportFormat.XLSX).request().errorOrNull())
-        val a = FakeApis.seeded(); val vm = vm(a); vm.open("export"); runCurrent()
+    @Test fun `fake requests XLSX while the picker and result identify the simulation`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        var selectedFormat: ExportFormat? = null
+        val api = object : ImportExportApi by a.importExport {
+            override suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo> {
+                selectedFormat = request.format
+                return a.importExport.export(request, target)
+            }
+        }
+        val vm = vm(a, io = api); vm.open("export"); runCurrent()
         vm.exportChange { it.copy(shape = ExportShape.REPORT, format = ExportFormat.XLSX) }
         vm.pickExport()
-        assertNull(vm.state.value.picker); assertEquals(LedgerError.InvalidField("format"), vm.state.value.error)
+        val picker = checkNotNull(vm.state.value.picker)
+        assertEquals("IOU-SIMULATION-EMPTY-export.txt", picker.name)
+        assertEquals("text/plain", picker.mime)
+        vm.documentResult("document")
+        runCurrent()
+        assertNull(vm.state.value.error)
+        assertEquals(ExportFormat.XLSX, selectedFormat)
+        assertTrue(vm.state.value.message!!.contains("Export simulation"))
+        assertTrue(vm.state.value.message!!.contains("No financial data was written"))
         vm.end()
     }
 
-    @Test fun `real data services write a usable backup and a zip export to the chosen documents`() = runTest(dispatcher) {
+    @Test fun `real data services write usable backups CSV ZIP and both XLSX shapes`() = runTest(dispatcher) {
         val harness = io.github.codex07.iou.testutil.RealHarness(java.time.Clock.fixed(io.github.codex07.iou.testutil.T0, java.time.ZoneOffset.UTC), io.github.codex07.iou.testutil.SequentialIds("vm"))
         try {
             val backend = harness.start(); SeedData.populate(backend.store); val a = backend.apis
@@ -293,6 +380,21 @@ class DataManagementTest {
             vm.documentResult("export.zip")
             awaitState(vm) { !it.busy && it.message?.startsWith("Exported") == true }
             java.util.zip.ZipFile(harness.documents.file(DocumentRef("export.zip"))).use { assertNotNull(it.getEntry("manifest.json")) }
+
+            for (shape in ExportShape.entries) {
+                vm.exportChange { it.copy(shape = shape, format = ExportFormat.XLSX) }
+                vm.pickExport()
+                assertEquals("iou-export.xlsx", vm.state.value.picker!!.name)
+                assertEquals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", vm.state.value.picker!!.mime)
+                val target = "${shape.name}.xlsx"
+                vm.documentResult(target)
+                awaitState(vm) { !it.busy && it.message?.startsWith("Exported") == true }
+                org.dhatim.fastexcel.reader.ReadableWorkbook(harness.documents.file(DocumentRef(target)).inputStream()).use { book ->
+                    val sheets = book.sheets.map { it.name }.toList()
+                    if (shape == ExportShape.REPORT) assertTrue(sheets.containsAll(listOf("Summary", "Report", "Lisbon trip")))
+                    else assertTrue(sheets.containsAll(listOf("people", "expense_payers", "recurring_expenses")))
+                }
+            }
             vm.end()
         } finally { harness.stop() }
     }

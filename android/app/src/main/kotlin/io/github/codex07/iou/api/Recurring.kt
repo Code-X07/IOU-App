@@ -1,5 +1,6 @@
 package io.github.codex07.iou.api
 
+import io.github.codex07.iou.ledger.engine.Recurrence
 import io.github.codex07.iou.ledger.model.Category
 import io.github.codex07.iou.ledger.model.GroupId
 import io.github.codex07.iou.ledger.model.LedgerGeneration
@@ -32,6 +33,19 @@ data class RecurringDraft(
     val endOn: LocalDate? = null,
     val autoPost: Boolean = false,
 )
+
+/** Preview a proposed pattern using the same occurrence dates as saved schedules. */
+fun previewNextOccurrence(
+    startOn: LocalDate, unit: RecurrenceUnit, interval: Int, endOn: LocalDate?, handledThrough: LocalDate?,
+): LedgerResult<LocalDate?> = ledgerResult {
+    ensure(interval in 1..99) { LedgerError.InvalidField("interval") }
+    ensure(endOn == null || endOn >= startOn) { LedgerError.InvalidField("endOn") }
+    try {
+        Recurrence.firstAfter(startOn, unit, interval, endOn, handledThrough)
+    } catch (_: java.time.DateTimeException) {
+        fail(LedgerError.InvalidField("date"))
+    }
+}
 
 /** How a [RecurringDraft] is saved: as a new schedule prepared against [Create.basis], or as an edit. */
 sealed interface ScheduleSaveMode {

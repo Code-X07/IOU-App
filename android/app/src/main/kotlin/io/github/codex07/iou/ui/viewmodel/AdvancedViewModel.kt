@@ -31,7 +31,7 @@ data class AdvancedState(
 
 @HiltViewModel
 class AdvancedViewModel @Inject constructor(
-    private val people: PeopleApi, private val groups: GroupsApi, private val ledger: LedgerApi, private val backup: BackupApi,
+    private val people: PeopleApi, private val groups: GroupsApi, private val ledger: LedgerApi, private val backup: BackupApi, private val recurring: RecurringApi,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(AdvancedState())
     val state = mutableState.asStateFlow()
@@ -121,6 +121,11 @@ class AdvancedViewModel @Inject constructor(
                     LifeOperation.RESTORE -> groups.restoreGroup(GroupId(action.entity.id), action.token)
                 }
                 EntityType.PAYMENT_HANDLE -> if (action.operation == LifeOperation.DELETE) people.deleteHandle(HandleId(action.entity.id), action.token) else LedgerResult.Err(LedgerError.InvalidField("entity"))
+                EntityType.RECURRING_EXPENSE -> when (action.operation) {
+                    LifeOperation.DELETE -> recurring.deleteSchedule(RecurringId(action.entity.id), action.token)
+                    LifeOperation.RESTORE -> recurring.restoreSchedule(RecurringId(action.entity.id), action.token)
+                    else -> LedgerResult.Err(LedgerError.InvalidField("entity"))
+                }
                 EntityType.EXPENSE, EntityType.TRANSFER -> when (action.operation) {
                     LifeOperation.DELETE -> ledger.deleteEntry(EntryId(action.entity.id), action.token)
                     LifeOperation.RESTORE -> ledger.restoreEntry(EntryId(action.entity.id), action.token)

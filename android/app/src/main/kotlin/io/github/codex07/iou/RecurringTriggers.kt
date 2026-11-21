@@ -18,7 +18,9 @@ class RecurringTriggers @Inject constructor(private val runner: RecurringRunner)
     fun install(scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)) {
         runner.start(scope)
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = runner.request()
+            override fun onStart(owner: LifecycleOwner) = requestPass()
         })
     }
+
+    fun requestPass() = runner.request()
 }

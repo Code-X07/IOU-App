@@ -21,26 +21,33 @@ object Recurrence {
      * Occurrence [n] (n ≥ 0): `startOn` plus n × `interval` units, always counted from `startOn`, so a month end
      * clamps without drifting (31 Jan, 28 Feb, 31 Mar). Ignores `endOn`.
      */
-    fun occurrence(schedule: RecurringExpense, n: Long): LocalDate {
-        require(schedule.interval >= 1) { "Schedule ${schedule.id} has interval ${schedule.interval}" }
-        val units = Math.multiplyExact(n, schedule.interval.toLong())
-        return when (schedule.unit) {
-            RecurrenceUnit.WEEK -> schedule.startOn.plusWeeks(units)
-            RecurrenceUnit.MONTH -> schedule.startOn.plusMonths(units)
-            RecurrenceUnit.YEAR -> schedule.startOn.plusYears(units)
+    fun occurrence(schedule: RecurringExpense, n: Long): LocalDate =
+        occurrence(schedule.startOn, schedule.unit, schedule.interval, n)
+
+    private fun occurrence(startOn: LocalDate, unit: RecurrenceUnit, interval: Int, n: Long): LocalDate {
+        require(interval >= 1)
+        val units = Math.multiplyExact(n, interval.toLong())
+        return when (unit) {
+            RecurrenceUnit.WEEK -> startOn.plusWeeks(units)
+            RecurrenceUnit.MONTH -> startOn.plusMonths(units)
+            RecurrenceUnit.YEAR -> startOn.plusYears(units)
         }
     }
 
     /** The first occurrence after [after] (the first one when [after] is null); null when it lies after `endOn`. */
-    fun firstAfter(schedule: RecurringExpense, after: LocalDate?): LocalDate? {
-        var n = if (after == null) 0L else lowerBound(schedule, after)
-        var date = occurrence(schedule, n)
+    fun firstAfter(schedule: RecurringExpense, after: LocalDate?): LocalDate? =
+        firstAfter(schedule.startOn, schedule.unit, schedule.interval, schedule.endOn, after)
+
+    internal fun firstAfter(startOn: LocalDate, unit: RecurrenceUnit, interval: Int, endOn: LocalDate?, after: LocalDate?): LocalDate? {
+        require(interval >= 1)
+        if (endOn != null && after != null && after >= endOn) return null
+        var n = if (after == null) 0L else lowerBound(startOn, unit, interval, after)
+        var date = occurrence(startOn, unit, interval, n)
         while (after != null && !date.isAfter(after)) {
             n += 1
-            date = occurrence(schedule, n)
+            date = occurrence(startOn, unit, interval, n)
         }
-        val end = schedule.endOn
-        return if (end != null && date.isAfter(end)) null else date
+        return if (endOn != null && date.isAfter(endOn)) null else date
     }
 
     fun isOccurrence(schedule: RecurringExpense, date: LocalDate): Boolean = firstAfter(schedule, date.minusDays(1)) == date
@@ -81,13 +88,13 @@ object Recurrence {
         !schedule.isDeleted && schedule.autoPost && holds(schedule, state, resolver).isEmpty()
 
     /** An n whose occurrence is on or before [date], so a long history is not walked one step at a time. */
-    private fun lowerBound(schedule: RecurringExpense, date: LocalDate): Long {
-        if (!date.isAfter(schedule.startOn)) return 0L
-        val unit = when (schedule.unit) {
+    private fun lowerBound(startOn: LocalDate, unit: RecurrenceUnit, interval: Int, date: LocalDate): Long {
+        if (!date.isAfter(startOn)) return 0L
+        val chronology = when (unit) {
             RecurrenceUnit.WEEK -> ChronoUnit.WEEKS
             RecurrenceUnit.MONTH -> ChronoUnit.MONTHS
             RecurrenceUnit.YEAR -> ChronoUnit.YEARS
         }
-        return maxOf(0L, unit.between(schedule.startOn, date) / schedule.interval - 1)
+        return maxOf(0L, chronology.between(startOn, date) / interval - 1)
     }
 }

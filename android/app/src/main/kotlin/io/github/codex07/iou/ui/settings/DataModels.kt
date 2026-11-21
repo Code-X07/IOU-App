@@ -10,7 +10,6 @@ data class ExportFields(
 ) {
     fun request(): LedgerResult<ExportRequest> = ledgerResult {
         if (shape == ExportShape.NORMALIZED) ensure(scope == "full" && from.isBlank() && to.isBlank()) { LedgerError.InvalidField("scope") }
-        ensure(format == ExportFormat.CSV) { LedgerError.InvalidField("format") }
         fun date(text: String): LocalDate? = if (text.isBlank()) null else try { LocalDate.parse(text) } catch (_: java.time.DateTimeException) { fail(LedgerError.InvalidField("date")) }
         val first = date(from); val last = date(to)
         ensure(first == null || last == null || first <= last) { LedgerError.InvalidField("dateRange") }
@@ -20,11 +19,29 @@ data class ExportFields(
             scope.startsWith("group:") -> ExportScope.Group(GroupId(scope.substringAfter(':')))
             else -> fail(LedgerError.InvalidField("scope"))
         }
-        ExportRequest(shape, format, excelFriendly, selection, first, last)
+        ExportRequest(shape, format, format == ExportFormat.CSV && excelFriendly, selection, first, last)
     }
-    fun mime() = if (shape == ExportShape.NORMALIZED) "application/zip" else "text/csv"
-    fun extension() = if (shape == ExportShape.NORMALIZED) "zip" else "csv"
+    fun mime() = when (extension()) {
+        "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "zip" -> "application/zip"
+        else -> "text/csv"
+    }
+
+    fun extension() = when {
+        format == ExportFormat.XLSX -> "xlsx"
+        shape == ExportShape.NORMALIZED -> "zip"
+        else -> "csv"
+    }
 }
+
+internal val ImportRow.optionalChanges: List<FieldChange>
+    get() = if (forcedChanges.isEmpty()) changes else changes - forcedChanges.toSet()
+
+internal val ImportRow.onlyForcedChanges: Boolean
+    get() = forcedChanges.isNotEmpty() && optionalChanges.isEmpty()
+
+internal val ImportRow.canChooseIncoming: Boolean
+    get() = choice == ImportRowChoice.KeepOrTake && !onlyForcedChanges
 
 enum class DocumentOperation { BACKUP, RESTORE, IMPORT, EXPORT }
 data class DocumentPickerRequest(val id: Long, val operation: DocumentOperation, val create: Boolean, val mime: String, val name: String, val launched: Boolean = false)

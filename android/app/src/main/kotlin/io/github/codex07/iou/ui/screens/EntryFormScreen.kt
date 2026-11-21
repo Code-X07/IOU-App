@@ -16,25 +16,51 @@ import java.time.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormStatus, hidden: Boolean,
-                    close: () -> Unit, saved: (String) -> Unit, createGroup: (Set<PersonId>) -> Unit) {
+                    close: () -> Unit, saved: (String) -> Unit, createGroup: (Set<PersonId>) -> Unit,
+                    scheduleForm: Boolean = false, posting: Boolean = false, onScheduleSaved: () -> Unit = {}) {
+    LaunchedEffect(scheduleForm, status.completedId) {
+        if (scheduleForm && status.completedId != null) onScheduleSaved()
+    }
     val fields = state.fields
-    val enabled = !status.busy && !status.invalidated && status.completedId == null && status.error !is LedgerError.StaleVersion && status.error !is LedgerError.NotFound
+    val enabled = !status.busy && !status.invalidated && status.completedId == null && status.error !is LedgerError.StaleVersion && status.error !is LedgerError.NotFound && status.error !is LedgerError.OccurrenceNotDue
     val parsedCurrency = Inputs.currency(fields.currency).getOrNull()
     val context = state.groups.firstOrNull { it.group.id.value == fields.group }
     val candidates = if (context == null && fields.group == null) state.people else context?.members?.filter { it.active }?.map { it.person }.orEmpty()
     val peopleOptions = candidates.map { it.id.value to if (it.isMe) "You" else it.displayName }
+    val errorPerson = when (val e = status.error) {
+        is LedgerError.NegativeInput -> e.personId
+        is LedgerError.MissingInput -> e.personId
+        is LedgerError.DuplicatePayer -> e.personId
+        is LedgerError.DuplicateParticipant -> e.personId
+        else -> null
+    }
+    val payerErrorPerson = errorPerson.takeUnless { status.error is LedgerError.DuplicateParticipant }
     var datePicker by rememberSaveable { mutableStateOf(false) }
     var reload by rememberSaveable { mutableStateOf(false) }
-    val title = if (state.editing) "Edit transaction" else if (fields.expense) "Add expense" else if (fields.kind == TransferKind.REPAYMENT) "Record repayment" else "Record loan / transfer"
+    val title = when {
+        scheduleForm -> "Recurring schedule"
+        posting -> "Post recurring expense"
+        state.editing -> "Edit transaction"
+        fields.expense -> "Add expense"
+        fields.kind == TransferKind.REPAYMENT -> "Record repayment"
+        else -> "Record loan / transfer"
+    }
     FormScaffold(title, status, vm::requestLeave, vm::keepEditing, vm::discard, vm::save, hidden,
-        close, done = { status.completedId?.let(saved) }, currency = parsedCurrency) {
+        close, done = { status.completedId?.let(saved) }, currency = parsedCurrency,
+        saveLabel = if (posting) "Post expense" else "Save",
+        canSubmit = (!scheduleForm || state.schedule != null) && (!posting || state.occurrence != null) && status.error !is LedgerError.OccurrenceNotDue) {
         if (status.completedId != null) {
-            BrowseHeading(if (!fields.expense && fields.kind == TransferKind.REPAYMENT) "Repayment recorded" else "Transaction saved")
-            Text("Recorded in your ledger. IOU did not move any money.")
+            BrowseHeading(when {
+                scheduleForm -> "Schedule saved"
+                posting -> "Recurring expense posted"
+                !fields.expense && fields.kind == TransferKind.REPAYMENT -> "Repayment recorded"
+                else -> "Transaction saved"
+            })
+            if (!scheduleForm) Text("Recorded in your ledger. IOU did not move any money.")
             state.remainingLabel?.let { BrowseHeading(it) }
             state.remaining?.let { BalancePanel(it, hidden, group = fields.group != null) }
             state.remainingMembers.forEach { member -> Text(member.person.displayName, style = MaterialTheme.typography.titleMedium); BalancePanel(member.nets, hidden, group = true) }
-        } else {
+        } else if ((!scheduleForm || state.schedule != null) && (!posting || state.occurrence != null)) {
             if (status.error is LedgerError.StaleVersion) TextButton(onClick = { reload = true }) { Text("Review latest version") }
             if (hidden) Notice("Balances hidden", "Reveal individual inputs deliberately to edit them. Other balances and previews remain hidden.")
             SensitiveFormField("Amount", fields.amount, { vm.change { f -> f.copy(amount = it) } }, hidden, enabled,
@@ -55,13 +81,45 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
                     { value -> vm.change { it.copy(kind = TransferKind.valueOf(value)) } }, enabled)
                 Notice("A record, not a payment", "IOU records loans and repayments. Transfers use one of these two ledger classifications.")
             }
-            OutlinedButton(onClick = { datePicker = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Date · ${fields.date}") }
+            if (scheduleForm) {
+                OutlinedButton(onClick = { datePicker = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Start date · ${fields.date}") }
+                state.schedule?.let { SchedulePattern(it, fields.date, vm::changeSchedule, enabled) }
+            } else {
+                if (posting) Text("Scheduled occurrence · ${state.occurrence}")
+                OutlinedButton(onClick = { datePicker = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Date · ${fields.date}") }
+            }
             ChoiceField("Context", fields.group ?: "personal", listOf("personal" to "Personal · outside groups") +
                 state.groups.filter { !it.archived || it.group.id.value == fields.group }.map { it.group.id.value to it.group.name },
                 { value -> vm.chooseGroup(value.takeUnless { it == "personal" }) }, enabled)
             if (context != null) Text("${context.fxMode} · ${context.defaultCurrency.code}. Choose current group members.", style = MaterialTheme.typography.bodySmall)
-            ChoiceField(if (fields.expense) "Payer" else "Sender", fields.payer, peopleOptions,
-                { value -> vm.change { it.copy(payer = value) } }, enabled)
+            if (fields.expense) {
+                BrowseHeading("Paid by")
+                fields.payers.forEachIndexed { index, id ->
+                    val taken = fields.payers.filterIndexed { i, _ -> i != index }
+                    ChoiceField("Payer", id, peopleOptions.filter { it.first !in taken }, { value -> vm.setPayer(index, value) }, enabled)
+                    if (index > 0) TextButton(onClick = { vm.removePayer(id) }, enabled = enabled) { Text("Remove payer") }
+                }
+                // Keep invalidated payers visible so membership changes cannot silently alter who paid.
+                fields.payers.filter { id -> candidates.none { it.id.value == id } }.forEach { id ->
+                    TextButton(onClick = { vm.removePayer(id) }, enabled = enabled) {
+                        Text("Remove unavailable payer · " + (state.people.firstOrNull { it.id.value == id }?.displayName ?: "Former member"))
+                    }
+                }
+                TextButton(onClick = { vm.addPayer() }, enabled = enabled && vm.payerCandidates().any { it !in fields.payers }) { Text("Add another payer") }
+                if (fields.payers.size > 1) {
+                    ChoiceField("Payer split", fields.payerSplit.name, listOf("EQUAL" to "Equal", "EXACT" to "Exact amount"),
+                        { value -> vm.setPayerSplit(PayerSplit.valueOf(value)) }, enabled)
+                    if (fields.payerSplit == PayerSplit.EXACT) fields.payers.forEach { id ->
+                        val name = state.people.firstOrNull { it.id.value == id }?.let { if (it.isMe) "You" else it.displayName } ?: "Former member"
+                        SensitiveFormField("$name · paid ${fields.currency}", fields.payerInputs[id].orEmpty(), { value -> vm.setPayerInput(id, value) }, hidden, enabled,
+                            error = status.error is LedgerError.PaidRemaining || payerErrorPerson?.value == id)
+                    }
+                    Text("Payer amounts are entered in the original currency and must add up to the expense total.", style = MaterialTheme.typography.bodySmall)
+                }
+                errorPerson?.let { person ->
+                    state.people.firstOrNull { it.id == person }?.let { Text("Check ${it.displayName}.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            } else ChoiceField("Sender", fields.payer, peopleOptions, { value -> vm.change { it.copy(payer = value) } }, enabled)
             if (!fields.expense) {
                 ChoiceField("Recipient", fields.receiver, peopleOptions, { value -> vm.change { it.copy(receiver = value) } }, enabled)
                 val sender = state.people.firstOrNull { it.id.value == fields.payer }
@@ -100,14 +158,15 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
                 }
                 Text(when (fields.split) { SplitType.EQUAL -> "The ledger distributes rounding fairly in exact minor units."; SplitType.PERCENT -> "Enter percentages with at most two decimals. Total must be 100%."; SplitType.SHARES -> "Use whole-number weights from 1 to 1,000,000."; SplitType.EXACT -> "Amounts are entered in the original currency and must match the expense total." }, style = MaterialTheme.typography.bodySmall)
             }
-            if (status.error is LedgerError.NeedsGroup || (fields.group == null && (fields.participants + fields.payer + fields.receiver).filter { it.isNotBlank() }.distinct().size > 2)) {
+            val involved = if (fields.expense) fields.participants + fields.payers else listOf(fields.payer, fields.receiver)
+            if (status.error is LedgerError.NeedsGroup || (fields.group == null && involved.filter { it.isNotBlank() }.distinct().size > 2)) {
                 Notice("This selection needs a group", "Create a group without losing this draft, then continue here.")
                 FilledTonalButton(onClick = { createGroup(vm.groupMembersForDraft()) }, enabled = enabled) { Text("Create group & keep draft") }
             }
             if (hidden) SensitiveFormField("Notes", fields.note, { vm.change { f -> f.copy(note = it) } }, hidden, enabled, decimal = false)
             else FormTextField("Notes (optional)", fields.note, { vm.change { f -> f.copy(note = it) } }, enabled, multiline = true)
-            FxEditor(fields, state, enabled, hidden, vm)
-            if (fields.expense) {
+            if (!scheduleForm) FxEditor(fields, state, enabled, hidden, vm)
+            if (fields.expense && !scheduleForm) {
                 BrowseHeading("Live split preview")
                 if (state.previewBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 state.previewError?.takeIf { fields.amount.isNotBlank() }?.let { Text(it.userMessage(hidden, parsedCurrency), color = MaterialTheme.colorScheme.error) }
@@ -122,6 +181,19 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
                         Text("Previously stored shares", style = MaterialTheme.typography.titleSmall)
                         preview.storedShares.orEmpty().forEach { share ->
                             Text(share.person.displayName); MoneyText(share.share, hidden)
+                        }
+                    }
+                    Text("Paid by", style = MaterialTheme.typography.titleSmall)
+                    preview.payers.forEach { payer ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(payer.person.displayName, Modifier.weight(1f)); MoneyText(payer.paid, hidden, Modifier.weight(1f))
+                        }
+                    }
+                    if (state.editing) Text(if (preview.payersRecomputed) "Saving will recalculate payer amounts." else "Stored payer amounts will be preserved.")
+                    if (state.editing && preview.payersRecomputed) {
+                        Text("Previously stored payers", style = MaterialTheme.typography.titleSmall)
+                        preview.storedPayers.orEmpty().forEach { payer ->
+                            Text(payer.person.displayName); MoneyText(payer.paid, hidden)
                         }
                     }
                     Text("Expense effect total"); MoneyText(preview.effectTotal, hidden)
@@ -142,6 +214,19 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
         text = { Text("Load the latest transaction into the form. Your unfinished changes will be discarded; no newer record will be overwritten.") },
         confirmButton = { TextButton(onClick = { reload = false; vm.reviewLatest() }) { Text("Load latest") } },
         dismissButton = { TextButton(onClick = { reload = false }) { Text("Keep editing") } })
+}
+
+@Composable
+private fun SchedulePattern(fields: ScheduleFields, startOn: String, change: ((ScheduleFields) -> ScheduleFields) -> Unit, enabled: Boolean) {
+    ChoiceField("Repeat unit", fields.unit.name, listOf("WEEK" to "Weeks", "MONTH" to "Months", "YEAR" to "Years"),
+        { value -> change { it.copy(unit = RecurrenceUnit.valueOf(value)) } }, enabled)
+    FormTextField("Repeat every (1–99)", fields.interval, { value -> change { it.copy(interval = value) } }, enabled)
+    FormTextField("End date (optional, YYYY-MM-DD)", fields.endOn, { value -> change { it.copy(endOn = value) } }, enabled)
+    SettingsSwitch("Auto-post new occurrences", fields.autoPost, enabled) { value -> change { it.copy(autoPost = value) } }
+    when (val next = fields.next(startOn)) {
+        is LedgerResult.Ok -> InfoLine("Next occurrence", next.value?.toString() ?: "No further occurrences")
+        is LedgerResult.Err -> Text(next.error.userMessage(), color = MaterialTheme.colorScheme.error)
+    }
 }
 
 @Composable

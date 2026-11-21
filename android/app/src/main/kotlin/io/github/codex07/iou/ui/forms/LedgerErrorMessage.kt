@@ -24,7 +24,9 @@ fun LedgerError.userMessage(hidden: Boolean = false, currency: io.github.codex07
         "unencryptedWarning" -> "Acknowledge the unencrypted-file warning before continuing."
         "invalidRows" -> "Fix invalid source rows or deliberately choose Skip invalid rows."
         "scope" -> "Normalized exports require the full ledger without a date restriction."
-        "format" -> "Only CSV export is available. XLSX arrives in a later version."
+        "interval" -> "Enter a repeat interval from 1 to 99."
+        "endOn" -> "Enter an end date on or after the start date in YYYY-MM-DD format."
+        "format" -> "Choose CSV or XLSX for export."
         "dateRange" -> "The end date must be on or after the start date."
         "label" -> "Enter a label for this payment handle. The ledger requires one."
         "description" -> "Enter an expense description."
@@ -43,14 +45,17 @@ fun LedgerError.userMessage(hidden: Boolean = false, currency: io.github.codex07
         "Exact amounts must match the expense total. ${if (diffMinor > 0) "Still to allocate" else "Over allocated"}: $value."
     }
     LedgerError.ZeroWeights -> "Enter positive share weights."
-    is LedgerError.NegativeInput -> "Split inputs cannot be negative."
-    is LedgerError.MissingInput -> "Enter a split value for each participant."
+    is LedgerError.NegativeInput -> "Enter a positive value for each payer and participant."
+    is LedgerError.MissingInput -> "Enter a value for each payer and participant."
     is LedgerError.WeightOutOfRange -> "Share weights must be whole numbers from 1 to 1,000,000."
     is LedgerError.DuplicateParticipant -> "Choose each participant only once."
     LedgerError.NoPayers -> "Choose at least one payer."
-    is LedgerError.PaidRemaining -> "Payer amounts must add up to the expense total."
+    is LedgerError.PaidRemaining -> if (hidden || currency == null) "Payer amounts must add up to the expense total." else {
+        val value = io.github.codex07.iou.ui.format.MoneyFormatter.format(Money(diffMinor, currency), magnitude = true)
+        "Payer amounts must add up to the expense total. ${if (diffMinor > 0) "Still to allocate" else "Over allocated"}: $value."
+    }
     is LedgerError.DuplicatePayer -> "Choose each payer only once."
-    is LedgerError.OccurrenceNotDue -> nextDue?.let { "Post or skip the occurrence on $it first." } ?: "This schedule has no more occurrences."
+    is LedgerError.OccurrenceNotDue -> nextDue?.let { "Post or skip the occurrence on $it first." } ?: "No occurrence is currently available to handle."
     is LedgerError.NeedsGroup -> "Personal entries must involve you and one other person. Create a group for this selection."
     is LedgerError.NotGroupMember -> "A selected person is not a member of this group. Review the participants."
     is LedgerError.MemberRemoved -> "A selected person is no longer an active group member. Review the participants."

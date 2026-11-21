@@ -6,8 +6,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.codex07.iou.R
 import io.github.codex07.iou.api.*
 import io.github.codex07.iou.ui.forms.restoreAction
 import io.github.codex07.iou.ledger.model.*
@@ -18,7 +21,7 @@ import java.time.format.FormatStyle
 
 @Composable
 fun ActivityScreen(state: BrowseState<ActivityPage>, hidden: Boolean, retry: () -> Unit,
-                   filter: (ActivityQuery) -> Unit, openEntry: (String) -> Unit) {
+                   filter: (ActivityQuery) -> Unit, openEntry: (String) -> Unit, openSchedule: ((RecurringId) -> Unit)? = null) {
     var text by rememberSaveable { mutableStateOf("") }
     var type by rememberSaveable { mutableStateOf(ActivityType.ALL.name) }
     var person by rememberSaveable { mutableStateOf<String?>(null) }
@@ -50,7 +53,7 @@ fun ActivityScreen(state: BrowseState<ActivityPage>, hidden: Boolean, retry: () 
                     }) { Text("Clear filters") } }
                 }
             }
-            activityRows(page.entries, hidden, openEntry)
+            activityRows(page.entries, hidden, openEntry, openSchedule)
         }
         if (picker != null) AlertDialog(onDismissRequest = { picker = null },
             title = { Text(when (picker) { "person" -> "Filter by person"; "date" -> "Date period"; else -> "Filter by group" }) },
@@ -75,6 +78,7 @@ fun ActivityScreen(state: BrowseState<ActivityPage>, hidden: Boolean, retry: () 
 }
 
 fun ActivityItem.typeLabel(): String = when {
+    recurringId != null -> "Recurring expense"
     kind == EntryKind.EXPENSE -> "Shared expense"
     transferKind == TransferKind.LOAN -> "Personal loan"
     transferKind == TransferKind.REPAYMENT -> "Recorded repayment"
@@ -83,7 +87,8 @@ fun ActivityItem.typeLabel(): String = when {
 
 @Composable
 fun EntryDetailScreen(state: BrowseState<EntryDetail>, hidden: Boolean, retry: () -> Unit,
-                      openPerson: (String) -> Unit, openGroup: (String) -> Unit, onEdit: () -> Unit = {}, request: (AdvancedAction) -> Unit = {}) {
+                      openPerson: (String) -> Unit, openGroup: (String) -> Unit, onEdit: () -> Unit = {}, request: (AdvancedAction) -> Unit = {},
+                      openSchedule: (RecurringId) -> Unit = {}) {
     var history by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberLazyListState()
     BrowseContent(state, retry) { entry ->
@@ -91,6 +96,10 @@ fun EntryDetailScreen(state: BrowseState<EntryDetail>, hidden: Boolean, retry: (
         BrowseList(scroll) {
             item { DetailHeader(item.description ?: item.typeLabel(), item.typeLabel()) }
             item { LifecycleActions(EntityRef(if (item.kind == EntryKind.EXPENSE) EntityType.EXPENSE else EntityType.TRANSFER, item.entryId.value), entry.token, "transaction", item.deleted, null, request) }
+            item.recurringId?.let { schedule -> item {
+                item.recurringOn?.let { InfoLine("Scheduled occurrence", it.toString()) }
+                TextButton(onClick = { openSchedule(schedule) }) { Text("Open recurring schedule") }
+            } }
             if (!item.deleted) item { FilledTonalButton(onClick = onEdit) { Text("Edit transaction") } }
             if (item.deleted) item { Notice("Deleted transaction", "This record is kept for history. It no longer affects current balances.") }
             item { IouCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -99,8 +108,22 @@ fun EntryDetailScreen(state: BrowseState<EntryDetail>, hidden: Boolean, retry: (
                 InfoLine("Date", item.occurredOn.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG)))
                 InfoLine("Type", item.typeLabel())
                 item.category?.let { InfoLine("Category", it.name.lowercase().replace('_', ' ')) }
-                InfoLine(if (item.kind == EntryKind.EXPENSE) "Payer" else "Sender", item.paidBy.displayName)
-                if (!item.paidBy.isMe) TextButton(onClick = { openPerson(item.paidBy.id.value) }) { Text("View payer") }
+                if (item.kind == EntryKind.EXPENSE) {
+                    Text("Paid by", style = MaterialTheme.typography.titleSmall)
+                    item.payers.forEach { payer ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(if (payer.person.isMe) stringResource(R.string.you) else payer.person.displayName,
+                                    style = MaterialTheme.typography.bodyLarge)
+                                MoneyText(payer.paid, hidden)
+                            }
+                            if (!payer.person.isMe) TextButton(onClick = { openPerson(payer.person.id.value) }) { Text("View person") }
+                        }
+                    }
+                } else {
+                    InfoLine("Sender", item.paidBy.displayName)
+                    if (!item.paidBy.isMe) TextButton(onClick = { openPerson(item.paidBy.id.value) }) { Text("View payer") }
+                }
                 item.receiver?.let { person ->
                     InfoLine("Recipient", person.displayName)
                     if (!person.isMe) TextButton(onClick = { openPerson(person.id.value) }) { Text("View recipient") }

@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.codex07.iou.api.*
+import io.github.codex07.iou.ledger.model.FieldChange
 import io.github.codex07.iou.ui.components.*
 import io.github.codex07.iou.ui.forms.userMessage
 import io.github.codex07.iou.ui.settings.*
@@ -159,8 +160,13 @@ private fun ExportEditor(fields: ExportFields, catalog: DataCatalog?, enabled: B
     ChoiceField("Export shape", fields.shape.name, ExportShape.entries.map { it.name to if (it == ExportShape.NORMALIZED) "Normalized full ledger" else "Human-readable report" }, { value -> vm.exportChange {
         it.copy(shape = ExportShape.valueOf(value), scope = "full", from = "", to = "")
     } }, enabled)
-    ChoiceField("Format", fields.format.name, listOf("CSV" to "CSV (ZIP for normalized)"), { value -> vm.exportChange { it.copy(format = ExportFormat.valueOf(value), excelFriendly = false) } }, enabled)
-    Text("XLSX export arrives in a later version.", style = MaterialTheme.typography.bodySmall)
+    val csvLabel = if (fields.shape == ExportShape.NORMALIZED) "CSV ZIP" else "CSV"
+    ChoiceField("Format", fields.format.name, listOf("CSV" to csvLabel, "XLSX" to "XLSX workbook"),
+        { value -> vm.exportChange { it.copy(format = ExportFormat.valueOf(value), excelFriendly = false) } }, enabled)
+    if (fields.format == ExportFormat.XLSX) {
+        Text(if (fields.shape == ExportShape.NORMALIZED) "One worksheet per ledger table."
+            else "Summary, report, and applicable group worksheets.", style = MaterialTheme.typography.bodySmall)
+    }
     if (fields.shape == ExportShape.REPORT) {
         val scopes = listOf("full" to "Full ledger report") + catalog?.people.orEmpty().map { "person:${it.person.id.value}" to "Person · ${it.person.displayName}" } + catalog?.groups.orEmpty().map { "group:${it.group.id.value}" to "Group · ${it.group.name}" }
         ChoiceField("Report scope", fields.scope, scopes, { value -> vm.exportChange { it.copy(scope = value) } }, enabled)
@@ -187,22 +193,37 @@ private fun LazyListScope.importPreviewRows(preview: ImportPreview, state: DataS
     Text("${preview.counts.new} new · ${preview.counts.conflicts} conflicts · ${preview.counts.duplicates} duplicates · ${preview.counts.invalid} invalid")
     if (preview.identity is ImportIdentity.Mapped) Text("Source identity explicitly mapped to your existing identity.")
     } }
+    if (preview.balanceChanges.isNotEmpty()) item(key = "import-balances") { BrowseHeading("Balance changes") }
     items(preview.balanceChanges) { change ->
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        BrowseHeading(change.counterpart); Text("Before"); MoneyLines(change.before, hidden, signed = true); Text("After"); MoneyLines(change.after, hidden, signed = true)
-    }
+            BrowseHeading(change.counterpart)
+            listOf("Before" to change.before, "After" to change.after).forEach { (label, amounts) ->
+                Text(label)
+                if (hidden) Text("Balance hidden") else MoneyLines(amounts, hidden = false, signed = true)
+            }
+        }
     }
     items(preview.rows, key = { "row:${it.key.type}:${it.key.id}" }) { row ->
         IouCard { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (hidden) "${row.key.type.name.lowercase().replace('_', ' ')} record · details hidden" else row.label, style = MaterialTheme.typography.titleMedium)
             if (row.changedSinceLastPreview) Text("Changed since last preview · review this row", color = MaterialTheme.colorScheme.primary)
-            row.changes.forEach { change -> Text(if (hidden) "${change.field}: values hidden" else "${change.field}: ${change.before ?: "—"} → ${change.after ?: "—"}") }
+            if (row.forcedChanges.isNotEmpty()) {
+                Text("Always applied", style = MaterialTheme.typography.titleSmall)
+                row.forcedChanges.forEach { ImportFieldDiff(it, hidden) }
+            }
+            if (row.forcedChanges.isNotEmpty() && row.canChooseIncoming) {
+                Text("Changes if you take incoming", style = MaterialTheme.typography.titleSmall)
+            }
+            row.optionalChanges.forEach { ImportFieldDiff(it, hidden) }
             when (val choice = row.choice) {
-                ImportRowChoice.KeepOrTake -> SettingsSwitch(if (row.key in state.choices.takeIncoming) "Take incoming" else "Keep local", row.key in state.choices.takeIncoming, enabled) { take ->
-                    vm.choices { it.copy(takeIncoming = if (take) it.takeIncoming + row.key else it.takeIncoming - row.key) }
+                ImportRowChoice.KeepOrTake -> if (row.canChooseIncoming) {
+                    val takeIncoming = row.key in state.choices.takeIncoming
+                    SettingsSwitch(if (takeIncoming) "Take incoming" else "Keep local", takeIncoming, enabled) { take ->
+                        vm.choices { it.copy(takeIncoming = if (take) it.takeIncoming + row.key else it.takeIncoming - row.key) }
+                    }
                 }
-                is ImportRowChoice.DeletedWith -> Text(if (hidden) "Forced deletion with owner · not individually selectable" else "Deleted with ${choice.owner} · controlled by owner")
-                is ImportRowChoice.RestoredWith -> Text(if (hidden) "Forced restoration with owner · not individually selectable" else "Restored with ${choice.owner} · controlled by owner")
+                is ImportRowChoice.DeletedWith -> Text(if (hidden) "Deleted with owner" else "Deleted with ${choice.owner} · controlled by owner")
+                is ImportRowChoice.RestoredWith -> Text(if (hidden) "Restored with owner" else "Restored with ${choice.owner} · controlled by owner")
             }
         } }
     }
@@ -214,4 +235,10 @@ private fun LazyListScope.importPreviewRows(preview: ImportPreview, state: DataS
     OutlinedButton(onClick = vm::refresh, enabled = enabled) { Text("Refresh preview") }
     Button(onClick = vm::requestCommit, enabled = enabled && state.error != LedgerError.ImportPreviewStale) { Text("Review import confirmation") }
     } }
+}
+
+@Composable
+private fun ImportFieldDiff(change: FieldChange, hidden: Boolean) {
+    val label = if (change.field == "handledThrough") "Handled through" else change.field
+    Text(if (hidden) "$label: values hidden" else "$label: ${change.before ?: "—"} → ${change.after ?: "—"}")
 }

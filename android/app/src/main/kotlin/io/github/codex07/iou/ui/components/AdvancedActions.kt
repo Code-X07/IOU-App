@@ -69,8 +69,12 @@ fun AdvancedDialog(vm: AdvancedViewModel, state: AdvancedState, hidden: Boolean)
                     is AdvancedAction.Lifecycle -> Text(when (action.operation) {
                         LifeOperation.ARCHIVE -> "Archive ${action.subject}? Open balances remain in your totals. History is retained."
                         LifeOperation.UNARCHIVE -> "Return ${action.subject} to the active list?"
-                        LifeOperation.DELETE -> "Delete this record? Financial references may block deletion. The backend preserves history; recovery uses its Restore action."
-                        LifeOperation.RESTORE -> "Restore this record using the current ledger rules? Its financial effects may return."
+                        LifeOperation.DELETE -> if (action.entity.type == EntityType.RECURRING_EXPENSE)
+                            "Delete this schedule? Posted expenses stay in the ledger."
+                        else "Delete this record? Financial references may block deletion. The backend preserves history; recovery uses its Restore action."
+                        LifeOperation.RESTORE -> if (action.entity.type == EntityType.RECURRING_EXPENSE)
+                            "Restore this schedule? Unhandled older occurrences will be available to review in the due list."
+                        else "Restore this record using the current ledger rules? Its financial effects may return."
                     })
                     is AdvancedAction.Membership -> Text(if (action.remove) "Remove ${action.subject}? History remains. The ledger will block removal while a balance is outstanding." else "Add or re-add ${action.subject} to this group?")
                     is AdvancedAction.Unmerge -> Text("Separate ${action.subject} from the canonical contact? Original records, handles and references follow the backend's identity rules.")

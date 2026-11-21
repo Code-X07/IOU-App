@@ -33,7 +33,8 @@ data class ActivityQuery(
         val q = text.trim()
         return q.isEmpty() || listOfNotNull(item.description, item.note, item.paidBy.displayName,
             item.receiver?.displayName, item.group?.name, item.category?.name, "${item.kind}",
-            item.transferKind?.name).plus(item.participants.map { it.displayName }).any { it.contains(q, true) }
+            item.transferKind?.name).plus(item.participants.map { it.displayName })
+            .plus(item.payers.map { it.person.displayName }).any { it.contains(q, true) }
     }
 }
 data class ActivityPage(val entries: List<ActivityItem>, val people: List<PersonSummary>, val groups: List<GroupSummary>)

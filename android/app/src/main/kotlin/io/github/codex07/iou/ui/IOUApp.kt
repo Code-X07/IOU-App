@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import java.util.UUID
 import kotlinx.coroutines.launch
 import io.github.codex07.iou.ledger.model.PersonId
+import io.github.codex07.iou.ledger.model.RecurringId
+import java.time.LocalDate
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +30,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.codex07.iou.ui.navigation.RouteStores
+import io.github.codex07.iou.ui.navigation.RecurringNotificationRoute
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.codex07.iou.R
 import io.github.codex07.iou.ui.components.AdvancedDialog
@@ -42,7 +45,9 @@ import io.github.codex07.iou.ui.viewmodel.OverviewViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSettingsViewModel = hiltViewModel(),
-           security: SecurityViewModel = hiltViewModel(), requestAuthentication: (AuthPurpose) -> Unit = {}, ledgerGeneration: io.github.codex07.iou.ledger.model.LedgerGeneration? = null) {
+           security: SecurityViewModel = hiltViewModel(), requestAuthentication: (AuthPurpose) -> Unit = {}, ledgerGeneration: io.github.codex07.iou.ledger.model.LedgerGeneration? = null,
+           dueRequest: RecurringNotificationRoute? = null, onDueOpened: (RecurringNotificationRoute) -> Unit = {},
+           onScheduleSaved: () -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var selectedName by rememberSaveable { mutableStateOf(Destination.Overview.name) }
     val selected = Destination.valueOf(selectedName)
@@ -98,6 +103,11 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
     val openPerson: (String) -> Unit = { stack = stack + "person:$it" }
     val openGroup: (String) -> Unit = { stack = stack + "group:$it" }
     val openEntry: (String) -> Unit = { stack = stack + "entry:$it" }
+    val openSchedule: (RecurringId) -> Unit = { id ->
+        val route = "schedule:${id.value}"
+        stack = stack.filterNot { it == route } + route
+    }
+    val openDue: () -> Unit = { stack = RecurringNotificationRoute(null).open(stack) }
     BackHandler(enabled = !activeForm && stack.isNotEmpty() && unfinished == null && !addMenu) { stack = stack.dropLast(1) }
     val settings = stringResource(R.string.profile_settings)
     val add = stringResource(R.string.add_record)
@@ -117,13 +127,23 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
+    LaunchedEffect(dueRequest, advancedState.busy, advancedState.openRoute) {
+        if (advancedState.busy || advancedState.openRoute != null) return@LaunchedEffect
+        dueRequest?.let { request ->
+            advanced.dismiss()
+            addMenu = false
+            unfinished = null
+            stack = request.open(stack)
+            onDueOpened(request)
+        }
+    }
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = { if (!activeForm) {
             TopAppBar(
                 title = {
-                    Text(if (stack.isNotEmpty()) when (stack.last().substringBefore(":")) { "settings" -> "Settings"; "person" -> "Person details"; "group" -> "Group details"; "members" -> "Manage members"; else -> "Transaction details" } else if (selected == Destination.Overview) stringResource(R.string.brand) else stringResource(selected.title),
+                    Text(if (stack.isNotEmpty()) when (stack.last().substringBefore(":")) { "settings" -> "Settings"; "person" -> "Person details"; "group" -> "Group details"; "members" -> "Manage members"; "schedules" -> "Recurring expenses"; "schedule" -> "Schedule details"; "held" -> "Schedules on hold"; "deleted-schedules" -> "Deleted schedules"; "due" -> "Due expenses"; else -> "Transaction details" } else if (selected == Destination.Overview) stringResource(R.string.brand) else stringResource(selected.title),
                         style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 navigationIcon = { if (stack.isNotEmpty()) IconButton(onClick = { stack = stack.dropLast(1) }) { Icon(IouIcons.Back, "Back") } },
@@ -131,6 +151,9 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                     IconButton(onClick = { hidden = !hidden }) {
                         Icon(if (hidden) IouIcons.EyeOff else IouIcons.Eye,
                             stringResource(if (hidden) R.string.show_balances else R.string.hide_balances))
+                    }
+                    if (stack.isEmpty()) IconButton(onClick = { stack = stack + "schedules:" }) {
+                        Icon(IouIcons.Recurring, "Recurring expenses")
                     }
                     if (!scene.isSettings) IconButton(onClick = { if (stack.lastOrNull() != "settings:") stack = stack + "settings:" }, modifier = Modifier.semantics {
                         contentDescription = settings
@@ -204,6 +227,16 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                                     close = { vm.finish(); advanced.forget(key); stack = stack.dropLast(1) },
                                                     saved = { savedId -> vm.finish(); advanced.forget(key); stack = stack.dropLast(1); if (stack.lastOrNull() != "entry:$savedId") stack = stack + "entry:$savedId" },
                                                     createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
+                                            } else if (prepared.draft.draft is VersionDraft.OfSchedule) {
+                                                val vm: EntryFormViewModel = hiltViewModel()
+                                                LaunchedEffect(route) { vm.openSchedule(RecurringId(prepared.draft.entity.id), prepared.draft) }
+                                                val form by vm.state.collectAsStateWithLifecycle()
+                                                val status by vm.status.collectAsStateWithLifecycle()
+                                                EntryFormScreen(vm, form, status, hidden,
+                                                    close = { vm.finish(); advanced.forget(key); stack = stack.dropLast(1) },
+                                                    saved = { vm.finish(); advanced.forget(key); stack = stack.dropLast(1) },
+                                                    createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) },
+                                                    scheduleForm = true, onScheduleSaved = onScheduleSaved)
                                             } else {
                                                 val vm: MetadataFormViewModel = hiltViewModel()
                                                 LaunchedEffect(route) { vm.openRecovery(prepared.draft) }
@@ -245,7 +278,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                     val entity = if (kind == MetadataKind.HANDLE) parts.getOrNull(3)?.takeIf { it.isNotBlank() } else parts.getOrNull(2)?.takeIf { it.isNotBlank() }
                                     val owner = if (kind == MetadataKind.HANDLE) parts.getOrNull(2) else null
                                     val members = if (kind == MetadataKind.GROUP) parts.getOrNull(3).orEmpty().split(',').filter { it.isNotBlank() }.map(::PersonId).toSet() else emptySet()
-                                    val parent = stack.dropLast(1).lastOrNull()?.takeIf { it.startsWith("form-entry:") || it.startsWith("form-entryedit:") || it.startsWith("form-prepared:") }
+                                    val parent = stack.dropLast(1).lastOrNull()?.takeIf { it.startsWith("form-entry:") || it.startsWith("form-entryedit:") || it.startsWith("form-prepared:") || it.startsWith("form-schedule:") || it.startsWith("form-occurrence:") }
                                     val parentVm: EntryFormViewModel? = if (parent != null) hiltViewModel(viewModelStoreOwner = routeStores.owner(parent, activity)) else null
                                     LaunchedEffect(route) { vm.open(kind, entity, owner, members) }
                                     val form by vm.state.collectAsStateWithLifecycle()
@@ -276,6 +309,62 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                             if (stack.lastOrNull() != "entry:$savedId") stack = stack + "entry:$savedId"
                                         }, createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) })
                                 }
+                                "schedules", "held", "deleted-schedules" -> {
+                                    val kind = when (route.substringBefore(':')) {
+                                        "held" -> ScheduleList.HELD
+                                        "deleted-schedules" -> ScheduleList.DELETED
+                                        else -> ScheduleList.ACTIVE
+                                    }
+                                    val vm: ScheduleListViewModel = hiltViewModel()
+                                    LaunchedEffect(kind) { vm.open(kind) }
+                                    val schedules by vm.state.collectAsStateWithLifecycle()
+                                    ScheduleListScreen(kind, schedules, hidden, vm::retry, openSchedule,
+                                        create = { stack = stack + formRoute("schedule") }, due = openDue,
+                                        held = { stack = stack + "held:" }, deleted = { stack = stack + "deleted-schedules:" })
+                                }
+                                "schedule" -> {
+                                    val vm: ScheduleDetailViewModel = hiltViewModel()
+                                    LaunchedEffect(id) { vm.open(RecurringId(id)) }
+                                    val detail by vm.state.collectAsStateWithLifecycle()
+                                    ScheduleDetailScreen(detail, hidden, vm::retry, edit = { stack = stack + formRoute("schedule", id) },
+                                        openDue = openDue, openEntry = openEntry, request = advanced::request)
+                                }
+                                "due" -> {
+                                    val vm: DueViewModel = hiltViewModel()
+                                    val due by vm.state.collectAsStateWithLifecycle()
+                                    val action by vm.action.collectAsStateWithLifecycle()
+                                    val focus = if (id.isNotBlank()) {
+                                        val detailVm: ScheduleDetailViewModel = hiltViewModel()
+                                        LaunchedEffect(id) { detailVm.open(RecurringId(id)) }
+                                        val detail by detailVm.state.collectAsStateWithLifecycle()
+                                        (detail as? BrowseState.Ready)?.value?.summary?.takeUnless { it.deleted }
+                                    } else null
+                                    DueScreen(due, action, hidden, vm::retry, openSchedule,
+                                        post = { occurrence -> stack = stack + formRoute("occurrence", "${occurrence.schedule.value}:${occurrence.date}") },
+                                        skip = vm::prepareSkip, confirmSkip = vm::confirmSkip, dismiss = vm::dismiss,
+                                        focus = focus, showAll = openDue)
+                                }
+                                "form-schedule", "form-occurrence" -> {
+                                    val posting = route.startsWith("form-occurrence:")
+                                    val parts = route.split(':')
+                                    val vm: EntryFormViewModel = hiltViewModel()
+                                    LaunchedEffect(route) {
+                                        if (posting) vm.openOccurrence(RecurringId(parts[2]), LocalDate.parse(parts[3]))
+                                        else vm.openSchedule(parts[2].takeIf(String::isNotBlank)?.let(::RecurringId))
+                                    }
+                                    val form by vm.state.collectAsStateWithLifecycle()
+                                    val status by vm.status.collectAsStateWithLifecycle()
+                                    EntryFormScreen(vm, form, status, hidden,
+                                        close = { vm.finish(); stack = stack.dropLast(1) },
+                                        saved = { savedId ->
+                                            vm.finish()
+                                            val target = if (posting) "entry:$savedId" else "schedule:$savedId"
+                                            stack = stack.dropLast(1)
+                                            if (stack.lastOrNull() != target) stack = stack + target
+                                        },
+                                        createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) },
+                                        scheduleForm = !posting, posting = posting, onScheduleSaved = onScheduleSaved)
+                                }
                                 "group" -> {
                                     val vm: GroupDetailViewModel = hiltViewModel()
                                     LaunchedEffect(id) { vm.open(id) }
@@ -287,7 +376,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                     val vm: EntryDetailViewModel = hiltViewModel()
                                     LaunchedEffect(id) { vm.open(id) }
                                     val detail by vm.state.collectAsStateWithLifecycle()
-                                    EntryDetailScreen(detail, hidden, vm::retry, openPerson, openGroup, onEdit = { stack = stack + formRoute("entryedit", id) }, request = advanced::request)
+                                    EntryDetailScreen(detail, hidden, vm::retry, openPerson, openGroup, onEdit = { stack = stack + formRoute("entryedit", id) }, request = advanced::request, openSchedule = openSchedule)
                                 }
                                 "person" -> {
                                     val vm: PersonDetailViewModel = hiltViewModel()
@@ -313,7 +402,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                             Destination.Activity -> {
                                 val vm: ActivityViewModel = hiltViewModel()
                                 val activity by vm.state.collectAsStateWithLifecycle()
-                                ActivityScreen(activity, hidden, vm::retry, vm::filter, openEntry)
+                                ActivityScreen(activity, hidden, vm::retry, vm::filter, openEntry, openSchedule)
                             }
                             Destination.People -> {
                                 val vm: PeopleViewModel = hiltViewModel()
@@ -337,8 +426,9 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
             Text(add, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             Text("What would you like to record? IOU never moves money.", style = MaterialTheme.typography.bodyMedium)
             listOf(Triple("expense", "Add expense", IouIcons.Activity), Triple("loan", "Record loan", IouIcons.People),
-                Triple("repayment", "Record repayment", IouIcons.Settle), Triple("transfer", "Record transfer", IouIcons.UpRight)).forEach { (purpose, label, icon) ->
-                TextButton(onClick = { addMenu = false; addEntry(purpose) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Triple("repayment", "Record repayment", IouIcons.Settle), Triple("transfer", "Record transfer", IouIcons.UpRight),
+                Triple("schedule", "New recurring schedule", IouIcons.Recurring)).forEach { (purpose, label, icon) ->
+                TextButton(onClick = { addMenu = false; if (purpose == "schedule") stack = stack + formRoute("schedule") else addEntry(purpose) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Icon(icon, null); Spacer(Modifier.width(12.dp)); Text(label, Modifier.weight(1f)); Icon(IouIcons.Chevron, null)
                 }
             }

@@ -206,17 +206,20 @@ class DataManagementViewModel @Inject constructor(
     fun choices(update: (ImportChoices) -> ImportChoices) {
         if (!available() || rawPreview?.identity is ImportIdentity.NeedsConfirmation) return
         val raw = rawPreview ?: return
-        val candidate = update(state.value.choices)
+        val requested = update(state.value.choices)
+        val forcedOnly = raw.rows.filter { it.onlyForcedChanges }.map { it.key }.toSet()
+        val candidate = requested.copy(takeIncoming = requested.takeIncoming - forcedOnly)
         val effective = transfer.applyChoices(raw, candidate)
-        val allowed = effective.rows.filter { it.choice == ImportRowChoice.KeepOrTake }.map { it.key }.toSet()
+        val allowed = effective.rows.filter { it.canChooseIncoming }.map { it.key }.toSet()
         val clean = candidate.copy(takeIncoming = candidate.takeIncoming.intersect(allowed))
-        mutableState.update { it.copy(preview = transfer.applyChoices(raw, clean), choices = clean,
+        val reviewed = if (clean == candidate) effective else transfer.applyChoices(raw, clean)
+        mutableState.update { it.copy(preview = reviewed, choices = clean,
             error = if (it.error == LedgerError.ImportPreviewStale) it.error else null) }
     }
     fun refresh() {
         val old = rawPreview ?: return; val choices = state.value.choices
         runOperation { producing({ transfer.refreshPreview(old) }) { fresh ->
-            val unchanged = fresh.rows.filter { row -> row.choice == ImportRowChoice.KeepOrTake && !row.changedSinceLastPreview && old.rows.firstOrNull { it.key == row.key }?.changes == row.changes }.map { it.key }.toSet()
+            val unchanged = fresh.rows.filter { row -> row.canChooseIncoming && !row.changedSinceLastPreview && old.rows.firstOrNull { it.key == row.key }?.changes == row.changes }.map { it.key }.toSet()
             publish(fresh)
             if (fresh.identity is ImportIdentity.NeedsConfirmation) return@producing
             val retained = choices.copy(takeIncoming = choices.takeIncoming.intersect(unchanged), skipInvalidRows = false)
