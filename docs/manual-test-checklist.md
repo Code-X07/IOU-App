@@ -245,7 +245,7 @@ the owner's long-lived AVD.
   a few expenses; create an unencrypted backup and a normalized export. Install the `v0.2.0` candidate over it
   (`adb install -r`): the app starts, every balance and group net is unchanged, and every expense shows one payer
   (AC 25).
-- [ ] On the upgraded app, choose XLSX in Export data and save both shapes. Pull the files and open them in
+- [x] On the upgraded app, choose XLSX in Export data and save both shapes. Pull the files and open them in
   Excel and LibreOffice to check FastExcel output from Android (spec §14 item 1).
 - [ ] Restore the `v0.1.0` backup and import the `v0.1.0` normalized export into a freshly set-up install (another
   identity): the identity prompt appears, nothing is invalid, every net matches (AC 16, 25). Undo the import: it
@@ -253,8 +253,16 @@ the owner's long-lived AVD.
 - [ ] Export the upgraded ledger with a schedule (normalized CSV) and import it back into the same install: every
   row is a duplicate and nothing changes.
 
-Result (2026-11-21, at the v0.2.0 release): not run as a whole. The UI contributor's emulator run
-([M2 verification](m2-verification.md)) covered XLSX on the device (both shapes saved, valid ZIPs, expected sheets)
-and a normalized CSV import from another ledger with its identity prompt and group balance lines. Still open: the
-`v0.1.0` → `v0.2.0` upgrade with data, opening device-made workbooks in Excel and LibreOffice, the `v0.1.0`
-backup restore and import with undo, and the round-trip duplicate import.
+Result (2026-11-21, signed release APKs on the disposable API 37 emulator):
+
+- Upgrade: the released `v0.1.0` has no UI (a placeholder screen; the Compose UI was merged after that tag), so no
+  user data can exist in it and items 1 and 3 can't be run as written. `iou-v0.2.0.apk` installed over `v0.1.0`
+  with `adb install -r` (same signing key, versionCode 4), opened the database `v0.1.0` had created with no crash,
+  and showed setup. Moving data from schema 1 is covered by the Room migration tests on `app/schemas/`.
+- XLSX: on the upgraded app, set up, added two people and a 60 EUR expense paid 30/30 by two payers, then saved
+  both XLSX shapes through the document picker. The normalized workbook (11 sheets, `people` … `expense_payers`)
+  and the report workbook (Summary, Report; "Tester 30.00; Alex 30.00") open in LibreOffice 26.8 headless and in
+  desktop Excel (read-only, not saved) with the expected values.
+- Still open: the round-trip duplicate import (item 4). The UI contributor's run
+  ([M2 verification](m2-verification.md)) covered a normalized CSV import from another ledger with its identity
+  prompt and group balance lines.
