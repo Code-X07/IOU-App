@@ -17,7 +17,10 @@ import java.time.*
 @Composable
 fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormStatus, hidden: Boolean,
                     close: () -> Unit, saved: (String) -> Unit, createGroup: (Set<PersonId>) -> Unit,
-                    scheduleForm: Boolean = false, posting: Boolean = false) {
+                    scheduleForm: Boolean = false, posting: Boolean = false, onScheduleSaved: () -> Unit = {}) {
+    LaunchedEffect(scheduleForm, status.completedId) {
+        if (scheduleForm && status.completedId != null) onScheduleSaved()
+    }
     val fields = state.fields
     val enabled = !status.busy && !status.invalidated && status.completedId == null && status.error !is LedgerError.StaleVersion && status.error !is LedgerError.NotFound && status.error !is LedgerError.OccurrenceNotDue
     val parsedCurrency = Inputs.currency(fields.currency).getOrNull()

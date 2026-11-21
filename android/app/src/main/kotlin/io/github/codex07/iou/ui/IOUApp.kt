@@ -30,6 +30,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.codex07.iou.ui.navigation.RouteStores
+import io.github.codex07.iou.ui.navigation.RecurringNotificationRoute
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.codex07.iou.R
 import io.github.codex07.iou.ui.components.AdvancedDialog
@@ -44,7 +45,9 @@ import io.github.codex07.iou.ui.viewmodel.OverviewViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSettingsViewModel = hiltViewModel(),
-           security: SecurityViewModel = hiltViewModel(), requestAuthentication: (AuthPurpose) -> Unit = {}, ledgerGeneration: io.github.codex07.iou.ledger.model.LedgerGeneration? = null) {
+           security: SecurityViewModel = hiltViewModel(), requestAuthentication: (AuthPurpose) -> Unit = {}, ledgerGeneration: io.github.codex07.iou.ledger.model.LedgerGeneration? = null,
+           dueRequest: RecurringNotificationRoute? = null, onDueOpened: (RecurringNotificationRoute) -> Unit = {},
+           onScheduleSaved: () -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var selectedName by rememberSaveable { mutableStateOf(Destination.Overview.name) }
     val selected = Destination.valueOf(selectedName)
@@ -120,6 +123,13 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
     if (generation != null && lastGeneration != null && generation.value != lastGeneration) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
+    }
+    LaunchedEffect(dueRequest) {
+        dueRequest?.let { request ->
+            addMenu = false
+            stack = request.open(stack)
+            onDueOpened(request)
+        }
     }
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -220,7 +230,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                                     close = { vm.finish(); advanced.forget(key); stack = stack.dropLast(1) },
                                                     saved = { vm.finish(); advanced.forget(key); stack = stack.dropLast(1) },
                                                     createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) },
-                                                    scheduleForm = true)
+                                                    scheduleForm = true, onScheduleSaved = onScheduleSaved)
                                             } else {
                                                 val vm: MetadataFormViewModel = hiltViewModel()
                                                 LaunchedEffect(route) { vm.openRecovery(prepared.draft) }
@@ -317,9 +327,16 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                     val vm: DueViewModel = hiltViewModel()
                                     val due by vm.state.collectAsStateWithLifecycle()
                                     val action by vm.action.collectAsStateWithLifecycle()
+                                    val focus = if (id.isNotBlank()) {
+                                        val detailVm: ScheduleDetailViewModel = hiltViewModel()
+                                        LaunchedEffect(id) { detailVm.open(RecurringId(id)) }
+                                        val detail by detailVm.state.collectAsStateWithLifecycle()
+                                        (detail as? BrowseState.Ready)?.value?.summary?.takeUnless { it.deleted }
+                                    } else null
                                     DueScreen(due, action, hidden, vm::retry, openSchedule,
                                         post = { occurrence -> stack = stack + formRoute("occurrence", "${occurrence.schedule.value}:${occurrence.date}") },
-                                        skip = vm::prepareSkip, confirmSkip = vm::confirmSkip, dismiss = vm::dismiss)
+                                        skip = vm::prepareSkip, confirmSkip = vm::confirmSkip, dismiss = vm::dismiss,
+                                        focus = focus, showAll = { stack = RecurringNotificationRoute(null).open(stack) })
                                 }
                                 "form-schedule", "form-occurrence" -> {
                                     val posting = route.startsWith("form-occurrence:")
@@ -340,7 +357,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                             if (stack.lastOrNull() != target) stack = stack + target
                                         },
                                         createGroup = { members -> stack = stack + formRoute("group", ":" + members.joinToString(",") { it.value }) },
-                                        scheduleForm = !posting, posting = posting)
+                                        scheduleForm = !posting, posting = posting, onScheduleSaved = onScheduleSaved)
                                 }
                                 "group" -> {
                                     val vm: GroupDetailViewModel = hiltViewModel()

@@ -120,14 +120,21 @@ fun DueScreen(
     state: BrowseState<List<DueOccurrence>>, action: DueAction, hidden: Boolean, retry: () -> Unit,
     open: (RecurringId) -> Unit, post: (DueOccurrence) -> Unit, skip: (DueOccurrence) -> Unit,
     confirmSkip: (java.time.LocalDate) -> Unit, dismiss: () -> Unit,
+    focus: ScheduleSummary?, showAll: () -> Unit,
 ) {
-    BrowseContent(state, retry) { due ->
+    BrowseContent(state, retry) { allDue ->
+        val due = if (focus == null) allDue else allDue.filter { it.schedule == focus.id }
         val oldest = due.distinctBy { it.schedule }.associateBy { it.schedule }
         BrowseList(rememberLazyListState()) {
+            if (focus != null) item {
+                BrowseHeading(focus.description)
+                TextButton(onClick = { open(focus.id) }) { Text("Open schedule details") }
+                TextButton(onClick = showAll) { Text("Show all due expenses") }
+            }
             if (action.busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             action.error?.let { error -> item { Notice("Check the due list", error.userMessage(hidden)) } }
             action.message?.let { message -> item { Text(message) } }
-            if (due.isEmpty()) item { Text("No recurring expenses due.") }
+            if (due.isEmpty()) item { Text(if (focus == null) "No recurring expenses due." else "No expenses due for this schedule.") }
             items(due, key = { "${it.schedule.value}:${it.date}" }) { occurrence ->
                 val first = oldest[occurrence.schedule]?.date == occurrence.date
                 IouCard(Modifier.fillMaxWidth()) {
