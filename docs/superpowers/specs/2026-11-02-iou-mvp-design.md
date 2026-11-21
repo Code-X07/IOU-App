@@ -974,7 +974,7 @@ M2 ships as **one release** (`v0.2.0`) with the single schema-2 migration; nothi
 
 ## 14. Open items to verify while building
 
-1. **Open (M2):** confirm the FastExcel writer runs on Android (core library desugaring if needed).
+1. **Done (M2):** the FastExcel writer runs on Android (minSdk 30, no desugaring needed): on 2026-11-21 the API 37 emulator saved both workbook shapes through the document picker, and the pulled files were valid ZIPs with the expected worksheets ([M2 verification](../../m2-verification.md)). JVM-made workbooks open in LibreOffice headless. Still to do by hand: open device-made workbooks in desktop Excel and LibreOffice (checklist §10).
 2. **Done (M1):** Frankfurter takes `base`/`symbols`. Checked live on 2026-11-04 and 2026-11-05: `latest` and dated requests answer 200 with JSON numbers, a Sunday answers with the previous Friday's date, a future date and an unknown currency answer 404 (or time out), and the client treats every failure as "unavailable" (§4.5).
 3. **Partly done:** BouncyCastle Argon2id at 64 MiB, t=3, p=1 took about 0.65 s per encryption or decryption on the x86_64 emulator (2.0 s for the first), so the default stays. Still open: a low-end real phone; lower the memory parameter if a backup takes more than about 2 s there (old backups stay readable, since they record their parameters).
 4. **Done for `v0.1.0`:** the merged release manifest was inspected (§9 lists the result; `FOREGROUND_SERVICE` removed). Repeat when `androidx.biometric` arrives with the lock screen, and before each release.

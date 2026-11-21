@@ -33,7 +33,7 @@ android {
             code.toIntOrNull()?.takeIf { it > 0 }
                 ?: error("RELEASE_VERSION_CODE must be a positive whole number, was '$code'")
         } ?: 1
-        versionName = System.getenv("RELEASE_VERSION_NAME") ?: "0.1.0"
+        versionName = System.getenv("RELEASE_VERSION_NAME") ?: "0.2.0"
     }
 
     flavorDimensions += "backend"

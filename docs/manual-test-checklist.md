@@ -252,3 +252,9 @@ the owner's long-lived AVD.
   reports nothing skipped and every net is 0.
 - [ ] Export the upgraded ledger with a schedule (normalized CSV) and import it back into the same install: every
   row is a duplicate and nothing changes.
+
+Result (2026-11-21, at the v0.2.0 release): not run as a whole. The UI contributor's emulator run
+([M2 verification](m2-verification.md)) covered XLSX on the device (both shapes saved, valid ZIPs, expected sheets)
+and a normalized CSV import from another ledger with its identity prompt and group balance lines. Still open: the
+`v0.1.0` → `v0.2.0` upgrade with data, opening device-made workbooks in Excel and LibreOffice, the `v0.1.0`
+backup restore and import with undo, and the round-trip duplicate import.
