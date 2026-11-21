@@ -38,6 +38,7 @@ class RealHarness(private val clock: Clock, private val ids: IdGenerator) {
     fun start(
         scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
         rateCache: (DatabaseProvider) -> RateCache = ::RoomRateCache,
+        backupFormat: BackupFormat = BackupFormat(FAST_KDF),
     ): RealBackend {
         check(running == null) { "Stop the running backend first" }
         return RealBackend(
@@ -50,7 +51,7 @@ class RealHarness(private val clock: Clock, private val ids: IdGenerator) {
             clock = clock,
             ids = ids,
             scope = scope,
-            backupFormat = BackupFormat(FAST_KDF),
+            backupFormat = backupFormat,
             appVersion = "test",
             restoreHook = { onStep(it) },
             rateCache = rateCache,

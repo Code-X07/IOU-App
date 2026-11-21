@@ -58,10 +58,9 @@ class AndroidRecurringNotices(
         val postedBlocked = blocked(POSTED_CHANNEL)
         try {
             if (!dueBlocked) {
-                val single = plan.notified.due.size == 1
+                // Every schedule's notification opens that schedule's due dates; only the group summary opens them all.
                 for (notice in plan.show) {
-                    val schedule = if (single) notice.schedule else null
-                    manager.notify(notice.schedule.value, DUE_ID, build(DUE_CHANNEL, notice.title, notice.text, schedule, notice.silent))
+                    manager.notify(notice.schedule.value, DUE_ID, build(DUE_CHANNEL, notice.title, notice.text, notice.schedule, notice.silent))
                 }
                 plan.summary?.takeIf { it > 1 }?.let { manager.notify(GROUP_SUMMARY_TAG, DUE_ID, summary(it)) }
             }

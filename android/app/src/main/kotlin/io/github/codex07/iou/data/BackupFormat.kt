@@ -41,9 +41,25 @@ class BackupFormat(
 ) {
 
     fun write(rows: LedgerRows, appVersion: String, createdAt: Instant, passphrase: CharArray?): ByteArray {
-        val document = BackupDocument(FORMAT, SCHEMA_VERSION, appVersion, createdAt.toString(), rows)
-        val text = json.encodeToString(BackupDocument.serializer(), document).toByteArray(Charsets.UTF_8)
+        val text = text(rows, appVersion, createdAt)
         return if (passphrase == null) text else BackupCipher.encrypt(text, passphrase, kdf)
+    }
+
+    private fun text(rows: LedgerRows, appVersion: String, createdAt: Instant): ByteArray {
+        val document = BackupDocument(FORMAT, SCHEMA_VERSION, appVersion, createdAt.toString(), rows)
+        return json.encodeToString(BackupDocument.serializer(), document).toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * [write], refused with `LimitsExceeded` when [read] would refuse the file for its size (spec §7.1), so a backup
+     * that can't be restored is never written.
+     */
+    fun encode(rows: LedgerRows, appVersion: String, createdAt: Instant, passphrase: CharArray?): LedgerResult<ByteArray> {
+        val text = text(rows, appVersion, createdAt)
+        if (text.size > maxJsonBytes) return LedgerResult.Err(LedgerError.LimitsExceeded("Backup JSON larger than $maxJsonBytes bytes"))
+        val file = if (passphrase == null) text else BackupCipher.encrypt(text, passphrase, kdf)
+        if (file.size > maxFileBytes) return LedgerResult.Err(LedgerError.LimitsExceeded("Backup larger than $maxFileBytes bytes"))
+        return LedgerResult.Ok(file)
     }
 
     /**

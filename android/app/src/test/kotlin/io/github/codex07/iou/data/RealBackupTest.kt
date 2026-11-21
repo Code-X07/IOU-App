@@ -337,4 +337,26 @@ class RealBackupTest {
         reminder.due shouldBe false
         reminder.lastBackupAt shouldBe T0
     }
+
+    @Test
+    fun `a backup the restore limits would refuse is not written and keeps the reminder`() = runTest {
+        val size = harness.start().let { backend ->
+            backend.apis.setup.completeSetup("Me", EUR).orFail()
+            backend.apis.backup.createBackup(file, null).orFail()
+            harness.documents.file(file).length().also { harness.documents.file(file).delete(); harness.stop() }
+        }
+        for ((limits, secret) in listOf(
+            BackupFormat(RealHarness.FAST_KDF, maxFileBytes = size - 1) to null,
+            BackupFormat(RealHarness.FAST_KDF, maxJsonBytes = size - 1) to passphrase,
+        )) {
+            val backend = harness.start(backupFormat = limits)
+            val before = T0 - Duration.ofDays(31)
+            backend.device.update { it.copy(lastManualBackupAt = before) }
+            backend.apis.backup.createBackup(file, secret).shouldBeInstanceOf<LedgerResult.Err>()
+                .error.shouldBeInstanceOf<LedgerError.LimitsExceeded>()
+            harness.documents.file(file).exists() shouldBe false
+            backend.apis.backup.observeBackupReminder().first().lastBackupAt shouldBe before
+            harness.stop()
+        }
+    }
 }

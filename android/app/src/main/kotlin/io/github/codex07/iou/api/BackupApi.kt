@@ -11,7 +11,8 @@ interface BackupApi {
 
     /**
      * Null [passphrase] writes an unencrypted backup (the UI warns first). Errors: `InvalidField("passphrase")`
-     * for a passphrase shorter than 8 characters (spec §9), `FileAccessFailed`.
+     * for a passphrase shorter than 8 characters (spec §9), `LimitsExceeded` for a backup the restore limits would
+     * refuse (spec §7.1; nothing is written and the reminder stays), `FileAccessFailed`.
      */
     suspend fun createBackup(target: DocumentRef, passphrase: CharArray?): LedgerResult<BackupInfo>
 

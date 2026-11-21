@@ -47,8 +47,10 @@ class RealBackupApi(
         store.loaded()
         val rows = store.exclusive { live, _ -> LedgerRows.of(checkNotNull(live).content, fx.cachedRates()) }
         val written = withContext(Dispatchers.IO) {
-            val file = format.write(rows, appVersion, now, passphrase)
-            access(target) { documents.openWrite(target).use { it.write(file) } }
+            when (val file = format.encode(rows, appVersion, now, passphrase)) {
+                is LedgerResult.Err -> file
+                is LedgerResult.Ok -> access(target) { documents.openWrite(target).use { it.write(file.value) } }
+            }
         }
         if (written is LedgerResult.Err) return written
         device.update { it.copy(lastManualBackupAt = now) }
