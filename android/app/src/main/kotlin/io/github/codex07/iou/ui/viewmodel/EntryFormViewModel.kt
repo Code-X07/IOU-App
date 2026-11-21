@@ -170,9 +170,22 @@ class EntryFormViewModel @Inject constructor(
     }
     fun change(update: (EntryFields) -> EntryFields) {
         if (!editable || occurrenceUnavailable()) return
-        val next = update(state.value.fields)
+        val previous = state.value.fields
+        val next = proposeFreshRate(previous, update(previous))
         mutableState.update { it.copy(fields = next, preview = null, previewError = null, quote = null) }
         changed(next != initial || state.value.schedule != initialSchedule); schedulePreview()
+    }
+    /**
+     * Spec §4.5: changing the date or the paid amount of an entry with a stored rate (lookup or manual) proposes a
+     * fresh quote; the user can still choose to keep the stored snapshot. Bank-actual snapshots stay as they are: a
+     * date-only edit keeps them, and an amount change is rejected by the ledger until a new FX choice is made.
+     */
+    private fun proposeFreshRate(previous: EntryFields, next: EntryFields): EntryFields {
+        val stored = state.value.storedFx ?: return next
+        if (stored.source == FxSource.BANK_ACTUAL || previous.fxMode != FxInputMode.SAVED || next.fxMode != FxInputMode.SAVED) return next
+        val dateChanged = next.date != previous.date && next.date != initial.date
+        val amountChanged = next.amount != previous.amount && next.amount != initial.amount
+        return if (dateChanged || amountChanged) next.copy(fxMode = FxInputMode.AUTO, acceptStale = false) else next
     }
     fun chooseGroup(value: String?) = change { fields ->
         // Preserve entered selections; the user chooses valid members rather than silently losing a split.

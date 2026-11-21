@@ -54,7 +54,7 @@ No findings.
 
 | Finding | Status | Change |
 | --- | --- | --- |
-| F1 | Open | Real (the edit form keeps `SAVED`, so save sends `KeepExisting` after a date or amount change). The fix belongs in the friend's entry form (`EntryFormViewModel`, `EntryInput.fromDraft`); scope waits for the owner. |
+| F1 | Fixed | On the owner's go, in the friend's entry form. `EntryFormViewModel.change` switches a `SAVED` rate-based snapshot (lookup or manual) to `AUTO` when the date or paid amount changes, so a fresh quote is proposed; choosing "Keep stored snapshot" again keeps the old rate. Bank-actual snapshots are untouched (date-only edits keep them; an amount change still needs a new FX choice). The AUTO hint names the keep option. Tests: `FinancialFormsTest` "date or amount edits on a stored rate propose a fresh quote and keeping the old rate is explicit" and "bank actual date only edits keep the stored snapshot". |
 | F2 | Fixed | `BackupFormat.encode` refuses JSON over the decompressed limit and a file over the file limit with `LimitsExceeded`; `RealBackupApi.createBackup` uses it, so nothing is written and `lastManualBackupAt` stays. `BackupApi` and spec §7.1 say so. Test: `RealBackupTest` "a backup the restore limits would refuse is not written and keeps the reminder" (plain over the file limit, encrypted over the JSON limit). |
 | F3 | Fixed | `AndroidRecurringNotices` puts `iou.schedule` on every schedule notification; only the group summary opens the whole due list. Spec §5.7 updated. No JVM test: the adapter calls Android's `NotificationManagerCompat` and the project has no Robolectric; checklist §9 item 6 covers it on the device. |
 

@@ -247,7 +247,10 @@ private fun FxEditor(fields: EntryFields, state: EntryFormState, enabled: Boolea
         FxInputMode.SAVED -> state.storedFx?.let {
             Notice("Stored snapshot", if (hidden) "Rate hidden. The backend validates whether this snapshot still fits." else "${it.rate} · ${it.rateDate} · ${it.source}. The backend validates this snapshot before saving.${if (it.isStale) " This snapshot used a stale rate." else ""}")
         }
-        FxInputMode.AUTO -> Text("If no quote is available, choose a manual rate or the actual amount charged.")
+        FxInputMode.AUTO -> Text(
+            (if (state.storedFx != null) "To keep the old rate, choose \"Keep stored snapshot\". " else "") +
+                "If no quote is available, choose a manual rate or the actual amount charged.",
+        )
     }
     state.quote?.let { quote ->
         Text(if (hidden) "Quote hidden" else "1 ${quote.base.code} = ${quote.rate} ${quote.quote.code} · ${quote.rateDate}")

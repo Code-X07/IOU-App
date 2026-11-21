@@ -280,6 +280,48 @@ class FinancialFormsTest {
         original.finish(); edit.finish()
     }
 
+    @Test fun `bank actual date only edits keep the stored snapshot`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val group = group(a, FxMode.CONVERT)
+        val original = entry(a); original.open(); runCurrent()
+        val fields = expenseFields(a, group).copy(currency = "INR", amount = "100", fxMode = FxInputMode.BANK, charged = "1")
+        original.change { fields }
+        original.save(); runCurrent()
+        val id = EntryId(original.status.value.completedId!!); val before = a.ledger.observeEntry(id).first()!!
+        val edit = entry(a); edit.open(entryId = id.value); runCurrent()
+        edit.change { it.copy(date = LocalDate.of(2026, 11, 6).toString()) }
+        assertEquals(FxInputMode.SAVED, edit.state.value.fields.fxMode)
+        edit.save(); runCurrent()
+        val after = a.ledger.observeEntry(id).first()!!
+        assertEquals(before.fx, after.fx); assertEquals(Money(100, eur), after.item.effect)
+        original.finish(); edit.finish()
+    }
+
+    @Test fun `date or amount edits on a stored rate propose a fresh quote and keeping the old rate is explicit`() = runTest(dispatcher) {
+        val a = FakeApis.seeded()
+        val item = a.ledger.observeActivity().first().first { it.paid.currency != it.effect.currency }
+        val before = a.ledger.observeEntry(item.entryId).first()!!
+        assertEquals(FxSource.ECB_FRANKFURTER, before.fx!!.source)
+        val moved = entry(a); moved.open(entryId = item.entryId.value); runCurrent()
+        val date = LocalDate.parse(moved.state.value.fields.date).plusDays(3)
+        moved.change { it.copy(date = date.toString()) }
+        assertEquals(FxInputMode.AUTO, moved.state.value.fields.fxMode)
+        moved.save(); runCurrent()
+        val requoted = a.ledger.observeEntry(item.entryId).first()!!
+        assertEquals(date, requoted.fx!!.rateDate); assertEquals(FxSource.ECB_FRANKFURTER, requoted.fx!!.source)
+
+        val kept = entry(a); kept.open(entryId = item.entryId.value); runCurrent()
+        kept.change { it.copy(amount = "1000") }
+        assertEquals(FxInputMode.AUTO, kept.state.value.fields.fxMode)
+        kept.change { it.copy(fxMode = FxInputMode.SAVED) }
+        kept.change { it.copy(note = "Keep the old rate") }
+        assertEquals(FxInputMode.SAVED, kept.state.value.fields.fxMode)
+        kept.save(); runCurrent()
+        val after = a.ledger.observeEntry(item.entryId).first()!!
+        assertEquals(requoted.fx!!.rate, after.fx!!.rate); assertEquals(date, after.fx!!.rateDate)
+        assertEquals(Money(100_000, item.paid.currency), after.item.paid)
+        moved.finish(); kept.finish()
+    }
+
     @Test fun `ledger replacement invalidates dirty drafts cancels preview and prevents saves`() = runTest(dispatcher) {
         val a = FakeApis.seeded(); val metadata = metadata(a); metadata.open(MetadataKind.PERSON); runCurrent()
         metadata.change { it.copy(name = "Must not save") }
