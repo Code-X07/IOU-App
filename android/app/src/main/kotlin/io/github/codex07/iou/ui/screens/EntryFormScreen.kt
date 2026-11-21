@@ -23,6 +23,14 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
     val context = state.groups.firstOrNull { it.group.id.value == fields.group }
     val candidates = if (context == null && fields.group == null) state.people else context?.members?.filter { it.active }?.map { it.person }.orEmpty()
     val peopleOptions = candidates.map { it.id.value to if (it.isMe) "You" else it.displayName }
+    val errorPerson = when (val e = status.error) {
+        is LedgerError.NegativeInput -> e.personId
+        is LedgerError.MissingInput -> e.personId
+        is LedgerError.DuplicatePayer -> e.personId
+        is LedgerError.DuplicateParticipant -> e.personId
+        else -> null
+    }
+    val payerErrorPerson = errorPerson.takeUnless { status.error is LedgerError.DuplicateParticipant }
     var datePicker by rememberSaveable { mutableStateOf(false) }
     var reload by rememberSaveable { mutableStateOf(false) }
     val title = if (state.editing) "Edit transaction" else if (fields.expense) "Add expense" else if (fields.kind == TransferKind.REPAYMENT) "Record repayment" else "Record loan / transfer"
@@ -60,8 +68,34 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
                 state.groups.filter { !it.archived || it.group.id.value == fields.group }.map { it.group.id.value to it.group.name },
                 { value -> vm.chooseGroup(value.takeUnless { it == "personal" }) }, enabled)
             if (context != null) Text("${context.fxMode} · ${context.defaultCurrency.code}. Choose current group members.", style = MaterialTheme.typography.bodySmall)
-            ChoiceField(if (fields.expense) "Payer" else "Sender", fields.payer, peopleOptions,
-                { value -> vm.change { it.copy(payer = value) } }, enabled)
+            if (fields.expense) {
+                BrowseHeading("Paid by")
+                fields.payers.forEachIndexed { index, id ->
+                    val taken = fields.payers.filterIndexed { i, _ -> i != index }
+                    ChoiceField("Payer", id, peopleOptions.filter { it.first !in taken }, { value -> vm.setPayer(index, value) }, enabled)
+                    if (index > 0) TextButton(onClick = { vm.removePayer(id) }, enabled = enabled) { Text("Remove payer") }
+                }
+                // Keep invalidated payers visible so membership changes cannot silently alter who paid.
+                fields.payers.filter { id -> candidates.none { it.id.value == id } }.forEach { id ->
+                    TextButton(onClick = { vm.removePayer(id) }, enabled = enabled) {
+                        Text("Remove unavailable payer · " + (state.people.firstOrNull { it.id.value == id }?.displayName ?: "Former member"))
+                    }
+                }
+                TextButton(onClick = { vm.addPayer() }, enabled = enabled && vm.payerCandidates().any { it !in fields.payers }) { Text("Add another payer") }
+                if (fields.payers.size > 1) {
+                    ChoiceField("Payer split", fields.payerSplit.name, listOf("EQUAL" to "Equal", "EXACT" to "Exact amount"),
+                        { value -> vm.setPayerSplit(PayerSplit.valueOf(value)) }, enabled)
+                    if (fields.payerSplit == PayerSplit.EXACT) fields.payers.forEach { id ->
+                        val name = state.people.firstOrNull { it.id.value == id }?.let { if (it.isMe) "You" else it.displayName } ?: "Former member"
+                        SensitiveFormField("$name · paid ${fields.currency}", fields.payerInputs[id].orEmpty(), { value -> vm.setPayerInput(id, value) }, hidden, enabled,
+                            error = status.error is LedgerError.PaidRemaining || payerErrorPerson?.value == id)
+                    }
+                    Text("Payer amounts are entered in the original currency and must add up to the expense total.", style = MaterialTheme.typography.bodySmall)
+                }
+                errorPerson?.let { person ->
+                    state.people.firstOrNull { it.id == person }?.let { Text("Check ${it.displayName}.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            } else ChoiceField("Sender", fields.payer, peopleOptions, { value -> vm.change { it.copy(payer = value) } }, enabled)
             if (!fields.expense) {
                 ChoiceField("Recipient", fields.receiver, peopleOptions, { value -> vm.change { it.copy(receiver = value) } }, enabled)
                 val sender = state.people.firstOrNull { it.id.value == fields.payer }
@@ -100,7 +134,8 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
                 }
                 Text(when (fields.split) { SplitType.EQUAL -> "The ledger distributes rounding fairly in exact minor units."; SplitType.PERCENT -> "Enter percentages with at most two decimals. Total must be 100%."; SplitType.SHARES -> "Use whole-number weights from 1 to 1,000,000."; SplitType.EXACT -> "Amounts are entered in the original currency and must match the expense total." }, style = MaterialTheme.typography.bodySmall)
             }
-            if (status.error is LedgerError.NeedsGroup || (fields.group == null && (fields.participants + fields.payer + fields.receiver).filter { it.isNotBlank() }.distinct().size > 2)) {
+            val involved = if (fields.expense) fields.participants + fields.payers else listOf(fields.payer, fields.receiver)
+            if (status.error is LedgerError.NeedsGroup || (fields.group == null && involved.filter { it.isNotBlank() }.distinct().size > 2)) {
                 Notice("This selection needs a group", "Create a group without losing this draft, then continue here.")
                 FilledTonalButton(onClick = { createGroup(vm.groupMembersForDraft()) }, enabled = enabled) { Text("Create group & keep draft") }
             }
@@ -122,6 +157,19 @@ fun EntryFormScreen(vm: EntryFormViewModel, state: EntryFormState, status: FormS
                         Text("Previously stored shares", style = MaterialTheme.typography.titleSmall)
                         preview.storedShares.orEmpty().forEach { share ->
                             Text(share.person.displayName); MoneyText(share.share, hidden)
+                        }
+                    }
+                    Text("Paid by", style = MaterialTheme.typography.titleSmall)
+                    preview.payers.forEach { payer ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(payer.person.displayName, Modifier.weight(1f)); MoneyText(payer.paid, hidden, Modifier.weight(1f))
+                        }
+                    }
+                    if (state.editing) Text(if (preview.payersRecomputed) "Saving will recalculate payer amounts." else "Stored payer amounts will be preserved.")
+                    if (state.editing && preview.payersRecomputed) {
+                        Text("Previously stored payers", style = MaterialTheme.typography.titleSmall)
+                        preview.storedPayers.orEmpty().forEach { payer ->
+                            Text(payer.person.displayName); MoneyText(payer.paid, hidden)
                         }
                     }
                     Text("Expense effect total"); MoneyText(preview.effectTotal, hidden)
