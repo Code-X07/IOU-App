@@ -1832,7 +1832,7 @@ The core runs the policy and the window flag; you build the lock screen (spec §
 Replace:
 
 ```markdown
-An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" threads in WhatsApp with exact, auditable balances.
+An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" chat threads with exact, auditable balances.
 
 > **Status:** Milestone 0 done: the core ↔ UI contract and an in-memory fake with demo data. The real (Room) implementation comes in Milestone 1.
 
@@ -1842,7 +1842,7 @@ An Android app for tracking shared expenses and IOUs in a friend group. It repla
 with:
 
 ```markdown
-An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" threads in WhatsApp with exact, auditable balances.
+An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" chat threads with exact, auditable balances.
 
 > **Status:** Milestone 1 implementation complete (v0.1.0). The real flavor is a working ledger on Room, with groups, history and revert, merges, FX, encrypted backups, CSV export and import, app lock and screen protection. The screens come from the UI contributor. Importing group rows and XLSX export come in Milestone 2.
 

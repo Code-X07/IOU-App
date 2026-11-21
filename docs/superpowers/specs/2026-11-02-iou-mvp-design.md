@@ -10,7 +10,7 @@
 
 ## 1. Summary
 
-An Android app that replaces WhatsApp-based tracking of shared expenses and IOUs in a friend group. It keeps running balances with each person, independent of which bank account money moved through, and supports groups with equal / percent / shares / exact splits, expenses paid by several people, recurring expenses, multiple currencies, a full audit history of every edit, and import/export.
+An Android app that replaces chat-based tracking of shared expenses and IOUs in a friend group. It keeps running balances with each person, independent of which bank account money moved through, and supports groups with equal / percent / shares / exact splits, expenses paid by several people, recurring expenses, multiple currencies, a full audit history of every edit, and import/export.
 
 This spec covers **Milestone 0 (skeleton and UI contract)**, **Milestone 1 (personal ledger)** and **Milestone 2 (groups and splits)**. Pay/request helpers, auto-detected repayments and multi-user sync (core spec phases 3–5) each get their own spec later. This design makes sure they fit without rework (§13).
 
