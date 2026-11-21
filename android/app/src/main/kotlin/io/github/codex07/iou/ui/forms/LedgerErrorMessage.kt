@@ -43,12 +43,15 @@ fun LedgerError.userMessage(hidden: Boolean = false, currency: io.github.codex07
         "Exact amounts must match the expense total. ${if (diffMinor > 0) "Still to allocate" else "Over allocated"}: $value."
     }
     LedgerError.ZeroWeights -> "Enter positive share weights."
-    is LedgerError.NegativeInput -> "Split inputs cannot be negative."
-    is LedgerError.MissingInput -> "Enter a split value for each participant."
+    is LedgerError.NegativeInput -> "Enter a positive value for each payer and participant."
+    is LedgerError.MissingInput -> "Enter a value for each payer and participant."
     is LedgerError.WeightOutOfRange -> "Share weights must be whole numbers from 1 to 1,000,000."
     is LedgerError.DuplicateParticipant -> "Choose each participant only once."
     LedgerError.NoPayers -> "Choose at least one payer."
-    is LedgerError.PaidRemaining -> "Payer amounts must add up to the expense total."
+    is LedgerError.PaidRemaining -> if (hidden || currency == null) "Payer amounts must add up to the expense total." else {
+        val value = io.github.codex07.iou.ui.format.MoneyFormatter.format(Money(diffMinor, currency), magnitude = true)
+        "Payer amounts must add up to the expense total. ${if (diffMinor > 0) "Still to allocate" else "Over allocated"}: $value."
+    }
     is LedgerError.DuplicatePayer -> "Choose each payer only once."
     is LedgerError.OccurrenceNotDue -> nextDue?.let { "Post or skip the occurrence on $it first." } ?: "This schedule has no more occurrences."
     is LedgerError.NeedsGroup -> "Personal entries must involve you and one other person. Create a group for this selection."
