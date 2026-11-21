@@ -429,4 +429,126 @@ class FinancialFormsTest {
         }
         assertTrue(EntryInput.draft(base.copy(date = "not a date")).errorOrNull() is LedgerError.InvalidField)
     }
+
+    private suspend fun museum(a: Apis) = a.ledger.observeActivity().first().first { it.description == "Museum tickets" }
+
+    @Test fun `two payer equal and exact expenses save with backend payer amounts`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val group = group(a); val self = me(a).value; val friend = other(a).value
+        val base = expenseFields(a, group).copy(payers = listOf(self, friend))
+        for (split in PayerSplit.entries) {
+            val vm = entry(a); vm.open(); runCurrent()
+            vm.change { base }; vm.setPayerSplit(split)
+            if (split == PayerSplit.EXACT) { vm.setPayerInput(self, "7,50"); vm.setPayerInput(friend, "5") }
+            advanceTimeBy(300); runCurrent()
+            val preview = vm.state.value.preview
+            assertNotNull(preview, "No payer preview for $split: ${vm.state.value.previewError}")
+            assertEquals(2, preview!!.payers.size)
+            vm.save(); runCurrent()
+            assertNull(vm.status.value.error)
+            val saved = a.ledger.observeEntry(EntryId(vm.status.value.completedId!!)).first()!!.item
+            assertEquals(preview.payers, saved.payers)
+            if (split == PayerSplit.EXACT) assertEquals(listOf(750L, 500L), saved.payers.map { it.paid.amountMinor })
+            vm.finish()
+        }
+    }
+
+    @Test fun `payer amounts that do not add up cannot save`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val self = me(a).value; val friend = other(a).value
+        val base = expenseFields(a).copy(payers = listOf(self, friend))
+        val vm = entry(a); vm.open(); runCurrent()
+        vm.change { base }; vm.setPayerSplit(PayerSplit.EXACT); vm.setPayerInput(self, "1"); vm.setPayerInput(friend, "1")
+        vm.save(); runCurrent()
+        assertEquals(1050L, (vm.status.value.error as LedgerError.PaidRemaining).diffMinor)
+        assertNull(vm.status.value.completedId)
+        vm.finish()
+    }
+
+    @Test fun `duplicate payers are rejected`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val self = me(a).value
+        val base = expenseFields(a).copy(payers = listOf(self, self))
+        val vm = entry(a); vm.open(); runCurrent()
+        vm.change { base }
+        vm.save(); runCurrent()
+        assertTrue(vm.status.value.error is LedgerError.DuplicatePayer)
+        assertNull(vm.status.value.completedId)
+        vm.finish()
+    }
+
+    @Test fun `negative or invalid payer amounts are rejected`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val self = me(a).value; val friend = other(a).value
+        val base = expenseFields(a).copy(payers = listOf(self, friend))
+        val vm = entry(a); vm.open(); runCurrent()
+        vm.change { base }
+        vm.setPayerSplit(PayerSplit.EXACT); vm.setPayerInput(self, "-1"); vm.setPayerInput(friend, "13,50")
+        vm.save(); runCurrent()
+        assertNotNull(vm.status.value.error); assertNull(vm.status.value.completedId)
+        vm.setPayerInput(self, "abc"); vm.save(); runCurrent()
+        assertNotNull(vm.status.value.error); assertNull(vm.status.value.completedId)
+        vm.finish()
+    }
+
+    @Test fun `museum tickets note edit keeps both payers`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val m = museum(a)
+        val before = a.ledger.observeEntry(m.entryId).first()!!
+        val vm = entry(a); vm.open(entryId = m.entryId.value); runCurrent()
+        assertEquals(before.item.payers.map { it.person.id.value }, vm.state.value.fields.payers)
+        assertEquals(PayerSplit.EXACT, vm.state.value.fields.payerSplit)
+        vm.change { it.copy(note = "Payer note edit") }; advanceTimeBy(300); runCurrent()
+        assertEquals(false, vm.state.value.preview!!.payersRecomputed)
+        vm.save(); runCurrent()
+        assertNull(vm.status.value.error)
+        assertEquals(before.item.payers, a.ledger.observeEntry(m.entryId).first()!!.item.payers)
+        vm.finish()
+    }
+
+    @Test fun `museum tickets total change without payer change reports PaidRemaining`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val m = museum(a)
+        val before = a.ledger.observeEntry(m.entryId).first()!!
+        val vm = entry(a); vm.open(entryId = m.entryId.value); runCurrent()
+        vm.change { it.copy(amount = "90") }; vm.save(); runCurrent()
+        assertEquals(1000L, (vm.status.value.error as LedgerError.PaidRemaining).diffMinor)
+        assertEquals(before.item.payers, a.ledger.observeEntry(m.entryId).first()!!.item.payers)
+        vm.finish()
+    }
+
+    @Test fun `removing a payer saves one payer and resets the payer split`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val m = museum(a); val bea = m.payers[1].person.id.value
+        val vm = entry(a); vm.open(entryId = m.entryId.value); runCurrent()
+        vm.removePayer(bea)
+        assertEquals(PayerSplit.EQUAL, vm.state.value.fields.payerSplit); assertTrue(vm.state.value.fields.payerInputs.isEmpty())
+        advanceTimeBy(300); runCurrent()
+        assertEquals(true, vm.state.value.preview!!.payersRecomputed)
+        vm.save(); runCurrent()
+        assertNull(vm.status.value.error)
+        assertEquals(1, a.ledger.observeEntry(m.entryId).first()!!.item.payers.size)
+        vm.finish()
+    }
+
+    @Test fun `changing group keeps payers that are not members`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val me = me(a); val friend = other(a)
+        val outsider = a.people.observePeople().first().map { it.person.id }.first { it != me && it != friend }
+        val outsiderGroup = (a.groups.createGroup(GroupDraft("Without friend", eur, FxMode.KEEP), listOf(outsider), basis(a)) as LedgerResult.Ok).value
+        val base = expenseFields(a).copy(payers = listOf(me.value, friend.value))
+        val vm = entry(a); vm.open(); runCurrent()
+        vm.change { base }; runCurrent()
+        vm.chooseGroup(outsiderGroup.value); runCurrent()
+        assertEquals(listOf(me.value, friend.value), vm.state.value.fields.payers)
+        vm.save(); runCurrent()
+        assertNotNull(vm.status.value.error); assertNull(vm.status.value.completedId)
+        vm.finish()
+    }
+
+    @Test fun `addPayer picks the next free candidate and setPayer moves its input`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(); val vm = entry(a); vm.open(); runCurrent()
+        vm.addPayer(); runCurrent()
+        assertEquals(2, vm.state.value.fields.payers.size)
+        assertNotEquals(vm.state.value.fields.payers[0], vm.state.value.fields.payers[1])
+        vm.setPayerSplit(PayerSplit.EXACT); vm.setPayerInput(vm.state.value.fields.payers[1], "3")
+        val other = other(a).value
+        vm.setPayer(1, other)
+        assertEquals(other, vm.state.value.fields.payers[1])
+        assertEquals("3", vm.state.value.fields.payerInputs[other])
+        assertFalse(vm.state.value.fields.payerInputs.containsKey(vm.state.value.fields.payers[0]))
+        vm.finish()
+    }
 }

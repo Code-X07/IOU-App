@@ -113,6 +113,31 @@ class EntryFormViewModel @Inject constructor(
     fun useCreatedGroup(value: String) { chooseGroup(value) }
     fun groupMembersForDraft(): Set<PersonId> = (state.value.fields.participants + state.value.fields.payers + state.value.fields.payer + state.value.fields.receiver)
         .filter { it.isNotBlank() && it != me?.id?.value }.map(::PersonId).toSet()
+    /** Same rule as the form's payer picker: active members of the selected group, or everyone outside groups. */
+    fun payerCandidates(): List<String> {
+        val fields = state.value.fields
+        val context = state.value.groups.firstOrNull { it.group.id.value == fields.group }
+        val candidates = if (context == null && fields.group == null) state.value.people else context?.members?.filter { it.active }?.map { it.person }.orEmpty()
+        return candidates.map { it.id.value }
+    }
+    fun addPayer() {
+        val next = payerCandidates().firstOrNull { it !in state.value.fields.payers } ?: return
+        change { it.copy(payers = it.payers + next) }
+    }
+    fun removePayer(id: String) = change { fields ->
+        val payers = fields.payers - id
+        val single = payers.size == 1
+        fields.copy(payers = payers, payerInputs = if (single) emptyMap() else fields.payerInputs - id,
+            payerSplit = if (single) PayerSplit.EQUAL else fields.payerSplit)
+    }
+    fun setPayer(index: Int, id: String) = change { fields ->
+        val old = fields.payers.getOrNull(index) ?: return@change fields
+        val typed = fields.payerInputs[old]
+        fields.copy(payers = fields.payers.mapIndexed { i, p -> if (i == index) id else p },
+            payerInputs = fields.payerInputs - old + listOfNotNull(typed?.let { id to it }))
+    }
+    fun setPayerSplit(split: PayerSplit) = change { it.copy(payerSplit = split) }
+    fun setPayerInput(id: String, text: String) = change { it.copy(payerInputs = it.payerInputs + (id to text)) }
     fun reviewLatest() { reopen { load("expense", id?.value) } }
     override fun cancelPending() {
         revision++; previewJob?.cancel(); catalog?.cancel()
