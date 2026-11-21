@@ -21,7 +21,7 @@ class FinancialFormsTest {
     @AfterEach fun cleanup() { Dispatchers.resetMain() }
     private val eur = CurrencyCode("EUR")
     private fun metadata(a: Apis, people: PeopleApi = a.people) = MetadataFormViewModel(people, a.groups, a.ledger, a.backup)
-    private fun entry(a: Apis, ledger: LedgerApi = a.ledger, fx: FxApi = a.fx) = EntryFormViewModel(ledger, a.people, a.groups, a.setup, fx, a.backup)
+    private fun entry(a: Apis, ledger: LedgerApi = a.ledger, fx: FxApi = a.fx) = EntryFormViewModel(ledger, a.people, a.groups, a.setup, fx, a.backup, a.recurring)
     private suspend fun me(a: Apis) = (a.setup.observeSetupState().first() as SetupState.Ready).me.id
     private suspend fun other(a: Apis) = a.people.observePeople().first().first().person.id
     private suspend fun basis(a: Apis) = a.backup.observeLedgerGeneration().first()

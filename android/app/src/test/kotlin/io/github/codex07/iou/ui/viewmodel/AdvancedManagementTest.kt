@@ -21,8 +21,8 @@ class AdvancedManagementTest {
     @BeforeEach fun setup() { Dispatchers.setMain(dispatcher) }
     @AfterEach fun cleanup() { Dispatchers.resetMain() }
     private val eur = CurrencyCode("EUR")
-    private fun operations(a: Apis, people: PeopleApi = a.people, ledger: LedgerApi = a.ledger) = AdvancedViewModel(people, a.groups, ledger, a.backup)
-    private fun entry(a: Apis) = EntryFormViewModel(a.ledger, a.people, a.groups, a.setup, a.fx, a.backup)
+    private fun operations(a: Apis, people: PeopleApi = a.people, ledger: LedgerApi = a.ledger) = AdvancedViewModel(people, a.groups, ledger, a.backup, a.recurring)
+    private fun entry(a: Apis) = EntryFormViewModel(a.ledger, a.people, a.groups, a.setup, a.fx, a.backup, a.recurring)
     private fun metadata(a: Apis) = MetadataFormViewModel(a.people, a.groups, a.ledger, a.backup)
     private suspend fun basis(a: Apis) = a.backup.observeLedgerGeneration().first()
     private suspend fun me(a: Apis) = (a.setup.observeSetupState().first() as SetupState.Ready).me.id

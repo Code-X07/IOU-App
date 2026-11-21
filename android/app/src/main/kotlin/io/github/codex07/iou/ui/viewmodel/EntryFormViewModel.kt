@@ -6,6 +6,7 @@ import io.github.codex07.iou.api.*
 import io.github.codex07.iou.ledger.model.*
 import io.github.codex07.iou.money.*
 import io.github.codex07.iou.ui.forms.*
+import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -15,6 +16,7 @@ data class EntryFormState(
     val groups: List<GroupDetail> = emptyList(), val editing: Boolean = false,
     val preview: SplitPreview? = null, val previewError: LedgerError? = null, val previewBusy: Boolean = false,
     val quote: FxQuote? = null, val storedFx: FxSnapshotView? = null,
+    val schedule: ScheduleFields? = null, val occurrence: LocalDate? = null,
     val remaining: List<Money>? = null, val remainingMembers: List<MemberView> = emptyList(), val remainingLabel: String? = null,
 )
 
@@ -22,7 +24,7 @@ data class EntryFormState(
 @HiltViewModel
 class EntryFormViewModel @Inject constructor(
     private val ledger: LedgerApi, private val people: PeopleApi, private val groups: GroupsApi,
-    private val setup: SetupApi, private val fx: FxApi, backup: BackupApi,
+    private val setup: SetupApi, private val fx: FxApi, backup: BackupApi, private val recurring: RecurringApi,
 ) : SafeFormViewModel(backup) {
     private val mutableState = MutableStateFlow(EntryFormState())
     val state = mutableState.asStateFlow()
@@ -30,6 +32,10 @@ class EntryFormViewModel @Inject constructor(
     private var recoveryPaid: Money? = null
     private var settlementPrefill: SettleUpDraft? = null
     private var initial = EntryFields()
+    private var initialSchedule: ScheduleFields? = null
+    private var scheduleId: RecurringId? = null
+    private var occurrenceDraft: OccurrenceDraft? = null
+    private var requestedOccurrence: Pair<RecurringId, LocalDate>? = null
     private var id: EntryId? = null
     private var token: EditToken? = null
     private var me: PersonRef? = null
@@ -39,6 +45,64 @@ class EntryFormViewModel @Inject constructor(
     private val quotes = mutableMapOf<Triple<java.time.LocalDate, CurrencyCode, CurrencyCode>, FxQuote>()
 
     fun open(purpose: String = "expense", entryId: String? = null) { initialize { load(purpose, entryId) } }
+    fun openSchedule(schedule: RecurringId?, recovery: RecoveryDraft? = null) = initialize {
+        loadSchedule(schedule, recovery)
+    }
+
+    private suspend fun loadSchedule(schedule: RecurringId?, recovery: RecoveryDraft? = null) {
+        scheduleId = schedule
+        val detail = schedule?.let { recurring.observeSchedule(it).first() }
+        if (schedule != null && (detail == null || detail.summary.deleted)) {
+            fail(LedgerError.NotFound(schedule.value))
+            return
+        }
+        token = recovery?.token ?: detail?.token
+        token?.let(::requireGeneration)
+        if (status.value.invalidated) return
+        val template = (recovery?.draft as? VersionDraft.OfSchedule)?.draft ?: detail?.editDraft
+        initialSchedule = template?.let { ScheduleFields.from(it, detail?.handledThrough) } ?: ScheduleFields()
+        load("expense", null, template?.expenseTemplate(), initialSchedule)
+        if (recovery != null && status.value.error == null) changed(true)
+    }
+
+    fun openOccurrence(schedule: RecurringId, date: LocalDate) = initialize { loadOccurrence(schedule, date) }
+
+    private suspend fun loadOccurrence(schedule: RecurringId, date: LocalDate) {
+        requestedOccurrence = schedule to date
+        occurrenceDraft = null
+        val detail = recurring.observeSchedule(schedule).first()
+        if (detail == null || detail.summary.deleted) {
+            fail(LedgerError.NotFound(schedule.value))
+            return
+        }
+        if (detail.due.firstOrNull() != date) {
+            fail(LedgerError.OccurrenceNotDue(detail.summary.next))
+            return
+        }
+        when (val result = recurring.occurrenceDraft(schedule)) {
+            is LedgerResult.Err -> fail(result.error)
+            is LedgerResult.Ok -> {
+                val draft = result.value
+                requireGeneration(draft.token)
+                if (status.value.invalidated) return
+                if (draft.occurrence != date) {
+                    fail(LedgerError.OccurrenceNotDue(draft.occurrence))
+                    return
+                }
+                occurrenceDraft = draft
+                load("expense", null, draft.draft, occurrence = date)
+            }
+        }
+    }
+
+    fun changeSchedule(update: (ScheduleFields) -> ScheduleFields) {
+        if (!editable) return
+        val current = state.value.schedule ?: return
+        val next = update(current)
+        mutableState.update { it.copy(schedule = next) }
+        changed(next != initialSchedule || state.value.fields != initial)
+    }
+
     fun openSettlement(draft: SettleUpDraft) {
         initialize { settlementPrefill = draft; requireGeneration(EditToken(draft.basis, 0)); if (!status.value.invalidated) load("repayment", null) }
     }
@@ -61,7 +125,10 @@ class EntryFormViewModel @Inject constructor(
         mutableState.update { it.copy(fields = EntryInput.fromDraft(draft), storedFx = historicalSnapshot) }
         if (!status.value.invalidated) changed(true)
     }
-    private suspend fun load(purpose: String, entryId: String?) {
+    private suspend fun load(
+        purpose: String, entryId: String?, prefill: ExpenseDraft? = null,
+        schedule: ScheduleFields? = null, occurrence: LocalDate? = null,
+    ) {
         recoveryFx = null; recoveryPaid = null
         id = entryId?.let(::EntryId)
         me = (setup.observeSetupState().first() as? SetupState.Ready)?.me
@@ -79,8 +146,9 @@ class EntryFormViewModel @Inject constructor(
             fields = EntryInput.fromDraft(detail.editDraft); snapshot = detail.fx
         }
         settlementPrefill?.let { fields = EntryInput.fromDraft(it.draft) }
+        prefill?.let { fields = EntryInput.fromDraft(it) }
         initial = fields
-        mutableState.value = EntryFormState(fields, listOf(me!!) + contacts, allGroups, id != null, storedFx = snapshot)
+        mutableState.value = EntryFormState(fields, listOf(me!!) + contacts, allGroups, id != null, storedFx = snapshot, schedule = schedule, occurrence = occurrence)
         catalog?.cancel()
         catalog = viewModelScope.launch {
             val groupFlow = groups.observeGroups(includeArchived = true).flatMapLatest { summaries ->
@@ -101,10 +169,10 @@ class EntryFormViewModel @Inject constructor(
         viewModelScope.launch { yield(); schedulePreview() }
     }
     fun change(update: (EntryFields) -> EntryFields) {
-        if (!editable) return
+        if (!editable || occurrenceUnavailable()) return
         val next = update(state.value.fields)
         mutableState.update { it.copy(fields = next, preview = null, previewError = null, quote = null) }
-        changed(next != initial); schedulePreview()
+        changed(next != initial || state.value.schedule != initialSchedule); schedulePreview()
     }
     fun chooseGroup(value: String?) = change { fields ->
         // Preserve entered selections; the user chooses valid members rather than silently losing a split.
@@ -138,7 +206,16 @@ class EntryFormViewModel @Inject constructor(
     }
     fun setPayerSplit(split: PayerSplit) = change { it.copy(payerSplit = split) }
     fun setPayerInput(id: String, text: String) = change { it.copy(payerInputs = it.payerInputs + (id to text)) }
-    fun reviewLatest() { reopen { load("expense", id?.value) } }
+    fun reviewLatest() {
+        reopen {
+            val occurrence = requestedOccurrence
+            when {
+                occurrence != null -> loadOccurrence(occurrence.first, occurrence.second)
+                scheduleId != null -> loadSchedule(scheduleId)
+                else -> load("expense", id?.value)
+            }
+        }
+    }
     override fun cancelPending() {
         revision++; previewJob?.cancel(); catalog?.cancel()
         mutableState.update { it.copy(preview = null, quote = null, previewBusy = false) }
@@ -147,6 +224,7 @@ class EntryFormViewModel @Inject constructor(
     private fun schedulePreview() {
         previewJob?.cancel()
         val version = ++revision
+        if (state.value.schedule != null) return
         val fields = state.value.fields
         mutableState.update { it.copy(preview = null, previewError = null, previewBusy = true, quote = null) }
         previewJob = viewModelScope.launch {
@@ -199,10 +277,15 @@ class EntryFormViewModel @Inject constructor(
             updated to displayQuote
         }
     }
+    private fun occurrenceUnavailable() =
+        requestedOccurrence != null && (occurrenceDraft == null || status.value.error is LedgerError.OccurrenceNotDue)
+
     fun save() {
-        if (!editable) return
+        if (!editable || occurrenceUnavailable()) return
         previewJob?.cancel(); revision++
         submit {
+            val schedule = state.value.schedule
+            if (schedule != null) return@submit saveSchedule(schedule)
             val prepared = prepare(state.value.fields)
             if (prepared is LedgerResult.Err) return@submit prepared
             val (draft, quote) = (prepared as LedgerResult.Ok).value
@@ -214,7 +297,11 @@ class EntryFormViewModel @Inject constructor(
             val result = when (draft) {
                 is ExpenseDraft -> when (val preview = ledger.previewSplit(draft, id)) {
                     is LedgerResult.Err -> preview
-                    is LedgerResult.Ok -> ledger.saveExpense(draft, mode)
+                    is LedgerResult.Ok -> {
+                        val occurrence = occurrenceDraft
+                        if (occurrence == null) ledger.saveExpense(draft, mode)
+                        else recurring.postOccurrence(occurrence.schedule, occurrence.occurrence, draft, occurrence.token)
+                    }
                 }
                 is TransferDraft -> ledger.saveTransfer(draft, mode)
             }
@@ -235,5 +322,15 @@ class EntryFormViewModel @Inject constructor(
             }
             result.map { it.value }
         }
+    }
+
+    private suspend fun saveSchedule(fields: ScheduleFields): LedgerResult<String> {
+        val parsed = ledgerResult {
+            val expense = EntryInput.draft(state.value.fields).bind() as ExpenseDraft
+            fields.draft(expense).bind()
+        }
+        if (parsed is LedgerResult.Err) return parsed
+        val mode = scheduleId?.let { ScheduleSaveMode.Update(it, checkNotNull(token)) } ?: ScheduleSaveMode.Create(basis)
+        return recurring.saveSchedule((parsed as LedgerResult.Ok).value, mode).map { it.value }
     }
 }

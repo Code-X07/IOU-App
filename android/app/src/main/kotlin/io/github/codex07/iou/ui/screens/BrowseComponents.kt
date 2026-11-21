@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import io.github.codex07.iou.api.*
 import io.github.codex07.iou.ui.forms.isIdentityChange
 import io.github.codex07.iou.ledger.model.EntityType
+import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.money.Money
 import io.github.codex07.iou.ui.components.*
 import io.github.codex07.iou.ui.viewmodel.BrowseState
@@ -115,7 +116,8 @@ fun InfoLine(label: String, value: String) {
     }
 }
 
-fun LazyListScope.activityRows(entries: List<ActivityItem>, hidden: Boolean, open: (String) -> Unit) {
+fun LazyListScope.activityRows(entries: List<ActivityItem>, hidden: Boolean, open: (String) -> Unit,
+                               openSchedule: ((RecurringId) -> Unit)? = null) {
     if (entries.isEmpty()) item { Notice("No activity", "There are no records to display in this view.") }
     entries.groupBy { it.occurredOn }.forEach { (date, rows) ->
         item(key = "date:$date") { BrowseHeading(date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))) }
@@ -123,6 +125,12 @@ fun LazyListScope.activityRows(entries: List<ActivityItem>, hidden: Boolean, ope
             IouCard(Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = tween(IouMotion.placement))) { Column {
                 if (entry.deleted) Text("Deleted · history kept", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
                 EntryPreview(entry, hidden) { open(entry.entryId.value) }
+                val schedule = entry.recurringId
+                if (schedule != null && openSchedule != null) {
+                    TextButton(onClick = { openSchedule(schedule) }, modifier = Modifier.padding(horizontal = 12.dp)) {
+                        Text("Open recurring schedule")
+                    }
+                }
             } }
         }
     }

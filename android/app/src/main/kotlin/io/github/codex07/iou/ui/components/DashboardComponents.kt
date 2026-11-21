@@ -212,6 +212,7 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
     FinancialPreviewRow(onClick, leading = {
         Box(Modifier.size(40.dp).background(colors.primaryContainer, MaterialTheme.shapes.small), contentAlignment = Alignment.Center) {
             Icon(when {
+                item.recurringId != null -> IouIcons.Recurring
                 item.kind == io.github.codex07.iou.api.EntryKind.EXPENSE -> IouIcons.Activity
                 item.transferKind == TransferKind.LOAN -> IouIcons.People
                 item.transferKind == TransferKind.REPAYMENT -> IouIcons.Settle
@@ -221,6 +222,7 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
     }, main = {
         Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(when {
+            item.recurringId != null -> "Recurring expense"
             item.kind == io.github.codex07.iou.api.EntryKind.EXPENSE -> "Shared expense"
             item.transferKind == TransferKind.LOAN -> "Personal loan"
             item.transferKind == TransferKind.REPAYMENT -> "Recorded repayment"
@@ -229,6 +231,10 @@ fun EntryPreview(item: ActivityItem, hidden: Boolean, onClick: () -> Unit) {
         Text(stringResource(R.string.paid_context, payer, item.group?.name ?: stringResource(R.string.personal_context)),
             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
         item.receiver?.let { Text("To ${it.displayName}", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
+        item.recurringOn?.let {
+            Text("Scheduled for ${it.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))}",
+                style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+        }
         Text(item.occurredOn.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)),
             style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
     }, amounts = {
