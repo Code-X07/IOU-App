@@ -55,7 +55,7 @@ fun LedgerError.userMessage(hidden: Boolean = false, currency: io.github.codex07
         "Payer amounts must add up to the expense total. ${if (diffMinor > 0) "Still to allocate" else "Over allocated"}: $value."
     }
     is LedgerError.DuplicatePayer -> "Choose each payer only once."
-    is LedgerError.OccurrenceNotDue -> nextDue?.let { "Post or skip the occurrence on $it first." } ?: "This schedule has no more occurrences."
+    is LedgerError.OccurrenceNotDue -> nextDue?.let { "Post or skip the occurrence on $it first." } ?: "No occurrence is currently available to handle."
     is LedgerError.NeedsGroup -> "Personal entries must involve you and one other person. Create a group for this selection."
     is LedgerError.NotGroupMember -> "A selected person is not a member of this group. Review the participants."
     is LedgerError.MemberRemoved -> "A selected person is no longer an active group member. Review the participants."

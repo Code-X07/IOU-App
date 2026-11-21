@@ -102,6 +102,31 @@ class RecurringFormsTest {
         outdated.finish()
     }
 
+    @Test fun `an archive after post and skip review prevents using a now held occurrence`() = runTest(dispatcher) {
+        val a = FakeApis.seeded(clock)
+        val due = a.recurring.observeDue().first().first { it.description == "Rent" }
+        val post = form(a)
+        val skip = DueViewModel(a.recurring)
+        post.openOccurrence(due.schedule, due.date)
+        skip.prepareSkip(due)
+        runCurrent()
+        val reviewed = checkNotNull(skip.action.value.review)
+        val group = checkNotNull(a.groups.observeGroup(checkNotNull(due.group).id).first())
+        assertTrue(a.groups.setGroupArchived(group.group.id, true, group.token) is LedgerResult.Ok)
+        val held = a.recurring.observeSchedule(due.schedule).first()!!
+        assertEquals(reviewed.token, held.token)
+        assertTrue(held.summary.holds.isNotEmpty())
+        post.save()
+        skip.confirmSkip(due.date)
+        runCurrent()
+        assertEquals(LedgerError.OccurrenceNotDue(null), post.status.value.error)
+        assertEquals(LedgerError.OccurrenceNotDue(null), skip.action.value.error)
+        assertTrue(post.status.value.message!!.contains("on hold"))
+        assertTrue(skip.action.value.message!!.contains("on hold"))
+        assertEquals(held, a.recurring.observeSchedule(due.schedule).first())
+        post.finish()
+    }
+
     @Test fun `skip review uses due dates and the reviewed token then refreshes from the backend`() = runTest(dispatcher) {
         val a = FakeApis.seeded(clock)
         val due = a.recurring.observeDue().first().first { it.description == "Rent" }

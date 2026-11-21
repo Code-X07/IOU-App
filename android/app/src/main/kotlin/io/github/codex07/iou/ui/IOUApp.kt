@@ -103,8 +103,11 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
     val openPerson: (String) -> Unit = { stack = stack + "person:$it" }
     val openGroup: (String) -> Unit = { stack = stack + "group:$it" }
     val openEntry: (String) -> Unit = { stack = stack + "entry:$it" }
-    val openSchedule: (RecurringId) -> Unit = { id -> stack = stack + "schedule:${id.value}" }
-    val openDue: () -> Unit = { if ("due:" !in stack) stack = stack + "due:" else stack = stack.take(stack.indexOf("due:") + 1) }
+    val openSchedule: (RecurringId) -> Unit = { id ->
+        val route = "schedule:${id.value}"
+        stack = stack.filterNot { it == route } + route
+    }
+    val openDue: () -> Unit = { stack = RecurringNotificationRoute(null).open(stack) }
     BackHandler(enabled = !activeForm && stack.isNotEmpty() && unfinished == null && !addMenu) { stack = stack.dropLast(1) }
     val settings = stringResource(R.string.profile_settings)
     val add = stringResource(R.string.add_record)
@@ -124,9 +127,12 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
-    LaunchedEffect(dueRequest) {
+    LaunchedEffect(dueRequest, advancedState.busy, advancedState.openRoute) {
+        if (advancedState.busy || advancedState.openRoute != null) return@LaunchedEffect
         dueRequest?.let { request ->
+            advanced.dismiss()
             addMenu = false
+            unfinished = null
             stack = request.open(stack)
             onDueOpened(request)
         }
@@ -336,7 +342,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                                     DueScreen(due, action, hidden, vm::retry, openSchedule,
                                         post = { occurrence -> stack = stack + formRoute("occurrence", "${occurrence.schedule.value}:${occurrence.date}") },
                                         skip = vm::prepareSkip, confirmSkip = vm::confirmSkip, dismiss = vm::dismiss,
-                                        focus = focus, showAll = { stack = RecurringNotificationRoute(null).open(stack) })
+                                        focus = focus, showAll = openDue)
                                 }
                                 "form-schedule", "form-occurrence" -> {
                                     val posting = route.startsWith("form-occurrence:")

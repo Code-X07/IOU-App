@@ -55,7 +55,7 @@ class DueViewModel @Inject constructor(private val api: RecurringApi) : BrowseVi
             val detail = api.observeSchedule(occurrence.schedule).first()
             when {
                 detail == null || detail.summary.deleted -> DueAction(error = LedgerError.NotFound(occurrence.schedule.value))
-                detail.due.firstOrNull() != occurrence.date -> DueAction(error = LedgerError.OccurrenceNotDue(detail.summary.next))
+                detail.due.firstOrNull() != occurrence.date -> unavailable(detail)
                 else -> DueAction(review = SkipReview(occurrence.schedule, detail.due, detail.token))
             }
         }
@@ -65,12 +65,20 @@ class DueViewModel @Inject constructor(private val api: RecurringApi) : BrowseVi
         val review = action.value.review ?: return
         if (through !in review.dates) return
         perform {
+            // A hold can start while the confirmation is open and leave the reviewed token current.
+            val current = api.observeSchedule(review.schedule).first()
+            if (current?.token == review.token && through !in current.due) return@perform unavailable(current)
             when (val result = api.skipOccurrences(review.schedule, through, review.token)) {
                 is LedgerResult.Ok -> DueAction(message = "Occurrences skipped through $through.")
                 is LedgerResult.Err -> DueAction(error = result.error)
             }
         }
     }
+
+    private fun unavailable(detail: ScheduleDetail) = DueAction(
+        error = LedgerError.OccurrenceNotDue(detail.due.firstOrNull()),
+        message = if (detail.summary.holds.isNotEmpty()) "This schedule is on hold. Review the archived references in schedule details." else null,
+    )
 
     fun dismiss() { if (!action.value.busy) mutableAction.value = DueAction() }
 

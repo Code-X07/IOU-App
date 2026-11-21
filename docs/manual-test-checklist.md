@@ -224,14 +224,14 @@ Open items (not done, or only partly covered):
 
 ## 9. Recurring expenses on the device (spec §5.7, AC 29 and 34)
 
-Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug build. Items 1–7 need the schedule screens (the friend's work, `docs/m2-ui-contract-changes.md`). Smoke check done on 2026-11-08 at `89a6d0d`: the app starts with no crash, the `RecurringPostWorker` job is registered, and its first run at enqueue gives no crash.
+Use a disposable emulator with the real debug build. Open Recurring expenses from the calendar icon in the app bar. See [M2 verification](m2-verification.md) for the latest integration results. An earlier worker smoke check was recorded on 2026-11-08 at `89a6d0d`: the app starts with no crash, the `RecurringPostWorker` job is registered, and its first run at enqueue gives no crash.
 
 1. Create an auto-post schedule whose first date is today, close the app, open it again: the expense is posted once; reopening posts nothing more (AC 29).
 2. Grant notifications. With the app closed, run the worker on demand: `adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler io.github.codex07.iou <job id>` (the id is on the `#RecurringPostWorker#` line of `adb shell dumpsys jobscheduler`). WorkManager delays a forced run before the 6-hour period is up (logcat: "Delaying execution ... before schedule"), so move the emulator clock forward 6 hours first. An auto-post date that came due is posted and one "Recurring expenses posted" notification appears.
 3. A confirm-first schedule that becomes due shows one "due" notification; running the worker again does not repeat it; posting the date in the app removes it.
 4. Turn app lock on and repeat 2–3: neither notification names a person, an amount or a description. Then, with a detailed due and a detailed posted notification showing (lock off), switch app lock on in the app: the due notification is redrawn without its description or amount and makes no sound, and the posted one is removed.
 5. Deny or revoke the notification permission and run the worker: the date is still posted, nothing is shown.
-6. Tap a due notification: `MainActivity` opens with `iou.open = "due"` (and `iou.schedule` for one schedule); `adb shell dumpsys activity activities | grep iou.open` shows the extra if the UI does not yet handle it.
+6. Tap a due notification with the app stopped, then repeat with it running. The aggregate notification opens Due expenses and a schedule notification focuses that schedule. With app lock enabled, verify that the financial screen appears only after authentication. Also exercise the first-save permission prompt once with Allow and once with Don't allow on separate disposable installs.
 7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34). Then post every due occurrence of one of them in the app: its notification goes, and the other schedule's notification is still shown (silently redrawn, without the group).
 
 - [ ] Result recorded:
@@ -245,9 +245,8 @@ the owner's long-lived AVD.
   a few expenses; create an unencrypted backup and a normalized export. Install the `v0.2.0` candidate over it
   (`adb install -r`): the app starts, every balance and group net is unchanged, and every expense shows one payer
   (AC 25).
-- [ ] On the upgraded app, export XLSX in both shapes (if the UI offers XLSX; otherwise export through a debug
-  build of the export screen or note it as waiting for the UI). Pull the files and open them in Excel and
-  LibreOffice: this is the FastExcel-on-Android check of spec §14 item 1.
+- [ ] On the upgraded app, choose XLSX in Export data and save both shapes. Pull the files and open them in
+  Excel and LibreOffice to check FastExcel output from Android (spec §14 item 1).
 - [ ] Restore the `v0.1.0` backup and import the `v0.1.0` normalized export into a freshly set-up install (another
   identity): the identity prompt appears, nothing is invalid, every net matches (AC 16, 25). Undo the import: it
   reports nothing skipped and every net is 0.

@@ -76,7 +76,7 @@ class EntryFormViewModel @Inject constructor(
             return
         }
         if (detail.due.firstOrNull() != date) {
-            fail(LedgerError.OccurrenceNotDue(detail.summary.next))
+            fail(unavailableOccurrence(detail))
             return
         }
         when (val result = recurring.occurrenceDraft(schedule)) {
@@ -277,6 +277,13 @@ class EntryFormViewModel @Inject constructor(
             updated to displayQuote
         }
     }
+    private fun unavailableOccurrence(detail: ScheduleDetail): LedgerError {
+        if (detail.summary.holds.isNotEmpty()) {
+            mutableStatus.update { it.copy(message = "This schedule is on hold. Review the archived references in schedule details.") }
+        }
+        return LedgerError.OccurrenceNotDue(detail.due.firstOrNull())
+    }
+
     private fun occurrenceUnavailable() =
         requestedOccurrence != null && (occurrenceDraft == null || status.value.error is LedgerError.OccurrenceNotDue)
 
@@ -286,6 +293,14 @@ class EntryFormViewModel @Inject constructor(
         submit {
             val schedule = state.value.schedule
             if (schedule != null) return@submit saveSchedule(schedule)
+            val occurrence = occurrenceDraft
+            if (occurrence != null) {
+                // Archiving a referenced record can start a hold without changing the schedule's token.
+                val current = recurring.observeSchedule(occurrence.schedule).first()
+                if (current?.token == occurrence.token && current.due.firstOrNull() != occurrence.occurrence) {
+                    return@submit LedgerResult.Err(unavailableOccurrence(current))
+                }
+            }
             val prepared = prepare(state.value.fields)
             if (prepared is LedgerResult.Err) return@submit prepared
             val (draft, quote) = (prepared as LedgerResult.Ok).value
@@ -298,7 +313,6 @@ class EntryFormViewModel @Inject constructor(
                 is ExpenseDraft -> when (val preview = ledger.previewSplit(draft, id)) {
                     is LedgerResult.Err -> preview
                     is LedgerResult.Ok -> {
-                        val occurrence = occurrenceDraft
                         if (occurrence == null) ledger.saveExpense(draft, mode)
                         else recurring.postOccurrence(occurrence.schedule, occurrence.occurrence, draft, occurrence.token)
                     }

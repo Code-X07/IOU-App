@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import dagger.hilt.android.AndroidEntryPoint
 import io.github.codex07.iou.ui.IouRoot
@@ -23,13 +24,17 @@ import io.github.codex07.iou.ui.navigation.RecurringNotificationRoute
 import io.github.codex07.iou.ui.viewmodel.AuthPurpose
 import io.github.codex07.iou.ui.viewmodel.AuthenticationRequest
 import io.github.codex07.iou.ui.viewmodel.SecurityViewModel
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
     private val security: SecurityViewModel by viewModels()
+    @Inject lateinit var recurring: RecurringTriggers
     private var authenticationId: Long? = null
     private var dueRequest by mutableStateOf<RecurringNotificationRoute?>(null)
-    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) recurring.requestPass()
+    }
 
     private lateinit var prompt: BiometricPrompt
     private val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
@@ -80,7 +85,7 @@ class MainActivity : FragmentActivity() {
         if (BuildConfig.FLAVOR != "real" || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val preferences = getSharedPreferences("recurring-notifications", MODE_PRIVATE)
         if (preferences.getBoolean("permission-offered", false)) return
-        preferences.edit().putBoolean("permission-offered", true).apply()
+        preferences.edit { putBoolean("permission-offered", true) }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }

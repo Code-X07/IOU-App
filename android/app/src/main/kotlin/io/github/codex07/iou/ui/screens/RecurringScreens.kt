@@ -83,6 +83,8 @@ fun ScheduleDetailScreen(
                 IouCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         ScheduleSummaryContent(summary, hidden)
+                        InfoLine("Start date", detail.editDraft.startOn.toString())
+                        detail.editDraft.endOn?.let { InfoLine("End date", it.toString()) }
                         InfoLine("Last handled", detail.handledThrough?.toString() ?: "None yet")
                         detail.editDraft.category?.let { InfoLine("Category", it.name.lowercase()) }
                         detail.editDraft.note?.let { InfoLine("Note", if (hidden) "Hidden" else it) }
