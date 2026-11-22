@@ -50,4 +50,10 @@ The two flavors install side by side (the fake has the `.fake` application ID su
 
 ## Contributing
 
+This is a personal project, so maintenance will be slow. Outside contributions aren't expected, but they are welcome: open an issue or a pull request.
+
 Two contributors: core (domain, data, engine) and UI/UX (screens, ViewModels). The boundary is the `api` package plus an in-memory fake, described in spec §6.
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).
