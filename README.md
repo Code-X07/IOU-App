@@ -25,11 +25,12 @@ Later phases add pay/request helpers (EPC QR, Revolut links), automatic detectio
 
 ## Docs
 
+- [Documentation index](docs/README.md): every spec, ADR, plan and review in one place
 - [MVP design spec (milestones 0–2)](docs/superpowers/specs/2026-11-02-iou-mvp-design.md)
 - [UI contributor guide](docs/ui-contributor-guide.md)
 - [Manual test checklist](docs/manual-test-checklist.md), run before each release
 - [Architecture decision records](docs/adr/README.md)
-- Implementation reviews: [M0](docs/reviews/2026-11-04-m0-implementation-review.md), [M1](docs/reviews/2026-11-06-m1-implementation-review.md), [PR #1 integration](docs/reviews/2026-11-06-pr1-integration-review.md)
+- [Reviews](docs/README.md#reviews): implementation, design, plan and security reviews
 
 ## Tech
 
