@@ -2,7 +2,7 @@
 
 M2 adds expenses paid by several people, recurring expenses, group and schedule import, and XLSX export. **All of it is live on `main` now** (both flavors; notifications in the real build only). The core side is done and reviewed; `v0.2.0` ships once the screens below are in, followed by a bug-fix round. Full details: spec §4.4, §5.7, §6.2, §7 (`docs/superpowers/specs/2026-11-02-iou-mvp-design.md`) and `docs/ui-contributor-guide.md`.
 
-## UI to-do before v0.2.0
+## UI to-do before v0.2.0 (all done; released in `v0.2.0`)
 
 - [x] **Payers on the expense form:** move the form to `ExpenseDraft.payers` / `payerSplit` (EQUAL or EXACT amounts) and show every payer wherever "paid by" appears (activity, entry detail, group expenses) from `ActivityItem.payers`. See "Multiple payers" below.
 - [x] **Schedule screens:** schedule list, schedule detail and edit form (with the next date shown before saving), a separate "on hold" list, and the due list with post / skip and the "confirm these to resume auto-posting" line. Inject `RecurringApi` (also `Apis.recurring`). See "Recurring expenses" below.

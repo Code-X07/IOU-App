@@ -26,7 +26,7 @@ Edit the transaction date or paid amount on a converted expense or transfer with
 
 Request a fresh quote when the date or paid amount changes on a rate-based edit, and keep the existing rate available as an explicit choice. Preserve the existing bank-actual behavior, including keeping the recorded charge across date-only edits and requiring a new FX choice when the paid amount changes.
 
-Evidence in [edit draft field mapping](../../android/app/src/main/kotlin/io/github/codex07/iou/ui/forms/EntryInput.kt#L79), [date editing and FX controls](../../android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/EntryFormScreen.kt#L209), [FX choice preparation](../../android/app/src/main/kotlin/io/github/codex07/iou/ui/viewmodel/EntryFormViewModel.kt#L262), [saved-rate application](../../android/app/src/main/kotlin/io/github/codex07/iou/ledger/ops/EntryOps.kt#L251) and [MVP spec §4.5](../superpowers/specs/2026-11-02-iou-mvp-design.md#L463).
+Evidence in [edit draft field mapping](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/ui/forms/EntryInput.kt#L79), [date editing and FX controls](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/EntryFormScreen.kt#L209), [FX choice preparation](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/ui/viewmodel/EntryFormViewModel.kt#L262), [saved-rate application](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/ledger/ops/EntryOps.kt#L251) and [MVP spec §4.5](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/superpowers/specs/2026-11-02-iou-mvp-design.md?plain=1#L463).
 
 ### F2 — Backup creation can mark an unrestorable file as a successful backup
 
@@ -34,7 +34,7 @@ A large ledger, including its revision history, can produce a backup larger than
 
 Check the serialized and final file sizes against the restore limits before writing to the selected document, and leave the reminder unchanged on rejection. A test with small injected limits can cover the boundary without building a large test ledger.
 
-Evidence in [backup creation and restore](../../android/app/src/main/kotlin/io/github/codex07/iou/data/RealBackupApi.kt#L44), [format encoding and read checks](../../android/app/src/main/kotlin/io/github/codex07/iou/data/BackupFormat.kt#L43), [read-side limit test](../../android/app/src/test/kotlin/io/github/codex07/iou/data/BackupFormatTest.kt#L125) and [MVP spec §7.1](../superpowers/specs/2026-11-02-iou-mvp-design.md#L675).
+Evidence in [backup creation and restore](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/data/RealBackupApi.kt#L44), [format encoding and read checks](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/data/BackupFormat.kt#L43), [read-side limit test](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/test/kotlin/io/github/codex07/iou/data/BackupFormatTest.kt#L125) and [MVP spec §7.1](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/superpowers/specs/2026-11-02-iou-mvp-design.md?plain=1#L675).
 
 ## Low
 
@@ -44,7 +44,7 @@ When two schedules are due, a child notification can still be titled for one sch
 
 M2 Part 4's notifier example matches the implementation. Its UI handoff and the manual checklist say a notification about one schedule should focus that schedule. Pass the schedule ID on every schedule child and keep the group summary aggregate.
 
-Evidence in the [notification adapter](../../android/app/src/main/kotlin/io/github/codex07/iou/data/AndroidRecurringNotices.kt#L60), [due-list filtering](../../android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/RecurringScreens.kt#L125), [M2 Part 4 handoff](../superpowers/plans/2026-11-07-m2-04-recurring-app.md#L1769), [M2 Part 4 notifier example](../superpowers/plans/2026-11-07-m2-04-recurring-app.md#L2175) and [manual checklist §9](../manual-test-checklist.md#L234).
+Evidence in the [notification adapter](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/data/AndroidRecurringNotices.kt#L60), [due-list filtering](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/RecurringScreens.kt#L125), [M2 Part 4 handoff](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/superpowers/plans/2026-11-07-m2-04-recurring-app.md?plain=1#L1769), [M2 Part 4 notifier example](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/superpowers/plans/2026-11-07-m2-04-recurring-app.md?plain=1#L2175) and [manual checklist §9](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/manual-test-checklist.md?plain=1#L234).
 
 ## Very low
 
@@ -75,16 +75,16 @@ Used the current MVP spec, M0 and M1 milestone context, the five M2 plan parts, 
 
 Two documented runner follow-ups remain relevant. A large forward device-date change can post a long series of future occurrences in one pass because the loop uses the advanced date as its stopping point. Unexpected write or notification exceptions in requested passes are swallowed, which makes failures hard to diagnose. Both were already recorded at onboarding and are outside the new finding count. The owner has also accepted the case where notifications are disabled and re-enabled between runner passes.
 
-[Recurring runner](../../android/app/src/main/kotlin/io/github/codex07/iou/store/RecurringRunner.kt#L115) · [Notification limitation in MVP spec §5.7](../superpowers/specs/2026-11-02-iou-mvp-design.md#L600)
+[Recurring runner](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/android/app/src/main/kotlin/io/github/codex07/iou/store/RecurringRunner.kt#L115) · [Notification limitation in MVP spec §5.7](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/superpowers/specs/2026-11-02-iou-mvp-design.md?plain=1#L600)
 
 ## Obvious security issues
 
 No obvious security defect was established in the source pass. The review covered app-lock gating and notification redaction, screen protection, backup encryption defaults and Android backup exclusions, merged permissions and exported components, cleartext policy, and signing secret references. It did not include dependency auditing or device-based security testing.
 
-[Security spec](../superpowers/specs/2026-11-02-iou-mvp-design.md#L809) · [Main manifest](../../android/app/src/main/AndroidManifest.xml) · [Real manifest](../../android/app/src/real/AndroidManifest.xml) · [Cloud and device transfer rules](../../android/app/src/main/res/xml/data_extraction_rules.xml) · [Release workflow](../../.github/workflows/release.yml)
+[Security spec](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/superpowers/specs/2026-11-02-iou-mvp-design.md?plain=1#L809) · [Main manifest](../../android/app/src/main/AndroidManifest.xml) · [Real manifest](../../android/app/src/real/AndroidManifest.xml) · [Cloud and device transfer rules](../../android/app/src/main/res/xml/data_extraction_rules.xml) · [Release workflow](../../.github/workflows/release.yml)
 
 ## Verification
 
 - GitHub CI succeeded on the exact reviewed commit. The workflow runs unit tests, lint, and debug assembly in both flavors. [CI run](https://github.com/Code-X07/IOU-App/actions/runs/44940854619)
 - The local combined run and single-worker retry both stopped at the fake-flavor compile JAR with a Windows file-lock error. The real-only retry encountered the same error on the real-flavor compile JAR. The review relies on exact-commit CI for test results.
-- Findings were traced in source. No new device tests were run. Outstanding device verification includes the periodic worker and grouped notification cadence, biometric and screen-protection behavior, and the duplicate-import round trip. [Manual checklist §§8–10](../manual-test-checklist.md#L190)
+- Findings were traced in source. No new device tests were run. Outstanding device verification includes the periodic worker and grouped notification cadence, biometric and screen-protection behavior, and the duplicate-import round trip. [Manual checklist §§8–10](https://github.com/Code-X07/IOU-App/blob/e7656fa221b319a63adc3415477dfe45915d6574/docs/manual-test-checklist.md?plain=1#L190)

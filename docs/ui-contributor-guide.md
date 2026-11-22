@@ -105,7 +105,7 @@ Payer errors (M2): `NoPayers` (the payer list is empty), `PaidRemaining(diffMino
 
 ## Changing the contract
 
-The `api` package is shared ground. To change it, open a small PR that touches `api` **and** the fake together; both of us review it. Contract tests run against the fake (and later the real implementation), so a change one side can't satisfy fails CI. Don't add Android types to `api`.
+The `api` package is shared ground. To change it, open a small PR that touches `api` **and** the fake together; both of us review it. Contract tests run against the fake and the real implementation, so a change one side can't satisfy fails CI. Don't add Android types to `api`.
 
 ## Running the fake
 

@@ -29,7 +29,7 @@
 | `test/...` | `PayerOpsTest` (new); additions to `EntryViewsTest`, `SeedDataTest`, `LedgerApiContract` |
 | `docs/ui-contributor-guide.md`, `docs/m2-ui-contract-changes.md`, spec §6.2 | Payers on drafts and read models |
 
-Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...` and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21 (`state.md`).
+Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...` and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21.
 
 ---
 

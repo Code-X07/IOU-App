@@ -1,12 +1,12 @@
 # Current implementation review — M0/M1
 
 Date: 2026-11-06 (Asia/Calcutta)  
-Repository: `D:\Workspace\IOU-App`  
+Repository: `Code-X07/IOU-App`  
 Reviewed commit: `bbd55f4df64ea2c1d2f14e8093388e0dcfbfd92a` (`main`, post-v0.1.0 spec sync)
 
 ## Scope and assessment
 
-Onboarding covered `AGENTS.md`, `HANDOFF.md`, `state.md`, the current [MVP design](../superpowers/specs/2026-11-02-iou-mvp-design.md), the [M1 plan index](../superpowers/plans/2026-11-04-m1-00-index.md), relevant implementation plans and ADRs, and both knowledge graphs. The code-review graph matched the reviewed commit. Its cumulative M1 change analysis hit the 500-function cap; scoped queries and direct source inspection supplied the detail, rather than treating graph results as exhaustive.
+Onboarding covered the local agent instructions and handoff notes, the current [MVP design](../superpowers/specs/2026-11-02-iou-mvp-design.md), the [M1 plan index](../superpowers/plans/2026-11-04-m1-00-index.md), relevant implementation plans and ADRs, and both knowledge graphs. The code-review graph matched the reviewed commit. Its cumulative M1 change analysis hit the 500-function cap; scoped queries and direct source inspection supplied the detail, rather than treating graph results as exhaustive.
 
 Reviewed the shared ledger/model/rules/ops/views, money and splits, store and Room persistence, FX, backup/restore, CSV import/export and undo, app-security wiring, API contracts, and build/release configuration. The current spec and recorded decisions take precedence over historical plan prose. This is a review of shipped M0/M1 core functionality, not the separate UI branch or unfinished M2 features.
 
@@ -134,7 +134,7 @@ Group history contains membership revisions, but `MemberView` has neither the me
 
 No separate obvious exploitable security flaw was established. The bounded review checked backup encryption/header authentication and KDF limits, import ZIP handling and text escaping, SAF access, cleartext-network policy, lock/screen-protection wiring, backup exclusions, debug-only components, and secret handling in release configuration. F2/F8 are file-validation integrity findings, not evidence that AES-GCM authentication can be bypassed. No signing secrets were read.
 
-This was not a penetration test, dependency/CVE audit, cryptographic audit, or fresh release-APK policy inspection. The separate security session should retain those responsibilities. The explicitly accepted unreadable-settings fallback, including lock-off defaults, is recorded in ADR-0011/state.md and was not presented as a new discovery.
+This was not a penetration test, dependency/CVE audit, cryptographic audit, or fresh release-APK policy inspection. The separate security session should retain those responsibilities. The explicitly accepted unreadable-settings fallback, including lock-off defaults, is recorded in ADR-0011 and the local project notes, and was not presented as a new discovery.
 
 ## Compliance boundaries and existing carries
 

@@ -16,7 +16,7 @@
 | UI contribution | 67 changed files, 6,247 insertions and 27 deletions relative to the common ancestor |
 | GitHub status | Draft; `CONFLICTING` / `DIRTY`; two failed `build` checks; no submitted reviews |
 | Branch protection | `main` reports `protected=false`, with no required status checks |
-| Isolated clone | `temp/pr1-integration-review-20261106`, branch `review/pr1-merge` |
+| Isolated clone | A local scratch clone (not in the repository), branch `review/pr1-merge` |
 
 The PR API's `baseRefOid` initially reported `69c765b...`, an older base snapshot. This review used the fetched remote `main` at `38edf451...`, confirmed by the branch API, rather than assuming that older value was current.
 
@@ -262,23 +262,23 @@ M2 XLSX/group-row import and unrelated platform upgrades should stay out of this
 
 ## Evidence retained locally
 
-All experiments and generated files are under `temp/`; this report is the only deliverable added outside it. No branch was pushed, no PR comment was posted, and no remote merge occurred.
+All experiments and generated files stayed in a local scratch folder that is not part of the repository; this report is the only deliverable. No branch was pushed, no PR comment was posted, and no remote merge occurred.
 
-| Evidence | Workspace-relative location |
+| Evidence | Location (local scratch folder, not in the repository) |
 | --- | --- |
-| Clone, resolved diagnostic merge and added probes | `temp/pr1-integration-review-20261106/` |
-| PR/base/check/comment snapshots | `temp/pr1-metadata.json`, `temp/main-branch-metadata.json`, `temp/main-ci.json`, `temp/pr1-review-comments.json`, `temp/pr1-final-status.json` |
-| Original failed PR CI and downloaded reports | `temp/pr1-ci-failure.log`, `temp/pr1-ci-reports/` |
-| Production compilation blocker | `temp/merged-compile.log` |
-| Both-flavor build/lint/test-compilation results | `temp/merged-checks.log` |
-| Full test run including seven failures | `temp/merged-tests.log` and clone `android/app/build/test-results/` |
-| Compile/fixture-only diagnostic patch | `temp/diagnostic-adaptations.patch` |
+| Clone, resolved diagnostic merge and added probes | `pr1-integration-review-20261106/` |
+| PR/base/check/comment snapshots | `pr1-metadata.json`, `main-branch-metadata.json`, `main-ci.json`, `pr1-review-comments.json`, `pr1-final-status.json` |
+| Original failed PR CI and downloaded reports | `pr1-ci-failure.log`, `pr1-ci-reports/` |
+| Production compilation blocker | `merged-compile.log` |
+| Both-flavor build/lint/test-compilation results | `merged-checks.log` |
+| Full test run including seven failures | `merged-tests.log` and clone `android/app/build/test-results/` |
+| Compile/fixture-only diagnostic patch | `diagnostic-adaptations.patch` |
 | Added test sources | Clone `android/app/src/test/kotlin/io/github/codex07/iou/ui/viewmodel/IntegrationDataReviewTest.kt`, `IntegrationRevisionReviewTest.kt`, `IntegrationSecurityReviewTest.kt` |
-| Startup/restart and SAF UI evidence | `temp/real-startup.xml`, `temp/real-restart.xml`, `temp/real-backup-screen.xml`, `temp/real-plain-backup-screen.xml`, `temp/real-backup-picker.xml`, `temp/real-backup-result.xml` |
-| Actual synthetic JSON backup | `temp/synthetic-real-backup.txt` (synthetic data only) |
-| Disposable device/build state | `temp/android-review-home/`, `temp/gradle-review-home/` |
+| Startup/restart and SAF UI evidence | `real-startup.xml`, `real-restart.xml`, `real-backup-screen.xml`, `real-plain-backup-screen.xml`, `real-backup-picker.xml`, `real-backup-result.xml` |
+| Actual synthetic JSON backup | `synthetic-real-backup.txt` (synthetic data only) |
+| Disposable device/build state | `android-review-home/`, `gradle-review-home/` |
 
-The diagnostic clone is intentionally left as an uncommitted merge experiment. It is not a ready-to-push implementation branch. The disposable emulator and its isolated ADB server were shut down after testing; their data and the build caches remain under `temp/` for reproducibility.
+The diagnostic clone is intentionally left as an uncommitted merge experiment. It is not a ready-to-push implementation branch. The disposable emulator and its isolated ADB server were shut down after testing; their data and the build caches were kept in the local scratch folder.
 
 ## Resolution (2026-11-06)
 

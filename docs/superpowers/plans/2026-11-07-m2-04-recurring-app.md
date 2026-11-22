@@ -32,7 +32,7 @@
 | `test/...` | `RecurringRunnerTest`, `RecurringApiContract` (+ fake and real subclasses), `RealRecurringTest`, `RecurringNoticePlannerTest`, `RecurringNotifiedFileTest` (new); `RowMappingTest`, `MigrationTest`, `RoomJournalTest`, `BackupFormatTest`, `SeedDataTest` |
 | `docs/ui-contributor-guide.md`, `docs/m2-ui-contract-changes.md`, `docs/manual-test-checklist.md` | `RecurringApi`, notifications, device checks |
 
-Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...`, the real source set's `android/app/src/real/kotlin/io/github/codex07/iou/` as `real/...`, the fake one's as `fake/.../`, and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21 (`state.md`).
+Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...`, the real source set's `android/app/src/real/kotlin/io/github/codex07/iou/` as `real/...`, the fake one's as `fake/.../`, and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21.
 
 ---
 
@@ -2420,7 +2420,7 @@ In `docs/manual-test-checklist.md`, append:
 
 ## 9. Recurring expenses on the device (spec §5.7, AC 29 and 34)
 
-Use the disposable `IOU_Integration_Review` emulator (`state.md`), real debug build. Items 1–7 need the schedule screens (the friend's work, `docs/m2-ui-contract-changes.md`). Smoke check done on 2026-11-08 at `89a6d0d`: the app starts with no crash, the `RecurringPostWorker` job is registered, and its first run at enqueue gives no crash.
+Use the disposable `IOU_Integration_Review` emulator (see the local project notes), real debug build. Items 1–7 need the schedule screens (the friend's work, `docs/m2-ui-contract-changes.md`). Smoke check done on 2026-11-08 at `89a6d0d`: the app starts with no crash, the `RecurringPostWorker` job is registered, and its first run at enqueue gives no crash.
 
 1. Create an auto-post schedule whose first date is today, close the app, open it again: the expense is posted once; reopening posts nothing more (AC 29).
 2. Grant notifications. With the app closed, run the worker on demand: `adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler io.github.codex07.iou <job id>` (the id is on the `#RecurringPostWorker#` line of `adb shell dumpsys jobscheduler`). WorkManager delays a forced run before the 6-hour period is up (logcat: "Delaying execution ... before schedule"), so move the emulator clock forward 6 hours first. An auto-post date that came due is posted and one "Recurring expenses posted" notification appears.

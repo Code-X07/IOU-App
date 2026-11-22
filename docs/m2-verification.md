@@ -34,6 +34,8 @@ Used a disposable API 37 emulator and both debug flavors.
 
 ## Before release
 
+Status after the `v0.2.0` release: the signed packaging, the upgrade over `v0.1.0` and the desktop Excel and LibreOffice check of device-made workbooks were done (manual checklist sections 7 and 10). The section 9 worker and notification checks and the round-trip import are still open.
+
 - Run the periodic worker and notification cadence checks in section 9 of the [manual checklist](manual-test-checklist.md), including grouped notifications, granting permission from the first-save prompt, and permission changes across worker passes.
 - Run the released `v0.1.0` upgrade, backup, CSV import and undo checks in section 10 of the [manual checklist](manual-test-checklist.md).
 - Open both Android-generated workbook shapes in desktop Excel and LibreOffice. Android file creation and workbook structure were verified on the emulator.

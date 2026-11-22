@@ -14,7 +14,7 @@ service state and transport, and restore both after testing.
 
 ## 1. Merged manifest (spec §9, §14 item 4)
 
-- [ ] Build the release APK and list its permissions:
+- [x] Build the release APK and list its permissions:
 
   ```bash
   ./gradlew assembleRealRelease
@@ -23,6 +23,7 @@ service state and transport, and restore both after testing.
 
   Expected, and nothing else:
   - `INTERNET` (declared by the real flavor);
+  - `POST_NOTIFICATIONS` (declared by the app for recurring-expense notifications, M2);
   - `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED` (WorkManager);
   - `io.github.codex07.iou.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, a signature permission that
     `androidx.core` declares for the app's own receivers;
@@ -32,12 +33,16 @@ service state and transport, and restore both after testing.
   `FOREGROUND_SERVICE` must be absent; `src/real/AndroidManifest.xml` removes it. For anything new, find
   its source in `app/build/outputs/logs/manifest-merger-real-release-report.txt`. Remove it with
   `tools:node="remove"` if the app doesn't need it.
-- [ ] In `app/build/intermediates/merged_manifest/realRelease/processRealReleaseMainManifest/AndroidManifest.xml`,
+- [x] In `app/build/intermediates/merged_manifest/realRelease/processRealReleaseMainManifest/AndroidManifest.xml`,
   the exported components are `MainActivity`, WorkManager's `SystemJobService` (`BIND_JOB_SERVICE`), and
   `DiagnosticsReceiver` and `ProfileInstallReceiver` (both `DUMP`). There is no `KdfTimingReceiver`; it is
   realDebug only.
-- [ ] The application has `allowBackup="true"`, `fullBackupContent="@xml/backup_rules"`,
+- [x] The application has `allowBackup="true"`, `fullBackupContent="@xml/backup_rules"`,
   `dataExtractionRules="@xml/data_extraction_rules"` and `usesCleartextTraffic="false"`.
+
+Result (2026-11-22, the signed `iou-v0.2.1.apk` from the GitHub release, checked with `aapt2 dump permissions` and
+`aapt2 dump xmltree`): exactly the permissions above, no `FOREGROUND_SERVICE`; the only exported components are the
+four listed, and there is no `KdfTimingReceiver`; the application attributes are as listed.
 
 ## 2. App lock and screen protection (spec §9)
 
@@ -133,12 +138,15 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
 
 ## 5. Frankfurter (spec §14 item 2)
 
-- [ ] `curl "https://api.frankfurter.dev/v1/latest?base=EUR&symbols=SEK%2CUSD"` answers 200 with JSON-number
+- [x] `curl "https://api.frankfurter.dev/v1/latest?base=EUR&symbols=SEK%2CUSD"` answers 200 with JSON-number
   rates and the latest working day as `date`.
-- [ ] `curl "https://api.frankfurter.dev/v1/2026-11-01?base=EUR&symbols=SEK"` (a Sunday) answers with
+- [x] `curl "https://api.frankfurter.dev/v1/2026-11-01?base=EUR&symbols=SEK"` (a Sunday) answers with
   `"date":"2026-10-30"`.
-- [ ] A future date (`/v1/2099-01-01?base=EUR&symbols=SEK`) answers 404 `{"message":"not found"}`. The app
+- [x] A future date (`/v1/2099-01-01?base=EUR&symbols=SEK`) answers 404 `{"message":"not found"}`. The app
   treats any answer except 200, and any timeout, as unavailable (spec §4.5).
+
+Result (2026-11-22): all three as expected (`latest` dated Friday 2026-11-20, the Sunday query dated 2026-10-30,
+the future date 404).
 
 ## 6. Exports in spreadsheets (spec §7.2)
 
@@ -168,7 +176,7 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   - Create backup with encryption on: the picker suggests `iou-backup.ioub`; the pulled file starts with
     `IOUB`.
   - Export normalized CSV: the picker suggests `iou-export.zip`; the file is a ZIP with `manifest.json`.
-    Export a report: `iou-export.csv`. Until the UI offers XLSX (see `m2-ui-contract-changes.md`), the Format field offers CSV only, with a line that XLSX arrives later.
+    Export a report: `iou-export.csv`. The Format field offers CSV and XLSX; XLSX saves `.xlsx` workbooks in both shapes.
   - Restore a backup: the confirmation says the ledger is replaced; the result says it was replaced.
     Undo last restore says the same. Import a normalized ZIP: no "Simulation scenarios" are listed; the
     commit confirmation and result say the ledger changed; undoing the import reports complete or partial.
@@ -177,7 +185,7 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
 
 ## 7. Signed release APK (spec §2.4, §10)
 
-- [ ] After the release workflow, download the APK from the GitHub release and check its certificate:
+- [x] After the release workflow, download the APK from the GitHub release and check its certificate:
   `apksigner verify --print-certs iou-vX.Y.Z.apk` shows `CN=IOU` and SHA-256
   `328199658371ad458470be6ec4970597e1763ac4b4921277161dbd79bdf7b1c5`.
 - [ ] Use a separate fresh, empty disposable upgrade image. Install the previous release's APK and start it;
@@ -185,6 +193,9 @@ the local-only A/B check below. On the Android 37 image checked on 2026-11-05, t
   `adb install -r iou-vX.Y.Z.apk`. The upgrade succeeds without uninstalling, and the app starts and shows
   the same test ledger. Keep debug and signed-release builds on separate images because they use different
   signing keys.
+
+Result (2026-11-22, `v0.2.1`): the release APK shows `CN=IOU` and the SHA-256 above. The upgrade item was last run
+for `v0.2.0` over `v0.1.0` (section 10); not run for `v0.2.1`.
 
 ## 8. Compose UI integration pass (PR #1 merge, branch `integrate/compose-ui`)
 
@@ -220,7 +231,7 @@ Open items (not done, or only partly covered):
   foreign identity, invalid rows and undo.
 - [ ] Compose instrumentation suite (`androidTest`): carried over. This merge relies on JVM tests and the passes above; destination
   disposal, semantics, system pickers and lifecycle ordering still have no automated device test.
-- [ ] Known core follow-up (not a UI defect): the import screen shows the SAF document id instead of the file's display name.
+- Accepted limitation (not a check): the import screen can show the SAF document id instead of the file's display name.
 
 ## 9. Recurring expenses on the device (spec §5.7, AC 29 and 34)
 
@@ -234,11 +245,11 @@ Use a disposable emulator with the real debug build. Open Recurring expenses fro
 6. Tap a due notification with the app stopped, then repeat with it running. The aggregate notification opens Due expenses and a schedule notification focuses that schedule. With app lock enabled, verify that the financial screen appears only after authentication. Also exercise the first-save permission prompt once with Allow and once with Don't allow on separate disposable installs.
 7. With two confirm-first schedules due (two due notifications and their group, which alerted once), run the worker twice more and bring the app to the foreground: no further sound or vibration, and the notifications stay as they were (AC 34). Then post every due occurrence of one of them in the app: its notification goes, and the other schedule's notification is still shown (silently redrawn, without the group).
 
-- [ ] Result recorded:
+- [ ] Result recorded: not run as a whole yet. Covered so far: the UI contributor's emulator run ([M2 verification](m2-verification.md)) saw a due notification open Due expenses (also behind app lock), and the first-save permission prompt with Don't allow; a 2026-11-22 emulator run showed the new notification icon. Items 2–7 (worker cadence, grouped notifications, lock redraws, permission changes) are still open.
 
 ## 10. M2 import, XLSX on the device and the upgrade (spec §7.3–7.5, §14 item 1, AC M2-15, 16, 25)
 
-Use a disposable emulator instance (see `state.md`, "Devices and native QA") for the upgrade and the import, not
+Use a disposable emulator instance (see the device rules in the local project notes) for the upgrade and the import, not
 the owner's long-lived AVD.
 
 - [ ] Install `v0.1.0` (the released APK), set up, add a person, a group with a removed member whose net is 0, and

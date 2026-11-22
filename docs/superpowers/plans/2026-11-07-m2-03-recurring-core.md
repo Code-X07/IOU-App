@@ -39,7 +39,7 @@
 | `test/...` | `RecurrenceTest`, `ScheduleRulesTest`, `RecurringOpsTest`, `PostingTest`, `CutOffTest`, `ScheduleViewsTest` (new); `TestLedger`, `OpsHarness` |
 | `docs/superpowers/specs/2026-11-02-iou-mvp-design.md` §5.7 | The `handledThrough` raise keeps the cut-off |
 
-Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...` and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21 (`state.md`). The real flavor stores no schedule rows until Part 4; nothing can create one through the `api` before then.
+Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...` and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21. The real flavor stores no schedule rows until Part 4; nothing can create one through the `api` before then.
 
 ---
 

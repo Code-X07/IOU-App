@@ -26,7 +26,7 @@ The CI and release workflows execute `actions/checkout@v4`, `actions/setup-java@
 
 Pin every action to a reviewed full commit SHA or a GitHub Actions dependency lockfile, retain the human-readable release tag in a comment, and automate reviewed update PRs. Protect the release job with an environment, verify the expected certificate fingerprint rather than only checking that a signature exists, and generate signed provenance. GitHub states that a full commit SHA is the immutable way to reference an action in its [secure-use guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 
-Evidence: [CI action references](../../.github/workflows/ci.yml#L24), [release action references](../../.github/workflows/release.yml#L24), [signing-secret use](../../.github/workflows/release.yml#L33), and [release permission/publishing](../../.github/workflows/release.yml#L16).
+Evidence: [CI action references](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/.github/workflows/ci.yml#L24), [release action references](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/.github/workflows/release.yml#L24), [signing-secret use](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/.github/workflows/release.yml#L33), and [release permission/publishing](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/.github/workflows/release.yml#L16).
 
 ## Medium
 
@@ -36,7 +36,7 @@ An encrypted backup supplies its own Argon2id memory, iteration, and parallelism
 
 Use one supported, device-tested KDF profile for this format version rather than trusting file-selected costs, or reduce the accepted profile to a safe compatibility set. Keep a strict file-size check before derivation and add low-memory/device tests for the maximum accepted profile. A future format can encode a profile identifier rather than arbitrary work factors.
 
-Evidence: [KDF defaults and maximum](../../android/app/src/main/kotlin/io/github/codex07/iou/data/BackupCipher.kt#L20) and [header parsing before authentication](../../android/app/src/main/kotlin/io/github/codex07/iou/data/BackupCipher.kt#L64).
+Evidence: [KDF defaults and maximum](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/BackupCipher.kt#L20) and [header parsing before authentication](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/BackupCipher.kt#L64).
 
 ### F3 — ZIP imports can exceed practical Android heap limits before rejection (security availability)
 
@@ -44,7 +44,7 @@ The importer accepts a 20 MiB archive, up to 50 entries, and up to 200 MiB of de
 
 Reject unknown entry names before buffering; impose per-entry and per-field limits; stream each expected CSV directly into bounded validation; release raw bytes before constructing the full preview; and lower the aggregate limit to a tested Android-safe value. Add a boundary test proving that a large unknown entry is never materialized and a device test at the supported maximum.
 
-Evidence: [import limits and eager ZIP buffering](../../android/app/src/main/kotlin/io/github/codex07/iou/io/ImportReader.kt#L25), [CSV string/map expansion](../../android/app/src/main/kotlin/io/github/codex07/iou/io/ImportReader.kt#L111), [bounded-read allocation](../../android/app/src/main/kotlin/io/github/codex07/iou/store/BackupRules.kt#L25), and [whole-document read/session retention](../../android/app/src/main/kotlin/io/github/codex07/iou/data/RealImportExportApi.kt#L117).
+Evidence: [import limits and eager ZIP buffering](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/io/ImportReader.kt#L25), [CSV string/map expansion](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/io/ImportReader.kt#L111), [bounded-read allocation](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/store/BackupRules.kt#L25), and [whole-document read/session retention](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/RealImportExportApi.kt#L117).
 
 ### F4 — A forward clock jump can auto-post an unbounded series (non-security data integrity/availability)
 
@@ -52,7 +52,7 @@ For each automatic recurring schedule, the runner loops until the next occurrenc
 
 Cap catch-up work per pass and require explicit user confirmation when the gap or occurrence count exceeds a small threshold. Detect implausible forward jumps, preserve the unprocessed boundary, and surface a recovery action rather than silently continuing. Avoid constructing the complete due list merely to display it.
 
-Evidence: [unbounded auto-post loop](../../android/app/src/main/kotlin/io/github/codex07/iou/store/RecurringRunner.kt#L141) and [eager due-list materialization](../../android/app/src/main/kotlin/io/github/codex07/iou/ledger/views/ScheduleViews.kt#L66).
+Evidence: [unbounded auto-post loop](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/store/RecurringRunner.kt#L141) and [eager due-list materialization](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/ledger/views/ScheduleViews.kt#L66).
 
 ## Low
 
@@ -62,7 +62,7 @@ The UI intentionally permits an unencrypted JSON backup after acknowledgement. I
 
 Prefer authenticated encrypted backups for every restorable artifact. If plaintext export must remain, distinguish it from a trusted backup or require a stronger restore warning that explicitly covers undetectable modification. A detached MAC is useful only if its key is protected independently of the file.
 
-Evidence: [plain/encrypted format selection and restore](../../android/app/src/main/kotlin/io/github/codex07/iou/data/BackupFormat.kt#L43), [plain-backup acknowledgement](../../android/app/src/main/kotlin/io/github/codex07/iou/ui/viewmodel/DataManagementViewModel.kt#L111), and [current warning text](../../android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/DataManagementScreen.kt#L95).
+Evidence: [plain/encrypted format selection and restore](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/BackupFormat.kt#L43), [plain-backup acknowledgement](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/ui/viewmodel/DataManagementViewModel.kt#L111), and [current warning text](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/DataManagementScreen.kt#L95).
 
 ### F6 — The FX client buffers an unbounded response body (security availability)
 
@@ -70,7 +70,7 @@ The Frankfurter client calls `bodyAsText()` and parses the complete JSON respons
 
 Read through a bounded channel, reject an excessive `Content-Length` or streamed byte count, cap the number of rate entries, and optionally require the expected JSON content type. The legitimate response is tiny, so a conservative ceiling is practical.
 
-Evidence: [request and unbounded body read](../../android/app/src/main/kotlin/io/github/codex07/iou/fx/FrankfurterClient.kt#L37) and [whole-document JSON parsing](../../android/app/src/main/kotlin/io/github/codex07/iou/fx/FrankfurterClient.kt#L55).
+Evidence: [request and unbounded body read](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/fx/FrankfurterClient.kt#L37) and [whole-document JSON parsing](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/fx/FrankfurterClient.kt#L55).
 
 ### F7 — Gradle artifacts are not cryptographically locked (security supply chain)
 
@@ -78,7 +78,7 @@ The repository pins declared dependency versions and uses HTTPS repositories, bu
 
 Enable strict Gradle dependency verification, commit reviewed checksums/signatures and dependency locks, and add the official Gradle 8.14.3 distribution checksum. Gradle's [build security guidance](https://docs.gradle.org/current/userguide/securing_build_tool.html) recommends setting `distributionSha256Sum`; validate wrapper changes in CI.
 
-Evidence: [repository configuration](../../android/settings.gradle.kts#L15), [version catalog](../../android/gradle/libs.versions.toml), and [wrapper properties](../../android/gradle/wrapper/gradle-wrapper.properties#L1).
+Evidence: [repository configuration](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/settings.gradle.kts#L15), [version catalog](../../android/gradle/libs.versions.toml), and [wrapper properties](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/gradle/wrapper/gradle-wrapper.properties#L1).
 
 ### F8 — Colliding recurring IDs can route notifications to the wrong schedule (non-security correctness)
 
@@ -86,7 +86,7 @@ Each child notification has its own notification tag, but its `PendingIntent` id
 
 Put a stable, encoded schedule identifier in `Intent.data` (with an app-owned scheme) and keep the request code only as a secondary discriminator. Add an Android/Robolectric regression test using colliding IDs. See Android's [PendingIntent identity documentation](https://developer.android.com/reference/android/app/PendingIntent).
 
-Evidence: [pending-intent construction](../../android/app/src/main/kotlin/io/github/codex07/iou/data/AndroidRecurringNotices.kt#L109), [unconstrained ID type](../../android/app/src/main/kotlin/io/github/codex07/iou/ledger/model/Ids.kt#L12), and [imported recurring ID construction](../../android/app/src/main/kotlin/io/github/codex07/iou/io/ImportDecoder.kt#L308).
+Evidence: [pending-intent construction](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/AndroidRecurringNotices.kt#L109), [unconstrained ID type](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/ledger/model/Ids.kt#L12), and [imported recurring ID construction](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/io/ImportDecoder.kt#L308).
 
 ### F9 — A malformed database pointer can prevent application startup (non-security availability)
 
@@ -94,7 +94,7 @@ The app-private `db-state.json` pointer is read with unbounded `readText()` and 
 
 Bound the pointer file, catch decoding/I/O failures, validate names against the generated `iou-<uuid>.db` form and containment within the database directory, then present a recovery flow. Automatic reconstruction should occur only when a single valid candidate is unambiguous.
 
-Evidence: [pointer read](../../android/app/src/main/kotlin/io/github/codex07/iou/data/DbFiles.kt#L35) and [startup sequence](../../android/app/src/main/kotlin/io/github/codex07/iou/data/RealBackend.kt#L101).
+Evidence: [pointer read](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/DbFiles.kt#L35) and [startup sequence](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/RealBackend.kt#L101).
 
 ## Very Low
 
@@ -104,7 +104,7 @@ The app directly pins `bcprov-jdk18on` 1.81. Upstream lists 1.81 as affected by 
 
 Upgrade to a current compatible fixed Bouncy Castle release and rerun backup compatibility/performance tests. Upstream details are in the maintainer's [CVE-2025-14813](https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902025%E2%80%9014813) and [CVE-2026-5598](https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902026%E2%80%905598) advisories.
 
-Evidence: [pinned version](../../android/gradle/libs.versions.toml#L20) and [the only Bouncy Castle API use](../../android/app/src/main/kotlin/io/github/codex07/iou/data/BackupCipher.kt#L17).
+Evidence: [pinned version](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/gradle/libs.versions.toml#L20) and [the only Bouncy Castle API use](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/BackupCipher.kt#L17).
 
 ### F11 — Ordinary CI does not compile the release variant (non-security release reliability)
 
@@ -112,7 +112,7 @@ Pull-request/main CI lints, tests, and assembles only debug variants. `assembleR
 
 Build an unsigned/non-published `realRelease` artifact on ordinary CI (or at least on protected main) without release secrets. Keep signing and publication confined to the protected release job.
 
-Evidence: [ordinary CI task list](../../.github/workflows/ci.yml#L33) and [tag release build](../../.github/workflows/release.yml#L52).
+Evidence: [ordinary CI task list](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/.github/workflows/ci.yml#L33) and [tag release build](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/.github/workflows/release.yml#L52).
 
 ### F12 — Recurring-runner failures are silently discarded (non-security operability)
 
@@ -120,7 +120,7 @@ Requested recurring passes and notification redraws catch every non-cancellation
 
 Record a privacy-safe error category/counter and last-failure time, expose a generic status/retry action where appropriate, and retain automatic retries. Never log ledger contents, descriptions, identifiers, or passphrases.
 
-Evidence: [swallowed pass and redraw exceptions](../../android/app/src/main/kotlin/io/github/codex07/iou/store/RecurringRunner.kt#L114).
+Evidence: [swallowed pass and redraw exceptions](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/store/RecurringRunner.kt#L114).
 
 ## Accepted residual risks
 
@@ -128,19 +128,19 @@ Evidence: [swallowed pass and redraw exceptions](../../android/app/src/main/kotl
 
 The ledger, revisions, notes, and payment handles reside in an ordinary Room/SQLite database. App lock and `FLAG_SECURE` protect the UI, not the database file. Android application sandboxing and device file-based encryption are therefore the at-rest trust boundary; root/forensic access or access while the device is already unlocked can expose the ledger. This is an explicit MVP non-goal, with SQLCipher recorded as future work, so it is not classified as an implementation defect. Reconsider it if the threat model includes hostile device administrators, rooted devices, or post-unlock physical acquisition.
 
-Evidence: [database construction](../../android/app/src/main/kotlin/io/github/codex07/iou/data/IouDatabase.kt#L79), [sensitive rows](../../android/app/src/main/kotlin/io/github/codex07/iou/data/Rows.kt#L12), and [documented non-goal](../superpowers/specs/2026-11-02-iou-mvp-design.md#L45).
+Evidence: [database construction](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/IouDatabase.kt#L79), [sensitive rows](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/Rows.kt#L12), and [documented non-goal](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/docs/superpowers/specs/2026-11-02-iou-mvp-design.md?plain=1#L45).
 
 ### R2 — Low: undo restore intentionally retains the prior ledger database
 
 After a restore, the previous database remains on disk so “Undo last restore” can swap back to it. Android backup rules include the database domain, so the retained prior ledger may also be copied during permitted device/cloud backup. A user who believes restore immediately erased the old ledger may therefore underestimate retention. This is required for the advertised undo feature, not an orphaned-file bug. Document the retention and consider a “discard restore undo” action that securely removes the previous database when the user no longer needs it.
 
-Evidence: [restore pointer and prior-file lifecycle](../../android/app/src/main/kotlin/io/github/codex07/iou/data/RestoreProcedure.kt#L63), [undo UI](../../android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/DataManagementScreen.kt#L108), and [database backup rules](../../android/app/src/main/res/xml/data_extraction_rules.xml#L4).
+Evidence: [restore pointer and prior-file lifecycle](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/data/RestoreProcedure.kt#L63), [undo UI](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/ui/screens/DataManagementScreen.kt#L108), and [database backup rules](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/res/xml/data_extraction_rules.xml#L4).
 
 ### R3 — Low: screen privacy and app lock are deliberately independent
 
 When app lock is enabled but screen protection is disabled, content can appear in screenshots/Recents; unreadable device settings deliberately fall back to app lock off; and notification re-enable timing has a documented reminder gap. These are accepted product choices recorded in project state rather than new defects. They should remain visible in the threat model and release checklist because users may otherwise assume app lock also encrypts storage or always protects OS-level previews.
 
-Evidence: [security flag behavior](../../android/app/src/main/kotlin/io/github/codex07/iou/security/AppSecurity.kt#L60), [settings fallback](../../android/app/src/main/kotlin/io/github/codex07/iou/data/FileDeviceSettings.kt), and [the prior implementation review's recorded limitations](2026-11-21-current-implementation-review.md#code-quality-and-edge-cases).
+Evidence: [security flag behavior](https://github.com/Code-X07/IOU-App/blob/5bc023f0d770abbde20aa8c73b668c46529dbe6a/android/app/src/main/kotlin/io/github/codex07/iou/security/AppSecurity.kt#L60), [settings fallback](../../android/app/src/main/kotlin/io/github/codex07/iou/data/FileDeviceSettings.kt), and [the prior implementation review's recorded limitations](2026-11-21-current-implementation-review.md#code-quality-and-edge-cases).
 
 ## Owner triage and resolution
 

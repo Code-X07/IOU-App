@@ -2,7 +2,7 @@
 
 An Android app for tracking shared expenses and IOUs in a friend group. It replaces "who owes whom" chat threads with exact, auditable balances.
 
-> **Status:** Milestone 2 is complete (v0.2.0; v0.2.1 adds the review and security-audit fixes, a soon-as-possible rate fetch for new currencies with pull-to-refresh on the overview, and the app icon): groups with splits, settle plans and archiving, expenses paid by several people, recurring expenses that post by themselves or wait for confirmation (with notifications in the real build), CSV import of groups and schedules with undo, XLSX export, on top of Milestone 1's ledger on Room, history and revert, merges, FX, encrypted backups, CSV export and import, app lock and screen protection. The screens for payers, schedules, due expenses, XLSX export and the import preview arrived from the UI contributor in PR #3. Some on-device checks are still open (see the [manual test checklist](docs/manual-test-checklist.md) and [M2 verification](docs/m2-verification.md)). There is no Compose instrumentation suite yet.
+> **Status:** Milestones 0–2 are done. Get the APK from the [latest release](https://github.com/Code-X07/IOU-App/releases/latest).
 
 ## What it does (MVP)
 

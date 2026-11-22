@@ -39,7 +39,7 @@
 | `test/...` | `GroupImportTest`, `ScheduleImportTest`, `ImportUndoTest`, `LedgerWorkbookTest`, `RoundTripTest` (new); `NormalizedExportTest`, `ImportReaderTest`, `RealExportTest`, `ImportExportApiContract`, `ExportSamplesTest` |
 | `docs/...` | Spec §5.4, §7.3–7.5, §14; `ui-contributor-guide.md`; `m2-ui-contract-changes.md`; `manual-test-checklist.md`; README; index type inventory |
 
-Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...` and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21 (`state.md`).
+Paths abbreviate `android/app/src/main/kotlin/io/github/codex07/iou/` as `main/...` and the test root likewise. Commands run from `android/` with `JAVA_HOME` set to the MS JDK 21.
 
 ---
 
@@ -4027,7 +4027,7 @@ Add a new section at the end of the file:
 ```markdown
 ## 10. M2 import, XLSX on the device and the upgrade (spec §7.3–7.5, §14 item 1, AC M2-15, 16, 25)
 
-Use a disposable emulator instance (see `state.md`, "Devices and native QA") for the upgrade and the import, not
+Use a disposable emulator instance (see the device rules in the local project notes) for the upgrade and the import, not
 the owner's long-lived AVD.
 
 - [ ] Install `v0.1.0` (the released APK), set up, add a person, a group with a removed member whose net is 0, and
@@ -4066,7 +4066,7 @@ git commit -m "Prove the full export-import round trip and document M2 import an
 
 - [ ] **Step 1: The whole-milestone review**
 
-The orchestrator reviews all of M2 against spec §12 Milestone 2 (ACs 1–35) and the five part plans, as CLAUDE.md requires; fixes go to Sonnet subagents at medium effort and get their own commits. Do not start the next steps until the review has no open finding.
+The orchestrator reviews all of M2 against spec §12 Milestone 2 (ACs 1–35) and the five part plans, as the project's agent rules require; fixes go to Sonnet subagents at medium effort and get their own commits. Do not start the next steps until the review has no open finding.
 
 - [ ] **Step 2: Version name, README and the open item**
 
