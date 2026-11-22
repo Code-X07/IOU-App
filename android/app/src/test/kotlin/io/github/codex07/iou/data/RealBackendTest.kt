@@ -26,7 +26,11 @@ import java.io.File
 import java.io.IOException
 import java.time.Clock
 import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -145,5 +149,30 @@ class RealBackendTest {
         backend.refreshRates() shouldBe true
         harness.frankfurter.requests.single().parameters["symbols"] shouldBe "SEK"
         backend.apis.ledger.observeOverview().first { it.approxOwedToMe != null }.approxOwedToMe shouldBe eur(1_000)
+    }
+
+    @Test
+    fun `a currency without a cached rate asks for a refresh soon, and a manual refresh fills it`() = runTest {
+        val backend = harness.start()
+        val asked = CompletableDeferred<Unit>()
+        var requests = 0
+        backend.refreshWhenRatesMissing { requests++; asked.complete(Unit) }
+        val me = backend.apis.setup.completeSetup("Me", EUR).orFail()
+        backend.missingRates.first() shouldBe false
+
+        val basis = backend.apis.backup.observeLedgerGeneration().first()
+        val x = backend.apis.people.createPerson(PersonDraft("X"), basis).orFail()
+        backend.apis.ledger.saveTransfer(TransferDraft(me, x, sek(11_500), occurredOn = D0), SaveMode.Create(basis)).orFail()
+        backend.missingRates.first { it } shouldBe true
+        withContext(Dispatchers.Default) { withTimeout(5_000) { asked.await() } }
+
+        harness.frankfurter.online = false
+        backend.apis.fx.refreshRates() shouldBe false
+        backend.missingRates.first() shouldBe true
+        harness.frankfurter.online = true
+        backend.apis.fx.refreshRates() shouldBe true
+        backend.missingRates.first { !it } shouldBe false
+        backend.apis.ledger.observeOverview().first { it.approxOwedToMe != null }.approxOwedToMe shouldBe eur(1_000)
+        requests shouldBe 1
     }
 }

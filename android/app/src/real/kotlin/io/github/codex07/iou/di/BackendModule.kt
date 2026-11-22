@@ -25,6 +25,7 @@ object BackendModule {
     fun backend(@ApplicationContext context: Context): RealBackend =
         RealBackend.android(context).also {
             RateRefreshWorker.schedule(context)
+            it.refreshWhenRatesMissing { RateRefreshWorker.refreshSoon(context) }
             RecurringPostWorker.schedule(context)
         }
 

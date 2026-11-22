@@ -37,7 +37,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 
@@ -91,7 +94,7 @@ class RealBackend(
         people = StorePeopleApi(store),
         groups = StoreGroupsApi(store),
         ledger = StoreLedgerApi(store),
-        fx = StoreFxApi(fx),
+        fx = StoreFxApi(fx, ::refreshRates),
         backup = RealBackupApi(store, device, documents, backupFormat, fx, restores, interrupted, appVersion),
         importExport = RealImportExportApi(store, documents, LedgerExport(appVersion)),
         settings = StoreSettingsApi(store, device, lock),
@@ -122,6 +125,23 @@ class RealBackend(
         throw e
     } catch (_: Exception) {
         false
+    }
+
+    /**
+     * True while a currency in use has no cached rate to the home currency, so approximate totals are absent (spec
+     * §4.5): after install, before the first refresh that sees the currency, or when a new currency first appears.
+     */
+    val missingRates: Flow<Boolean> = combine(store.snapshot, fx.lookup) { snapshot, rates ->
+        val home = snapshot.settings.homeCurrency
+        currenciesInUse(snapshot.state).any { rates.rate(it, home) == null }
+    }.distinctUntilChanged()
+
+    /**
+     * Calls [refreshSoon] each time [missingRates] turns true, so a missing rate is fetched soon instead of at the
+     * next daily refresh (spec §4.5). The real flavor enqueues a one-off, network-bound refresh with it.
+     */
+    fun refreshWhenRatesMissing(refreshSoon: () -> Unit) {
+        scope.launch { missingRates.collect { missing -> if (missing) refreshSoon() } }
     }
 
     /** Stops background work and closes the database; the backend is unusable afterwards. */

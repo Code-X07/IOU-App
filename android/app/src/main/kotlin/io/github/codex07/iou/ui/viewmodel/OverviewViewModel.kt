@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.codex07.iou.api.ActivityItem
 import io.github.codex07.iou.api.BackupApi
 import io.github.codex07.iou.api.BackupReminder
+import io.github.codex07.iou.api.FxApi
 import io.github.codex07.iou.api.GroupSummary
 import io.github.codex07.iou.api.GroupsApi
 import io.github.codex07.iou.api.LedgerApi
@@ -26,7 +27,9 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 sealed interface OverviewUiState {
     data object Loading : OverviewUiState
@@ -52,6 +55,7 @@ class OverviewViewModel @Inject constructor(
     private val groups: GroupsApi,
     private val setup: SetupApi,
     private val backup: BackupApi,
+    private val fx: FxApi,
 ) : ViewModel() {
     private val refresh = MutableStateFlow(0)
     val state: StateFlow<OverviewUiState> = refresh.flatMapLatest {
@@ -60,6 +64,23 @@ class OverviewViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), OverviewUiState.Loading)
 
     fun retry() { refresh.update { it + 1 } }
+
+    private val pulling = MutableStateFlow(false)
+
+    /** True while a pull-to-refresh runs. */
+    val refreshing: StateFlow<Boolean> = pulling.asStateFlow()
+
+    /**
+     * Pull-to-refresh: fetches the latest exchange rates now (approximate totals update through the read models).
+     * Manual sync joins here later. [done] gets false when nothing could be fetched; a pull while one runs is ignored.
+     */
+    fun pullToRefresh(done: (Boolean) -> Unit = {}) {
+        if (!pulling.compareAndSet(expect = false, update = true)) return
+        viewModelScope.launch {
+            val fetched = try { fx.refreshRates() } finally { pulling.value = false }
+            done(fetched)
+        }
+    }
 
     private data class Records(
         val people: List<PersonSummary>, val groups: List<GroupSummary>, val activity: List<ActivityItem>,

@@ -49,6 +49,7 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
            dueRequest: RecurringNotificationRoute? = null, onDueOpened: (RecurringNotificationRoute) -> Unit = {},
            onScheduleSaved: () -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     var selectedName by rememberSaveable { mutableStateOf(Destination.Overview.name) }
     val selected = Destination.valueOf(selectedName)
     var hidden by rememberSaveable { mutableStateOf(false) }
@@ -393,7 +394,8 @@ fun IOUApp(viewModel: OverviewViewModel = hiltViewModel(), settingsModel: AppSet
                         } else when (selected) {
                             Destination.Overview -> OverviewScreen(state, hidden,
                                 onNavigate = { selectedName = it.name }, onFeature = { feature -> when (feature) { addPersonLabel -> addPerson(); createGroupLabel -> addGroup(); addExpenseLabel -> addEntry("expense"); else -> if (feature == backupControlsLabel) stack = stack + formRoute("data", "backup") else unfinished = feature } }, onRetry = viewModel::retry,
-                                onPerson = openPerson, onGroup = openGroup, onEntry = openEntry)
+                                onPerson = openPerson, onGroup = openGroup, onEntry = openEntry, refreshing = refreshing,
+                                onRefresh = { viewModel.pullToRefresh { fetched -> if (!fetched) scope.launch { snackbar.showSnackbar("Couldn't refresh exchange rates. Check your connection and try again.") } } })
                             Destination.Groups -> {
                                 val vm: GroupsViewModel = hiltViewModel()
                                 val groups by vm.state.collectAsStateWithLifecycle()

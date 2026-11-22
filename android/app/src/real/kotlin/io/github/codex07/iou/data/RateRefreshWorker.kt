@@ -5,7 +5,9 @@ import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -42,6 +44,20 @@ class RateRefreshWorker(context: Context, params: WorkerParameters) : CoroutineW
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.MINUTES)
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+        }
+
+        const val SOON_NAME = "fx-rate-refresh-soon"
+
+        /**
+         * One extra refresh as soon as a network is available, for rates that are missing now (spec §4.5). A request
+         * while one still waits is folded into it; the daily schedule is untouched.
+         */
+        fun refreshSoon(context: Context) {
+            val request = OneTimeWorkRequestBuilder<RateRefreshWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.MINUTES)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(SOON_NAME, ExistingWorkPolicy.KEEP, request)
         }
     }
 }

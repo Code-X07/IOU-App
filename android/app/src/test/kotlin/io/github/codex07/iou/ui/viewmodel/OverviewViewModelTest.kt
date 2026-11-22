@@ -24,7 +24,7 @@ class OverviewViewModelTest {
     @BeforeEach fun setUp() { Dispatchers.setMain(dispatcher) }
     @AfterEach fun tearDown() { Dispatchers.resetMain() }
     private fun model(apis: Apis, ledger: LedgerApi = apis.ledger) = OverviewViewModel(
-        ledger, apis.people, apis.groups, apis.setup, apis.backup)
+        ledger, apis.people, apis.groups, apis.setup, apis.backup, apis.fx)
 
     @Test fun `dashboard uses exact canonical backend read models with bounded previews`() = runTest(dispatcher) {
         val apis = FakeApis.seeded()
@@ -114,4 +114,25 @@ class OverviewViewModelTest {
         }
     }
 
+    @Test fun `pull to refresh fetches rates once at a time and reports the result`() = runTest(dispatcher) {
+        val apis = FakeApis.seeded()
+        val answer = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        var calls = 0
+        val fx = object : FxApi by apis.fx {
+            override suspend fun refreshRates(): Boolean { calls++; return answer.await() }
+        }
+        val model = OverviewViewModel(apis.ledger, apis.people, apis.groups, apis.setup, apis.backup, fx)
+        val results = mutableListOf<Boolean>()
+
+        model.pullToRefresh { results += it }
+        model.pullToRefresh { results += it }
+        runCurrent()
+        assertTrue(model.refreshing.value)
+        assertEquals(1, calls)
+
+        answer.complete(false)
+        runCurrent()
+        assertFalse(model.refreshing.value)
+        assertEquals(listOf(false), results)
+    }
 }

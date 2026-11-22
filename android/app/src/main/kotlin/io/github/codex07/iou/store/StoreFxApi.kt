@@ -16,8 +16,13 @@ fun interface QuoteSource {
     suspend fun quote(date: LocalDate, from: CurrencyCode, to: CurrencyCode): LedgerResult<FxQuote>
 }
 
-/** [FxApi] for both flavors: lookups come from [source]; typed and bank-actual rates need no source. */
-class StoreFxApi(private val source: QuoteSource) : FxApi {
+/**
+ * [FxApi] for both flavors: lookups come from [source]; typed and bank-actual rates need no source. A manual refresh
+ * runs [refresh] (the real flavor's rate refresh; the fake's demo rates are fixed, so it reports success).
+ */
+class StoreFxApi(private val source: QuoteSource, private val refresh: suspend () -> Boolean = { true }) : FxApi {
+
+    override suspend fun refreshRates(): Boolean = refresh()
 
     override suspend fun quote(date: LocalDate, from: CurrencyCode, to: CurrencyCode): LedgerResult<FxQuote> =
         source.quote(date, from, to)

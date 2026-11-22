@@ -48,6 +48,7 @@ Writes are `suspend` and return `LedgerResult<T>`: `Ok(value)` or `Err(LedgerErr
 ### Currencies
 
 - If the save returns `RateRequired(from, to)`, a conversion is needed. Get a rate with `FxApi.quote(date, from, to)`. If that also returns `RateRequired`, ask the user to type a rate (`FxApi.userRate`) or the amount actually charged (`FxChoice.BankActual(charged)`). Put the choice in `draft.fx` and save again.
+- `FxApi.refreshRates()` fetches the latest rates now (pull-to-refresh on the overview). It returns false when nothing could be fetched; approximate totals update through the read models by themselves.
 - In a CONVERT group the effect is in the group currency. Outside CONVERT groups, set `TransferDraft.settlesCurrency` to settle a debt in one currency with money in another.
 - `FxSnapshotMismatch` on an edit means the kept rate no longer fits (different currency pair, or a bank-actual charge after the paid amount changed). Ask for a new rate.
 

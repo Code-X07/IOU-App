@@ -16,4 +16,11 @@ interface FxApi {
 
     /** The display rate behind "amount actually charged" (source `BANK_ACTUAL`). */
     fun rateFromCharged(date: LocalDate, paid: Money, charged: Money): LedgerResult<FxQuote>
+
+    /**
+     * Fetches the latest rates for the home currency and every currency in use now, as the daily refresh does
+     * (spec §4.5), for a manual refresh such as pull-to-refresh. Views that show approximate totals update by
+     * themselves. False when no rate could be fetched (offline, Frankfurter unavailable); the old rates stay.
+     */
+    suspend fun refreshRates(): Boolean
 }

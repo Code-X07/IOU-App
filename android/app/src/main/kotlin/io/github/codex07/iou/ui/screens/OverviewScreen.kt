@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,10 +31,12 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OverviewScreen(state: OverviewUiState, hidden: Boolean, onNavigate: (Destination) -> Unit,
                    onFeature: (String) -> Unit, onRetry: () -> Unit, modifier: Modifier = Modifier,
-                   onPerson: (String) -> Unit = {}, onGroup: (String) -> Unit = {}, onEntry: (String) -> Unit = {}) {
+                   onPerson: (String) -> Unit = {}, onGroup: (String) -> Unit = {}, onEntry: (String) -> Unit = {},
+                   refreshing: Boolean = false, onRefresh: () -> Unit = {}) {
     val addPerson = stringResource(R.string.add_person)
     val createGroup = stringResource(R.string.create_group)
     val addExpense = stringResource(R.string.add_expense)
@@ -54,7 +57,9 @@ fun OverviewScreen(state: OverviewUiState, hidden: Boolean, onNavigate: (Destina
             EmptyState(stringResource(R.string.load_failed), stringResource(R.string.load_failed_body),
                 stringResource(R.string.retry), IouIcons.Info, onRetry)
         }
-        is OverviewUiState.Ready -> LazyColumn(modifier.fillMaxSize(),
+        // Pull-to-refresh fetches exchange rates now; manual sync will hang off the same gesture.
+        is OverviewUiState.Ready -> PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(),
             contentPadding = PaddingValues(top = 12.dp, bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item(key = "greeting") {
@@ -157,6 +162,7 @@ fun OverviewScreen(state: OverviewUiState, hidden: Boolean, onNavigate: (Destina
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
         }
     }
 }
