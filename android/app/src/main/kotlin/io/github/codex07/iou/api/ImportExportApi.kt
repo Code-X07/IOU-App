@@ -4,7 +4,10 @@ import io.github.codex07.iou.ledger.model.ImportBatchId
 import kotlinx.coroutines.flow.Flow
 
 interface ImportExportApi {
-    /** Errors: `InvalidField("scope")` for a scoped normalized export. */
+    /**
+     * Errors: `InvalidField("scope")` for a scoped normalized export; `LimitsExceeded` for a normalized CSV export that
+     * the import would refuse (too large or too many rows), and then nothing is written.
+     */
     suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo>
 
     /**

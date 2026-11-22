@@ -48,6 +48,17 @@ class BackupCipherTest {
     }
 
     @Test
+    fun `a header asking for more memory or work than the app ever writes is rejected before any key is derived`() {
+        KdfParams.MAX shouldBe KdfParams.DEFAULT
+        val file = BackupCipher.encrypt(plain, passphrase, fast)
+        // Header offsets: memory at 5, iterations at 9, parallelism at 13.
+        for ((offset, value) in listOf(5 to KdfParams.DEFAULT.memoryKiB + 1, 5 to 262_144, 9 to 4, 9 to 10, 13 to 2, 13 to 4)) {
+            val greedy = file.copyOf().also { ByteBuffer.wrap(it).putInt(offset, value) }
+            BackupCipher.decrypt(greedy, passphrase, 1_000_000) shouldBe LedgerResult.Err(LedgerError.CorruptFile("Unsupported key derivation parameters"))
+        }
+    }
+
+    @Test
     fun `the decompressed size is limited`() {
         val file = BackupCipher.encrypt(plain, passphrase, fast)
         (BackupCipher.decrypt(file, passphrase, plain.size - 1L) as LedgerResult.Err).error::class shouldBe LedgerError.LimitsExceeded::class

@@ -35,7 +35,7 @@ import kotlinx.coroutines.sync.withLock
  * Auto-posting (spec §5.7), the same in both flavors (index, locked decision 8). A pass posts the due occurrences of
  * every schedule that auto-posts, by schedule ID and oldest first, through `RecurringOps.post` under the store's write
  * lock, but only while the next occurrence is on or after the schedule's `autoPostFrom`: a backlog waits for the
- * user. A failure stops that schedule at that occurrence and is kept in [errors] (memory only) until a later pass
+ * user, and so do more than [Recurrence.MAX_AUTO_CATCH_UP] due occurrences. A failure stops that schedule at that occurrence and is kept in [errors] (memory only) until a later pass
  * gets past it; the other schedules still run. Every pass ends by reporting to [notices].
  */
 class RecurringRunner(
@@ -140,6 +140,11 @@ class RecurringRunner(
 
     /** Posts one schedule's due occurrences; returns where it stopped on a failure, or null. */
     private suspend fun runSchedule(id: RecurringId, today: LocalDate, posted: MutableList<PostedOccurrence>): Failure? {
+        // Counted once, before posting: a catch-up larger than the limit (a clock jump ahead) waits for the user whole.
+        store.currentViews().let { views ->
+            val schedule = views.state.schedules[id] ?: return null
+            if (Recurrence.due(schedule, views.state, today).size > Recurrence.MAX_AUTO_CATCH_UP) return null
+        }
         while (true) {
             val views = store.currentViews()
             val schedule = views.state.schedules[id] ?: return null

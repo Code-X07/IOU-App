@@ -88,7 +88,7 @@ data class ScheduleDetail(
     val handledThrough: LocalDate?,
     /** Due occurrences, oldest first; empty while on hold or deleted. */
     val due: List<LocalDate>,
-    /** Auto-post waits until older dates are posted or skipped ("confirm these to resume auto-posting"). */
+    /** Auto-post waits until older dates are posted or skipped ("confirm these to resume auto-posting"): a backlog, or more than 12 due. */
     val confirmToResume: Boolean,
     /** The non-deleted expenses posted from this schedule, newest first. */
     val posted: List<ActivityItem>,
@@ -105,7 +105,7 @@ data class DueOccurrence(
     val amount: Money,
     val group: GroupRef?,
     val autoPost: Boolean,
-    /** An auto-post schedule that posts nothing more until its older dates are handled. */
+    /** An auto-post schedule that posts nothing more until its older dates are handled: a backlog, or more than 12 due. */
     val confirmToResume: Boolean,
     /** Why auto-posting this occurrence failed last time; in memory only, cleared by the next successful run. */
     val autoPostError: LedgerError? = null,

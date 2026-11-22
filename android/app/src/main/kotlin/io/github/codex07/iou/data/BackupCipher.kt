@@ -23,8 +23,13 @@ data class KdfParams(val memoryKiB: Int, val iterations: Int, val parallelism: I
         /** Spec §7.1: 64 MiB, 3 iterations, 1 lane. */
         val DEFAULT = KdfParams(memoryKiB = 65_536, iterations = 3, parallelism = 1)
 
-        /** Upper bounds a file may ask for, so a crafted header can't make a restore allocate gigabytes. */
-        val MAX = KdfParams(memoryKiB = 262_144, iterations = 10, parallelism = 4)
+        /**
+         * Upper bounds a file may ask for. The header's values are checked before the key is derived but authenticated
+         * only after, so a crafted header could otherwise demand more memory or work than a real backup ever needs.
+         * These are the values every backup of this format was written with. Written out rather than taken from
+         * [DEFAULT], so a lower default later still reads older backups; a higher default must raise them.
+         */
+        val MAX = KdfParams(memoryKiB = 65_536, iterations = 3, parallelism = 1)
     }
 }
 

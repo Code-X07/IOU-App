@@ -9,6 +9,9 @@ import io.github.codex07.iou.api.ExportShape
 import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.fake.SeedData
+import io.github.codex07.iou.io.ImportLimits
+import io.github.codex07.iou.io.ImportReader
+import io.github.codex07.iou.io.LedgerExport
 import io.github.codex07.iou.ledger.model.GroupId
 import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.RealHarness
@@ -70,5 +73,25 @@ class RealExportTest {
         File(harness.documents.dir, "a-folder").mkdirs()
         val folder = export.export(ExportRequest(ExportShape.REPORT, ExportFormat.CSV), DocumentRef("a-folder"))
         (folder as LedgerResult.Err).error::class shouldBe LedgerError.FileAccessFailed::class
+    }
+
+    @Test
+    fun `a normalized export the import would refuse is not written`() = runTest {
+        val backend = harness.start()
+        SeedData.populate(backend.store)
+        val rows = (backend.apis.importExport.export(ExportRequest(ExportShape.NORMALIZED, ExportFormat.CSV), DocumentRef("fits.zip"))
+            as LedgerResult.Ok).value.rowCount
+        fun api(limits: ImportLimits) = RealImportExportApi(backend.store, harness.documents, LedgerExport("test"), ImportReader(limits))
+        val target = DocumentRef("refused.zip")
+
+        api(ImportLimits(maxRows = rows - 1)).export(ExportRequest(ExportShape.NORMALIZED, ExportFormat.CSV), target) shouldBe
+            LedgerResult.Err(LedgerError.LimitsExceeded("More than ${rows - 1} rows"))
+        (api(ImportLimits(maxUncompressedBytes = 1_000)).export(ExportRequest(ExportShape.NORMALIZED, ExportFormat.CSV), target)
+            as LedgerResult.Err).error::class shouldBe LedgerError.LimitsExceeded::class
+        harness.documents.file(target).exists() shouldBe false
+
+        api(ImportLimits(maxRows = rows)).export(ExportRequest(ExportShape.NORMALIZED, ExportFormat.CSV), target) shouldBe
+            LedgerResult.Ok(ExportInfo(rows))
+        (ImportReader().read(harness.documents.file(target).readBytes()) is LedgerResult.Ok) shouldBe true
     }
 }

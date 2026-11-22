@@ -27,7 +27,7 @@ data class ImportLimits(
     val maxFileBytes: Long = 20L * 1024 * 1024,
     val maxRows: Int = 100_000,
     val maxEntries: Int = 50,
-    val maxUncompressedBytes: Long = 200L * 1024 * 1024,
+    val maxUncompressedBytes: Long = 50L * 1024 * 1024,
     val maxCompressionRatio: Int = 100,
 )
 
@@ -44,6 +44,7 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
     fun read(file: ByteArray): LedgerResult<ImportFile> {
         if (file.size > limits.maxFileBytes) return limit("File larger than ${limits.maxFileBytes} bytes")
         val entries = linkedMapOf<String, ByteArray>()
+        val names = mutableSetOf<String>()
         var total = 0L
         var entryCount = 0
         try {
@@ -51,11 +52,18 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
                 while (true) {
                     val entry = zip.nextEntry ?: break
                     if (++entryCount > limits.maxEntries) return limit("More than ${limits.maxEntries} entries")
-                    if (entry.name in entries) return corrupt("Duplicate zip entry ${entry.name}")
+                    if (!names.add(entry.name)) return corrupt("Duplicate zip entry ${entry.name}")
                     val budget = minOf(limits.maxUncompressedBytes, file.size.toLong() * limits.maxCompressionRatio) - total
-                    val bytes = zip.readBytesUpTo(budget) ?: return limit("Uncompressed size or compression ratio too large")
-                    total += bytes.size
-                    entries[entry.name] = bytes
+                    val tooLarge = "Uncompressed size or compression ratio too large"
+                    // Only the manifest and known tables are kept in memory; any other entry is read through and
+                    // counted against the same budget, so it can neither fill the heap nor slip past the size limits.
+                    if (entry.name == LedgerExport.MANIFEST || entry.name in tablesByFile) {
+                        val bytes = zip.readBytesUpTo(budget) ?: return limit(tooLarge)
+                        total += bytes.size
+                        entries[entry.name] = bytes
+                    } else {
+                        total += zip.skipUpTo(budget) ?: return limit(tooLarge)
+                    }
                 }
             }
         } catch (_: ZipException) {
@@ -108,6 +116,25 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
         return LedgerResult.Ok(ImportFile(manifest, tables))
     }
 
+    /**
+     * The `LimitsExceeded` that [read] would give a normalized export [file] holding [rows] data rows, or null when it
+     * fits (spec §7.2: an export the import would refuse is not written). Checks sizes only, without parsing the CSV.
+     */
+    fun limitsError(file: ByteArray, rows: Int): LedgerError? {
+        if (file.size > limits.maxFileBytes) return LedgerError.LimitsExceeded("File larger than ${limits.maxFileBytes} bytes")
+        if (rows > limits.maxRows) return LedgerError.LimitsExceeded("More than ${limits.maxRows} rows")
+        var total = 0L
+        var entryCount = 0
+        ZipInputStream(ByteArrayInputStream(file)).use { zip ->
+            while (zip.nextEntry != null) {
+                if (++entryCount > limits.maxEntries) return LedgerError.LimitsExceeded("More than ${limits.maxEntries} entries")
+                val budget = minOf(limits.maxUncompressedBytes, file.size.toLong() * limits.maxCompressionRatio) - total
+                total += zip.skipUpTo(budget) ?: return LedgerError.LimitsExceeded("Uncompressed size or compression ratio too large")
+            }
+        }
+        return null
+    }
+
     private fun parse(table: CsvTable<*>, bytes: ByteArray, delimiter: Char, budget: Int): List<CsvRow>? {
         val text = bytes.toString(Charsets.UTF_8).removePrefix(LedgerExport.BOM)
         val textColumns = table.columns.filter { it.text }.map { it.name }.toSet() + table.legacyTextColumns
@@ -127,6 +154,19 @@ class ImportReader(private val limits: ImportLimits = ImportLimits()) {
     }
 
     private fun ZipInputStream.readBytesUpTo(budget: Long): ByteArray? = if (budget < 0) null else readAtMost(budget)
+
+    /** Reads the current entry to its end without keeping it: its size, or null once it holds more than [budget] bytes. */
+    private fun ZipInputStream.skipUpTo(budget: Long): Long? {
+        if (budget < 0) return null
+        val chunk = ByteArray(64 * 1024)
+        var size = 0L
+        while (true) {
+            val read = read(chunk)
+            if (read < 0) return size
+            size += read
+            if (size > budget) return null
+        }
+    }
 
     private fun corrupt(detail: String) = LedgerResult.Err(LedgerError.CorruptFile(detail))
 

@@ -258,6 +258,20 @@ class ImportReaderTest {
     }
 
     @Test
+    fun `an unknown entry is ignored but still counts against the uncompressed limits`() {
+        ImportLimits().maxUncompressedBytes shouldBe 50L * 1024 * 1024
+        val file = export(TestLedger().apply { me(); person("X") }.state)
+        val known = Zips.read(file).values.sumOf { it.toByteArray().size.toLong() }
+        val extra = Zips.write(Zips.read(file).also { it["notes.txt"] = "x".repeat(10_000) })
+
+        (reader.read(extra) is LedgerResult.Ok) shouldBe true
+        (ImportReader(ImportLimits(maxUncompressedBytes = known + 10_000)).read(extra) is LedgerResult.Ok) shouldBe true
+        ImportReader(ImportLimits(maxUncompressedBytes = known + 9_999)).read(extra).error()::class shouldBe LedgerError.LimitsExceeded::class
+        val bomb = Zips.write(Zips.read(file).also { it["padding.bin"] = " ".repeat(5_000_000) })
+        reader.read(bomb).error()::class shouldBe LedgerError.LimitsExceeded::class
+    }
+
+    @Test
     fun `rows that don't decode are reported with their table, row number and reason`() {
         val file = export(TestLedger().run {
             me()

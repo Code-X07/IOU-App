@@ -54,7 +54,7 @@ fun LedgerViews.schedule(id: RecurringId, today: LocalDate): ScheduleDetail? {
         handledThrough = Recurrence.handledDate(schedule, state),
         due = due,
         // From the due dates, as in the due list: a held or deleted schedule has none, so it never asks to confirm.
-        confirmToResume = confirmToResume(schedule, due.firstOrNull()),
+        confirmToResume = confirmToResume(schedule, due),
         posted = state.expenses.values
             .filter { it.recurringId == id && !it.isDeleted }
             .sortedWith(compareByDescending<Expense> { it.occurredOn }.thenByDescending { it.meta.createdAt }.thenByDescending { it.id.value })
@@ -68,7 +68,7 @@ fun LedgerViews.dueOccurrences(today: LocalDate): List<DueOccurrence> =
     state.schedules.values
         .flatMap { schedule ->
             val dates = dueDates(schedule, today)
-            val waits = confirmToResume(schedule, dates.firstOrNull())
+            val waits = confirmToResume(schedule, dates)
             dates.map { date ->
                 DueOccurrence(
                     schedule = schedule.id, description = schedule.description, date = date, amount = schedule.total,
@@ -126,9 +126,12 @@ private fun LedgerViews.dueDates(schedule: RecurringExpense, today: LocalDate): 
     if (schedule.isDeleted || Recurrence.holds(schedule, state, resolver).isNotEmpty()) emptyList()
     else Recurrence.due(schedule, state, today)
 
-/** Spec §5.7: the runner posts nothing for an auto-post schedule while its next occurrence is before the cut-off. */
-private fun confirmToResume(schedule: RecurringExpense, next: LocalDate?): Boolean =
-    schedule.autoPost && next != null && next.isBefore(schedule.autoPostFrom)
+/**
+ * Spec §5.7: the runner posts nothing for an auto-post schedule while its next occurrence is before the cut-off, or
+ * while more than [Recurrence.MAX_AUTO_CATCH_UP] occurrences are due.
+ */
+private fun confirmToResume(schedule: RecurringExpense, due: List<LocalDate>): Boolean =
+    schedule.autoPost && due.isNotEmpty() && (due.first().isBefore(schedule.autoPostFrom) || due.size > Recurrence.MAX_AUTO_CATCH_UP)
 
 private fun LedgerViews.holdReasons(schedule: RecurringExpense): List<HoldReason> =
     Recurrence.holds(schedule, state, resolver).map { hold ->

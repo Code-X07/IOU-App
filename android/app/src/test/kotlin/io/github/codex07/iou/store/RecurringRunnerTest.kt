@@ -7,6 +7,7 @@ import io.github.codex07.iou.api.LedgerError
 import io.github.codex07.iou.api.LedgerResult
 import io.github.codex07.iou.api.RecurringDraft
 import io.github.codex07.iou.api.ScheduleSaveMode
+import io.github.codex07.iou.ledger.engine.Recurrence
 import io.github.codex07.iou.ledger.model.DeviceId
 import io.github.codex07.iou.ledger.model.FxMode
 import io.github.codex07.iou.ledger.model.FxSource
@@ -17,6 +18,7 @@ import io.github.codex07.iou.ledger.model.SplitInput
 import io.github.codex07.iou.ledger.ops.RecurringOps
 import io.github.codex07.iou.ledger.views.dueOccurrences
 import io.github.codex07.iou.ledger.views.occurrenceDraft
+import io.github.codex07.iou.ledger.views.schedule
 import io.github.codex07.iou.testutil.D0
 import io.github.codex07.iou.testutil.EUR
 import io.github.codex07.iou.testutil.ME
@@ -146,6 +148,28 @@ class RecurringRunnerTest {
 
         store.write { RecurringOps.skip(it, id, d("2026-02-01"), EditToken(it.generation, 1)) } shouldBe LedgerResult.Ok(Unit)
         runner.run().map { it.occurrence } shouldBe listOf(d("2026-03-01"))
+    }
+
+    @Test
+    fun `more due occurrences than the catch-up limit, as after a clock jump, wait for the user until few enough remain`() = runTest {
+        val ledger = TestLedger().apply { me() }
+        val x = ledger.person("X")
+        val id = ledger.schedule(ME, eur(1_000), listOf(ME, x), unit = RecurrenceUnit.WEEK, autoPost = true)
+        val today = d("2026-04-02")
+        val store = store(ledger.state, today.toString())
+        val runner = RecurringRunner(store, noRates)
+
+        val due = store.currentViews().dueOccurrences(today)
+        due.size shouldBe Recurrence.MAX_AUTO_CATCH_UP + 2
+        runner.run() shouldBe emptyList()
+        store.loaded().state.expenses.values.none { it.recurringId == id } shouldBe true
+        due.all { it.confirmToResume } shouldBe true
+
+        val token = store.currentViews().schedule(id, today)!!.token
+        store.write { RecurringOps.skip(it, id, d("2026-01-08"), token) } shouldBe LedgerResult.Ok(Unit)
+        store.currentViews().dueOccurrences(today).none { it.confirmToResume } shouldBe true
+        runner.run().size shouldBe Recurrence.MAX_AUTO_CATCH_UP
+        store.currentViews().dueOccurrences(today) shouldBe emptyList()
     }
 
     @Test

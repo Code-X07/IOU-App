@@ -36,6 +36,7 @@ import io.github.codex07.iou.store.LedgerStore
 import io.github.codex07.iou.store.StoreSnapshot
 import io.github.codex07.iou.store.StoreWrite
 import io.github.codex07.iou.store.readAtMost
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
@@ -72,18 +73,35 @@ class RealImportExportApi(
     /** Open import sessions, for tests. */
     internal val openSessions: Int get() = sessions.size
 
-    /** Errors: those of `ExportRules.check`, `NotFound` for the scope, `FileAccessFailed`. */
+    /**
+     * Errors: those of `ExportRules.check`, `NotFound` for the scope, `FileAccessFailed`, and `LimitsExceeded` for a
+     * normalized CSV export the import would refuse (spec §7.2), which writes nothing.
+     */
     override suspend fun export(request: ExportRequest, target: DocumentRef): LedgerResult<ExportInfo> {
         ExportRules.check(request)?.let { return LedgerResult.Err(it) }
         val state = store.loaded().state
         exporter.scopeError(state, request.scope)?.let { return LedgerResult.Err(it) }
         val now = store.now()
+        // A normalized CSV export is the import format: built in memory first and refused at the import's limits, so
+        // the app never writes a file it can't read back.
+        val normalized = if (request.format == ExportFormat.CSV && request.shape == ExportShape.NORMALIZED) {
+            withContext(computeDispatcher) {
+                val buffer = ByteArrayOutputStream()
+                val rows = exporter.normalized(state, now, request.excelFriendly, buffer)
+                buffer.toByteArray() to rows
+            }
+        } else null
+        if (normalized != null) reader.limitsError(normalized.first, normalized.second)?.let { return LedgerResult.Err(it) }
         val written = withContext(Dispatchers.IO) {
             access(target) {
                 documents.openWrite(target).use { out ->
                     when (request.format) {
                         ExportFormat.CSV -> when (request.shape) {
-                            ExportShape.NORMALIZED -> LedgerResult.Ok(exporter.normalized(state, now, request.excelFriendly, out))
+                            ExportShape.NORMALIZED -> {
+                                val (bytes, rows) = checkNotNull(normalized)
+                                out.write(bytes)
+                                LedgerResult.Ok(rows)
+                            }
                             ExportShape.REPORT -> exporter.report(state, request.scope, request.from, request.to, request.excelFriendly, out)
                         }
                         // excelFriendly only shapes CSV text; a workbook needs no BOM or delimiter.

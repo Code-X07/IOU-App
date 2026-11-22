@@ -11,6 +11,12 @@ import java.time.temporal.ChronoUnit
 /** A schedule's occurrence dates, handled date, due dates and holds (spec §5.7). Pure. */
 object Recurrence {
 
+    /**
+     * The most due occurrences auto-post catches up on by itself (spec §5.7). More than this, as after the device
+     * clock jumps ahead, waits in the due list for the user like a backlog, so one pass can't post a flood of entries.
+     */
+    const val MAX_AUTO_CATCH_UP = 12
+
     /** Why a schedule is on hold: its group, or the canonical person of one of its people, is archived. */
     sealed interface Hold {
         data class GroupArchived(val groupId: GroupId) : Hold
