@@ -7,6 +7,7 @@ import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import io.github.codex07.iou.MainActivity
+import io.github.codex07.iou.R
 import io.github.codex07.iou.api.DueOccurrence
 import io.github.codex07.iou.ledger.model.RecurringId
 import io.github.codex07.iou.store.DeviceSettings
@@ -81,7 +82,8 @@ class AndroidRecurringNotices(
 
     private fun build(channel: String, title: String, text: String, schedule: RecurringId?, silent: Boolean) =
         NotificationCompat.Builder(context, channel)
-            .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(context.getColor(R.color.ic_launcher_background))
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -94,7 +96,8 @@ class AndroidRecurringNotices(
 
     /** The due group's summary. It never alerts: only a new or changed due notification does. */
     private fun summary(count: Int) = NotificationCompat.Builder(context, DUE_CHANNEL)
-        .setSmallIcon(android.R.drawable.ic_popup_reminder)
+        .setSmallIcon(R.drawable.ic_notification)
+        .setColor(context.getColor(R.color.ic_launcher_background))
         .setContentTitle("Recurring expenses due")
         .setContentText("$count schedules have due dates")
         .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
