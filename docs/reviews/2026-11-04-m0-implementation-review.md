@@ -94,3 +94,15 @@ No obvious exploitable security flaw was established in the reviewed M0 code and
 - Extremely large aggregate-balance behavior, theoretical arithmetic exhaustion, and cosmetic placeholder-UI issues were excluded from ranked findings to keep the review focused on practical problems.
 
 Recommended order: fix F1, tighten fake restore/notification contracts (F2–F3), close F4 before real import integration, and improve the CI guard (F5). Mirror any later implementation changes into the corresponding plan blocks as required by the repository's workflow.
+
+## Resolution (2026-11-04)
+
+Recorded retroactively on 2026-11-22. All five findings were fixed on `main` in `2ac13cf`, the same commit that added this report, each with a regression or contract test. The M0 plan code blocks mirror the changes.
+
+| Finding | Fix | Tests |
+| --- | --- | --- |
+| F1 | `PeopleOps` displaces the live default only when the resulting handle is live, so reverting or editing a deleted handle to be the default leaves the live default alone. | `RevertOpsTest`: reverting a deleted handle to a default version; `MergeOpsTest`: making a deleted handle the default |
+| F2 | Undoing a fake restore swaps the import history and the ledger-scoped settings together with the ledger; device-local settings (lock, screen protection, last backup time) stay. | `BackupApiContract`: ledger settings come back, device settings stay; `ImportExportApiContract`: import history comes back |
+| F3 | Fake reads compare the ledger generation along with the projected value, so every read re-emits after a replacement even when the data compares equal (spec §6.2). | `BackupApiContract`: reads re-emit after a restore of unchanged data |
+| F4 | `FieldRules` validates each stored row's `inputValue` against its split type (with the accepted zero-weight policy) without recomputing the saved shares; merged people's rows keep their own input limits. | `FieldRulesTest`: stored inputs must suit the split type; stored rows of merged people keep their own limits |
+| F5 | The floating-point guard in `DomainPurityTest` ignores a string's text but keeps the expressions interpolated into it in the scan. | `DomainPurityTest`: interpolated `toDouble()` and arithmetic are flagged, prose mentioning `Double` is not |

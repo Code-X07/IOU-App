@@ -62,4 +62,4 @@ Each milestone has an index that links its parts in order.
 | [Implementation review (2026-11-21)](reviews/2026-11-21-current-implementation-review.md) | The whole app after `v0.2.0` |
 | [Security audit](reviews/2026-11-21-security-audit.md) | Threats, findings and their triage (fixed, deferred, accepted) |
 
-Most reviews end with how their findings were resolved.
+Each review ends with how its findings were resolved.
